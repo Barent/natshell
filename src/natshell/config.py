@@ -191,3 +191,67 @@ def save_ollama_default(model_name: str, url: str | None = None) -> Path:
 
     config_path.write_text("".join(lines))
     return config_path
+
+
+def save_model_config(hf_repo: str, hf_file: str) -> Path:
+    """Persist the default local model (hf_repo / hf_file) to user config.
+
+    Uses simple line-based TOML editing to avoid a tomli_w dependency.
+    Returns the path to the config file.
+    """
+    config_dir = Path.home() / ".config" / "natshell"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "config.toml"
+
+    if config_path.exists():
+        lines = config_path.read_text().splitlines(keepends=True)
+    else:
+        lines = []
+
+    # Find [model] section and locate existing keys
+    model_idx = None
+    next_section_idx = None
+    hf_repo_idx = None
+    hf_file_idx = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "[model]":
+            model_idx = i
+        elif model_idx is not None and next_section_idx is None:
+            if re.match(r"^\[.+\]", stripped):
+                next_section_idx = i
+            elif stripped.startswith("hf_repo") or stripped.startswith("# hf_repo"):
+                hf_repo_idx = i
+            elif stripped.startswith("hf_file") or stripped.startswith("# hf_file"):
+                hf_file_idx = i
+
+    repo_line = f'hf_repo = "{hf_repo}"\n'
+    file_line = f'hf_file = "{hf_file}"\n'
+
+    if model_idx is not None:
+        # Section exists — update or insert keys
+        insert_at = next_section_idx if next_section_idx is not None else len(lines)
+
+        if hf_repo_idx is not None:
+            lines[hf_repo_idx] = repo_line
+        else:
+            lines.insert(insert_at, repo_line)
+            if hf_file_idx is not None and hf_file_idx >= insert_at:
+                hf_file_idx += 1
+            insert_at += 1
+
+        if hf_file_idx is not None:
+            lines[hf_file_idx] = file_line
+        else:
+            lines.insert(insert_at, file_line)
+    else:
+        # No [model] section — add one at the end
+        if lines and not lines[-1].endswith("\n"):
+            lines.append("\n")
+        lines.append("\n[model]\n")
+        lines.append(repo_line)
+        lines.append(file_line)
+
+    config_path.write_text("".join(lines))
+    return config_path

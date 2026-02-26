@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +40,11 @@ def main() -> None:
         help="Download the default model and exit",
     )
     parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Pull latest code and reinstall (git installs only)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose logging",
@@ -49,6 +55,11 @@ def main() -> None:
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.WARNING
     logging.basicConfig(level=level, format="%(name)s: %(message)s")
+
+    # Handle self-update
+    if args.update:
+        _self_update()
+        return
 
     # Load config
     config = load_config(args.config)
@@ -145,6 +156,39 @@ def main() -> None:
     from natshell.app import NatShellApp
     app = NatShellApp(agent=agent, config=config)
     app.run()
+
+
+def _self_update() -> None:
+    """Pull latest code and reinstall from the git checkout."""
+    # Navigate from src/natshell/__main__.py -> project root
+    root = Path(__file__).resolve().parent.parent.parent
+    if not (root / ".git").exists():
+        print("Not a git install. Re-run install.sh to update.")
+        sys.exit(1)
+
+    print(f"Updating NatShell from {root}...")
+    result = subprocess.run(
+        ["git", "-C", str(root), "pull", "--ff-only"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"git pull failed:\n{result.stderr.strip()}")
+        sys.exit(1)
+    print(result.stdout.strip())
+
+    # Reinstall using the same Python that's running us
+    pip = str(Path(sys.executable).parent / "pip")
+    result = subprocess.run(
+        [pip, "install", "-e", str(root), "-q"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"pip install failed:\n{result.stderr.strip()}")
+        sys.exit(1)
+
+    print("Update complete.")
 
 
 def _ensure_model(config) -> str:

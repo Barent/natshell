@@ -15,12 +15,13 @@ from textual.events import MouseUp
 from textual.widgets import Footer, Header, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
-from natshell.config import NatShellConfig, save_ollama_default
+from natshell.config import NatShellConfig, save_model_config, save_ollama_default
 from natshell.inference.engine import ToolCall
 from natshell.inference.ollama import list_models, normalize_base_url, ping_server
 from natshell.safety.classifier import Risk
 from natshell.tools.execute_shell import execute_shell
 from natshell.ui import clipboard
+from natshell.ui.commands import MODELS_DIR, ModelSwitchProvider
 from natshell.ui.widgets import (
     AssistantMessage,
     BlockedMessage,
@@ -43,6 +44,7 @@ SLASH_COMMANDS = [
     ("/model", "Show current engine/model info"),
     ("/model list", "List models on the remote server"),
     ("/model use", "Switch to a remote model"),
+    ("/model switch", "Switch to a different local model"),
     ("/model local", "Switch back to local model"),
     ("/model default", "Set default remote model"),
     ("/history", "Show conversation context size"),
@@ -55,6 +57,7 @@ class NatShellApp(App):
     TITLE = "NatShell"
     SUB_TITLE = "Natural Language Shell"
     CSS_PATH = Path("ui/styles.tcss")
+    COMMANDS = App.COMMANDS | {ModelSwitchProvider}
 
     ALLOW_SELECT = True
 
@@ -291,6 +294,7 @@ class NatShellApp(App):
             "  [bold cyan]/model[/]                 Show current engine/model info\n"
             "  [bold cyan]/model list[/]            List models on remote server\n"
             "  [bold cyan]/model use <name>[/]      Switch to a remote model\n"
+            "  [bold cyan]/model switch[/]          Switch local model (or Ctrl+P)\n"
             "  [bold cyan]/model local[/]           Switch back to local model\n"
             "  [bold cyan]/model default <name>[/]  Save default remote model\n"
             "  [bold cyan]/history[/]               Show conversation context size\n\n"
@@ -322,6 +326,8 @@ class NatShellApp(App):
                     conversation.mount(SystemMessage("Usage: /model use <model-name>"))
                 else:
                     await self._model_use(subargs.strip(), conversation)
+            case "switch":
+                await self._model_switch_command(subargs.strip(), conversation)
             case "local":
                 await self._model_switch_local(conversation)
             case "default":
@@ -332,10 +338,11 @@ class NatShellApp(App):
             case _:
                 conversation.mount(SystemMessage(
                     "Unknown subcommand. Usage:\n"
-                    "  /model         — show current info\n"
-                    "  /model list    — list remote models\n"
-                    "  /model use <n> — switch to remote model\n"
-                    "  /model local   — switch to local model\n"
+                    "  /model          — show current info\n"
+                    "  /model list     — list remote models\n"
+                    "  /model use <n>  — switch to remote model\n"
+                    "  /model switch   — switch local model\n"
+                    "  /model local    — switch to local model\n"
                     "  /model default <n> — set default model"
                 ))
 
@@ -468,6 +475,85 @@ class NatShellApp(App):
             ))
         except Exception as e:
             conversation.mount(SystemMessage(f"[red]Failed to load local model: {e}[/]"))
+
+    async def _model_switch_command(self, args: str, conversation: ScrollableContainer) -> None:
+        """Handle /model switch [filename]."""
+        if not MODELS_DIR.is_dir():
+            conversation.mount(SystemMessage(
+                f"No models directory found at {MODELS_DIR}\n"
+                "Run natshell --download to fetch a model."
+            ))
+            return
+
+        available = sorted(MODELS_DIR.glob("*.gguf"))
+        if not available:
+            conversation.mount(SystemMessage(
+                "No .gguf models found. Run natshell --download to fetch one."
+            ))
+            return
+
+        if not args:
+            # List available models
+            current = self.agent.engine.engine_info().model_name
+            lines = ["[bold]Local Models[/]"]
+            for gguf in available:
+                marker = " [green]◀ active[/]" if gguf.name == current else ""
+                lines.append(f"  {gguf.name}{marker}")
+            lines.append("\n[dim]Use /model switch <filename> to switch[/]")
+            conversation.mount(SystemMessage("\n".join(lines)))
+            return
+
+        # Find matching model file
+        target = None
+        for gguf in available:
+            if gguf.name == args or gguf.stem == args:
+                target = gguf
+                break
+
+        if not target:
+            conversation.mount(SystemMessage(
+                f"Model not found: {args}\n"
+                "Use /model switch to list available models."
+            ))
+            return
+
+        await self.switch_local_model(str(target))
+
+    async def switch_local_model(self, model_path: str) -> None:
+        """Switch to a different local .gguf model (used by command palette and /model switch)."""
+        conversation = self.query_one("#conversation", ScrollableContainer)
+        name = Path(model_path).name
+        conversation.mount(SystemMessage(f"Loading {name}..."))
+        conversation.scroll_end()
+
+        from natshell.inference.local import LocalEngine
+
+        mc = self._config.model
+        try:
+            engine = await asyncio.to_thread(
+                LocalEngine,
+                model_path=model_path,
+                n_ctx=mc.n_ctx,
+                n_threads=mc.n_threads,
+                n_gpu_layers=mc.n_gpu_layers,
+            )
+            await self.agent.swap_engine(engine)
+
+            # Derive hf_repo/hf_file and persist to config
+            # hf_file is the filename; hf_repo we keep as current config value
+            hf_file = name
+            hf_repo = mc.hf_repo
+            save_model_config(hf_repo, hf_file)
+            mc.hf_file = hf_file
+
+            conversation.mount(SystemMessage(
+                f"Switched to [bold]{name}[/]\n"
+                "[dim]Conversation history cleared.[/]"
+            ))
+        except Exception as e:
+            conversation.mount(SystemMessage(f"[red]Failed to load {name}: {e}[/]"))
+
+        conversation.scroll_end()
 
     def _model_set_default(self, model_name: str, conversation: ScrollableContainer) -> None:
         """Persist the default model and remote URL to user config."""
