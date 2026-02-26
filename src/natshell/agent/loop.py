@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, AsyncIterator
@@ -94,6 +95,19 @@ class AgentLoop:
                 logger.exception("Inference error")
                 yield AgentEvent(type=EventType.ERROR, data=f"Inference error: {e}")
                 return
+
+            # Handle truncated responses (thinking consumed all tokens)
+            if result.finish_reason == "length" and not result.tool_calls:
+                raw = result.content or ""
+                # Check if content is only <think> residue or empty
+                stripped = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                if not stripped:
+                    yield AgentEvent(
+                        type=EventType.ERROR,
+                        data="Response was truncated — the model used all available tokens "
+                        "without producing a complete response. Try a simpler request.",
+                    )
+                    return
 
             # Case 1: Model wants to call tools
             if result.tool_calls:

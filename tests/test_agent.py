@@ -12,6 +12,7 @@ from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop, EventType
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, ToolCall
+from natshell.inference.local import _THINK_RE, _TOOL_CALL_RE, LocalEngine
 from natshell.safety.classifier import SafetyClassifier
 from natshell.tools.registry import create_default_registry
 
@@ -261,3 +262,87 @@ class TestConversationHistory:
         assert agent.messages[2].get("tool_calls") is not None
         assert agent.messages[3]["role"] == "tool"
         assert agent.messages[4]["role"] == "assistant"
+
+
+# ─── Truncated response (finish_reason="length") ────────────────────────────
+
+
+class TestTruncatedResponse:
+    async def test_length_with_only_think_tags_yields_error(self):
+        """When the model spends all tokens thinking, we should get an error."""
+        agent = _make_agent([
+            CompletionResult(
+                content="<think>I need to think about this really hard...</think>",
+                finish_reason="length",
+            ),
+        ])
+        events = await _collect_events(agent, "do something")
+        types = [e.type for e in events]
+        assert EventType.ERROR in types
+        error_event = next(e for e in events if e.type == EventType.ERROR)
+        assert "truncated" in error_event.data.lower()
+
+    async def test_length_with_empty_content_yields_error(self):
+        """finish_reason=length with no content should yield an error."""
+        agent = _make_agent([
+            CompletionResult(
+                content=None,
+                finish_reason="length",
+            ),
+        ])
+        events = await _collect_events(agent, "do something")
+        types = [e.type for e in events]
+        assert EventType.ERROR in types
+
+    async def test_length_with_real_content_passes_through(self):
+        """If there's actual content despite length truncation, show it."""
+        agent = _make_agent([
+            CompletionResult(
+                content="<think></think>Here is a partial answer that got cut off",
+                finish_reason="length",
+            ),
+        ])
+        events = await _collect_events(agent, "explain something")
+        types = [e.type for e in events]
+        # Should be treated as a normal response, not an error
+        assert EventType.RESPONSE in types
+
+
+# ─── Think tag and tool_call tag parsing ─────────────────────────────────────
+
+
+class TestQwen3Parsing:
+    def test_think_regex_strips_think_blocks(self):
+        text = "<think>some reasoning</think>Actual response"
+        result = _THINK_RE.sub("", text).strip()
+        assert result == "Actual response"
+
+    def test_think_regex_strips_empty_think(self):
+        text = "<think></think>Hello"
+        result = _THINK_RE.sub("", text).strip()
+        assert result == "Hello"
+
+    def test_think_regex_strips_multiline_think(self):
+        text = "<think>\nline1\nline2\n</think>Answer"
+        result = _THINK_RE.sub("", text).strip()
+        assert result == "Answer"
+
+    def test_tool_call_regex_matches(self):
+        text = '<tool_call>{"name": "execute_shell", "arguments": {"command": "ls"}}</tool_call>'
+        matches = _TOOL_CALL_RE.findall(text)
+        assert len(matches) == 1
+        parsed = json.loads(matches[0])
+        assert parsed["name"] == "execute_shell"
+        assert parsed["arguments"]["command"] == "ls"
+
+    def test_tool_call_regex_with_think_prefix(self):
+        text = (
+            "<think></think>"
+            '<tool_call>{"name": "execute_shell", "arguments": {"command": "whoami"}}</tool_call>'
+        )
+        # Strip think first, then extract tool calls
+        cleaned = _THINK_RE.sub("", text)
+        matches = _TOOL_CALL_RE.findall(cleaned)
+        assert len(matches) == 1
+        parsed = json.loads(matches[0])
+        assert parsed["name"] == "execute_shell"

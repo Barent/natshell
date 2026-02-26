@@ -37,4 +37,5 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
 </system_info>
 
 Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools.
-"""
+
+/no_think"""

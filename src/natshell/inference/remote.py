@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -76,6 +77,10 @@ class RemoteEngine:
                     name=func.get("name", ""),
                     arguments=args,
                 ))
+
+        # Strip <think> tags from content (Qwen3 models produce these)
+        if content:
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip() or None
 
         return CompletionResult(
             content=content,
