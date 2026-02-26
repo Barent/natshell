@@ -4,9 +4,12 @@ Screen {
     background: #1a1a2e;
 }
 
-Header {
+/* Logo banner */
+#logo-banner {
+    dock: top;
+    height: auto;
+    padding: 0 2;
     background: #16213e;
-    color: #e2e2e2;
 }
 
 Footer {

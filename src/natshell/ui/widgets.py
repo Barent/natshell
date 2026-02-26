@@ -11,6 +11,81 @@ from textual.widgets import Button, Label, Static
 from natshell.inference.engine import ToolCall
 
 
+# ─── Logo frames ─────────────────────────────────────────────────────────────
+# Tree art based on the project SVG: three foliage tiers (cyan/teal/green),
+# gold star, green sparkle dots, with a neon sign box for the title.
+
+_LOGO_STATIC = (
+    "  [#00ff88]·[/]   [bold #ffcc00]★[/]\n"
+    "     [bold #00ffff]███[/]      [#008877]╭─────────────────╮[/]\n"
+    "    [#00ccaa]█████[/]     [#008877]│[/]    [bold #00ffff]NatShell[/]     [#008877]│[/]\n"
+    "   [#00aa88]███████[/]    [#008877]╰─────────────────╯[/]\n"
+    "     [#30304a]██[/]  [#00ff88]·[/]    [dim #00ccaa]Natural Language Shell[/]"
+)
+
+_LOGO_FRAMES = [
+    _LOGO_STATIC,
+    # Frame 1: sparkle upper-right, colors rotated
+    (
+        "      [bold #ffcc00]★[/]  [#66ffff]✧[/]\n"
+        " [#00ff88]·[/]   [#00ccaa]███[/]      [#009988]╭─────────────────╮[/]\n"
+        "    [#00aa88]█████[/]     [#009988]│[/]    [bold #00ffff]NatShell[/]     [#009988]│[/]\n"
+        "   [bold #00ffff]███████[/]    [#009988]╰─────────────────╯[/]\n"
+        "     [#30304a]██[/]       [dim #00ccaa]Natural Language Shell[/]"
+    ),
+    # Frame 2: sparkle upper-left, sparkle mid-right
+    (
+        "  [#66ffff]✧[/]   [bold #ffcc00]★[/]\n"
+        "     [#00aa88]███[/]      [#00aa99]╭─────────────────╮[/]\n"
+        "    [bold #00ffff]█████[/]     [#00aa99]│[/]    [bold #00ffff]NatShell[/]     [#00aa99]│[/]\n"
+        "   [#00ccaa]███████[/]  [#00ff88]·[/] [#00aa99]╰─────────────────╯[/]\n"
+        "     [#30304a]██[/]       [dim #00ccaa]Natural Language Shell[/]"
+    ),
+    # Frame 3: sparkle between tree and box, sparkle lower-left
+    (
+        "      [bold #ffcc00]★[/]\n"
+        "     [bold #00ffff]███[/]   [#00ff88]·[/]  [#009988]╭─────────────────╮[/]\n"
+        "    [#00ccaa]█████[/]     [#009988]│[/]    [bold #00ffff]NatShell[/]     [#009988]│[/]\n"
+        "   [#00aa88]███████[/]    [#009988]╰─────────────────╯[/]\n"
+        "  [#00ff88]·[/]  [#30304a]██[/]       [dim #00ccaa]Natural Language Shell[/]"
+    ),
+]
+
+# Thinking indicator with bouncing highlight dot
+_THINKING_FRAMES = [
+    "  [#00ccaa]Thinking[/]  [bold #00ffff]●[/] [#007766]●[/] [#007766]●[/]",
+    "  [#00ccaa]Thinking[/]  [#007766]●[/] [bold #00ffff]●[/] [#007766]●[/]",
+    "  [#00ccaa]Thinking[/]  [#007766]●[/] [#007766]●[/] [bold #00ffff]●[/]",
+    "  [#00ccaa]Thinking[/]  [#007766]●[/] [bold #00ffff]●[/] [#007766]●[/]",
+]
+
+
+class LogoBanner(Static):
+    """Tree logo with neon NatShell branding and sparkle animation."""
+
+    def __init__(self) -> None:
+        super().__init__(_LOGO_STATIC, id="logo-banner")
+        self._animation_timer = None
+        self._frame_index = 0
+
+    def start_animation(self) -> None:
+        """Start sparkle animation around the tree."""
+        if self._animation_timer is None:
+            self._animation_timer = self.set_interval(0.4, self._next_frame)
+
+    def stop_animation(self) -> None:
+        """Stop animation and reset to static logo."""
+        if self._animation_timer is not None:
+            self._animation_timer.stop()
+            self._animation_timer = None
+        self._frame_index = 0
+        self.update(_LOGO_STATIC)
+
+    def _next_frame(self) -> None:
+        self._frame_index = (self._frame_index + 1) % len(_LOGO_FRAMES)
+        self.update(_LOGO_FRAMES[self._frame_index])
+
+
 class CopyableMessage(Horizontal):
     """Base for message widgets with a copy button."""
 
@@ -134,10 +209,24 @@ class HelpMessage(CopyableMessage):
 
 
 class ThinkingIndicator(Static):
-    """Animated thinking indicator."""
+    """Animated thinking indicator with bouncing dots."""
 
     def __init__(self) -> None:
-        super().__init__("[dim]⏳ Thinking...[/]")
+        super().__init__(_THINKING_FRAMES[0])
+        self._frame = 0
+        self._timer = None
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(0.3, self._tick)
+
+    def on_unmount(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+    def _tick(self) -> None:
+        self._frame = (self._frame + 1) % len(_THINKING_FRAMES)
+        self.update(_THINKING_FRAMES[self._frame])
 
 
 class ConfirmScreen(ModalScreen[bool]):

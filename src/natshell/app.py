@@ -12,7 +12,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.events import MouseUp
-from textual.widgets import Button, Footer, Header, Input, Static
+from textual.widgets import Button, Footer, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
 from natshell.config import NatShellConfig, save_model_config, save_ollama_default
@@ -28,6 +28,7 @@ from natshell.ui.widgets import (
     CommandBlock,
     ConfirmScreen,
     HelpMessage,
+    LogoBanner,
     PlanningMessage,
     SystemMessage,
     ThinkingIndicator,
@@ -75,7 +76,7 @@ class NatShellApp(App):
         self._busy = False
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield LogoBanner()
         with Horizontal(id="chat-toolbar"):
             yield Button("\U0001f4cb Copy Chat", id="copy-chat-btn")
         yield ScrollableContainer(
@@ -157,12 +158,14 @@ class NatShellApp(App):
                 if thinking and event.type != EventType.THINKING:
                     thinking.remove()
                     thinking = None
+                    self.query_one(LogoBanner).stop_animation()
 
                 match event.type:
                     case EventType.THINKING:
                         if not thinking:
                             thinking = ThinkingIndicator()
                             conversation.mount(thinking)
+                            self.query_one(LogoBanner).start_animation()
 
                     case EventType.PLANNING:
                         conversation.mount(PlanningMessage(event.data))
@@ -219,6 +222,7 @@ class NatShellApp(App):
             if thinking:
                 thinking.remove()
             self._busy = False
+            self.query_one(LogoBanner).stop_animation()
             self.query_one("#user-input", Input).focus()
 
     async def _handle_slash_command(self, text: str) -> None:
