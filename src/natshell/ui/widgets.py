@@ -50,6 +50,20 @@ class BlockedMessage(Static):
         super().__init__(f"⛔ BLOCKED: {command}")
 
 
+class SystemMessage(Static):
+    """A system/feedback message for slash command responses."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(f"[bold yellow]System:[/] {text}")
+
+
+class HelpMessage(Static):
+    """A bordered help display showing available commands."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+
+
 class ThinkingIndicator(Static):
     """Animated thinking indicator."""
 

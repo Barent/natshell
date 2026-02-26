@@ -76,6 +76,22 @@ BlockedMessage {
     border: round #ff6b6b;
 }
 
+/* System messages (slash command feedback) */
+SystemMessage {
+    margin: 1 0 0 0;
+    padding: 0 1;
+    color: #e6b800;
+}
+
+/* Help display */
+HelpMessage {
+    margin: 1 2;
+    padding: 1 2;
+    border: round #4a4a6a;
+    background: #0d1b2a;
+    color: #e2e2e2;
+}
+
 /* Thinking indicator */
 ThinkingIndicator {
     margin: 1 0 0 0;
