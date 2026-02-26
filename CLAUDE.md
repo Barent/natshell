@@ -43,6 +43,10 @@ NatShell is an agentic TUI that provides a natural language interface to Linux. 
 - huggingface-hub for model download
 - Target: Debian 13 (Trixie)
 
+### System dependencies
+
+- `xclip` — clipboard copy support (falls back to OSC52 terminal escapes without it)
+
 ## Model
 
 Default: Qwen3-4B Q4_K_M GGUF (~2.5GB). Supports Hermes-style function calling natively.
@@ -62,6 +66,7 @@ Run tests with `pytest`. Mock the InferenceEngine for agent loop tests. Tools ca
 
 ```bash
 cd natshell
+sudo apt install xclip
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
