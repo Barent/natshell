@@ -7,23 +7,37 @@ OSC52, so having a real tool available is important.
 
 from __future__ import annotations
 
+import logging
+import os
 import shutil
 import subprocess
 
+logger = logging.getLogger(__name__)
+
 _backend: str | None = None  # cached after first detection
+_wayland_warned: bool = False  # one-time warning flag
 
 
 def detect_backend() -> str:
     """Detect the best available clipboard backend.
 
-    Checks for xclip, xsel, wl-copy in order.  Falls back to "osc52"
-    if none are found.  Result is cached for the process lifetime.
+    On Wayland sessions, prefers wl-copy before falling back to X11 tools.
+    On X11 sessions, prefers xclip/xsel before wl-copy.
+    Falls back to "osc52" if no tool is found.
+    Result is cached for the process lifetime.
     """
     global _backend
     if _backend is not None:
         return _backend
 
-    for tool in ("xclip", "xsel", "wl-copy"):
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+
+    if session_type == "wayland":
+        order = ("wl-copy", "xclip", "xsel")
+    else:
+        order = ("xclip", "xsel", "wl-copy")
+
+    for tool in order:
         if shutil.which(tool):
             _backend = tool
             return _backend
@@ -39,7 +53,19 @@ def copy(text: str, app=None) -> bool:
     "osc52", delegates to ``app.copy_to_clipboard()`` (which may silently
     fail on terminals that don't support OSC52).
     """
+    global _wayland_warned
     backend = detect_backend()
+
+    # Warn once if using an X11 clipboard tool on a Wayland session
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    if session_type == "wayland" and backend in ("xclip", "xsel") and not _wayland_warned:
+        _wayland_warned = True
+        logger.warning(
+            "Wayland session detected but using %s (X11). "
+            "Clipboard may not work in Wayland-native apps. "
+            "Install wl-clipboard for proper Wayland support.",
+            backend,
+        )
 
     if backend == "osc52":
         if app is not None:
@@ -87,5 +113,6 @@ def _build_command(backend: str) -> list[str]:
 
 def _reset() -> None:
     """Reset cached backend (for testing)."""
-    global _backend
+    global _backend, _wayland_warned
     _backend = None
+    _wayland_warned = False

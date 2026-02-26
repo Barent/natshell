@@ -28,18 +28,20 @@ def reset_backend():
 
 class TestDetectBackend:
     def test_xclip_found(self):
-        with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-            mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
-            assert detect_backend() == "xclip"
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                assert detect_backend() == "xclip"
 
     def test_xsel_found_no_xclip(self):
-        with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-            def which_side_effect(tool):
-                if tool == "xsel":
-                    return "/usr/bin/xsel"
-                return None
-            mock_which.side_effect = which_side_effect
-            assert detect_backend() == "xsel"
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                def which_side_effect(tool):
+                    if tool == "xsel":
+                        return "/usr/bin/xsel"
+                    return None
+                mock_which.side_effect = which_side_effect
+                assert detect_backend() == "xsel"
 
     def test_wl_copy_found_no_xclip_xsel(self):
         with patch("natshell.ui.clipboard.shutil.which") as mock_which:
@@ -63,10 +65,17 @@ class TestDetectBackend:
             second = detect_backend()
         assert first == second == "osc52"
 
-    def test_prefers_xclip_over_xsel(self):
-        with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-            mock_which.side_effect = lambda t: f"/usr/bin/{t}"
-            assert detect_backend() == "xclip"
+    def test_prefers_xclip_over_xsel_on_x11(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: f"/usr/bin/{t}"
+                assert detect_backend() == "xclip"
+
+    def test_prefers_wl_copy_on_wayland(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: f"/usr/bin/{t}"
+                assert detect_backend() == "wl-copy"
 
 
 # ─── copy ─────────────────────────────────────────────────────────────────────

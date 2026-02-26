@@ -10,9 +10,9 @@ from typing import Any
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.events import MouseUp
-from textual.widgets import Footer, Header, Input, Static
+from textual.widgets import Button, Footer, Header, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
 from natshell.config import NatShellConfig, save_model_config, save_ollama_default
@@ -63,6 +63,7 @@ class NatShellApp(App):
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", priority=True),
+        Binding("ctrl+e", "copy_chat", "Copy Chat"),
         Binding("ctrl+l", "clear_chat", "Clear Chat"),
         Binding("ctrl+y", "copy_selection", "Copy", show=False),
     ]
@@ -75,6 +76,8 @@ class NatShellApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+        with Horizontal(id="chat-toolbar"):
+            yield Button("\U0001f4cb Copy Chat", id="copy-chat-btn")
         yield ScrollableContainer(
             Static("[dim]Welcome to NatShell. Type a request to get started. Use /help for commands.[/]\n"),
             id="conversation",
@@ -299,7 +302,8 @@ class NatShellApp(App):
             "  [bold cyan]/model default <name>[/]  Save default remote model\n"
             "  [bold cyan]/history[/]               Show conversation context size\n\n"
             "[bold]Copy & Paste[/]\n\n"
-            "  Click [bold cyan]Copy[/] on any command block to copy it.\n"
+            "  Click [bold cyan]\U0001f4cb[/] on any message to copy it.\n"
+            "  Click [bold cyan]\U0001f4cb Copy Chat[/] or press [bold cyan]Ctrl+E[/] to copy entire chat.\n"
             "  [bold cyan]Shift+drag[/] to select text, then use terminal copy.\n"
             "  [bold cyan]Right-click[/] or [bold cyan]Ctrl+Y[/] to copy Textual selection.\n"
             "  [bold cyan]Ctrl+Shift+V[/] or terminal paste to paste.\n"
@@ -603,6 +607,26 @@ class NatShellApp(App):
                 self.notify("Copied to clipboard", timeout=2)
             else:
                 self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
+
+    def action_copy_chat(self) -> None:
+        """Copy the entire chat conversation to clipboard."""
+        conversation = self.query_one("#conversation", ScrollableContainer)
+        parts = []
+        for child in conversation.children:
+            if hasattr(child, "copyable_text"):
+                parts.append(child.copyable_text)
+        if parts:
+            text = "\n\n".join(parts)
+            if clipboard.copy(text, self):
+                self.notify("Chat copied!", timeout=2)
+            else:
+                self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
+        else:
+            self.notify("Nothing to copy", timeout=2)
+
+    @on(Button.Pressed, "#copy-chat-btn")
+    def on_copy_chat_btn(self) -> None:
+        self.action_copy_chat()
 
     def action_clear_chat(self) -> None:
         """Clear the conversation and agent history."""

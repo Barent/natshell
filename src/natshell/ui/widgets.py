@@ -11,25 +11,51 @@ from textual.widgets import Button, Label, Static
 from natshell.inference.engine import ToolCall
 
 
-class UserMessage(Static):
+class CopyableMessage(Horizontal):
+    """Base for message widgets with a copy button."""
+
+    def __init__(self, formatted: str, raw_text: str) -> None:
+        super().__init__()
+        self._formatted = formatted
+        self._raw_text = raw_text
+
+    @property
+    def copyable_text(self) -> str:
+        return self._raw_text
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._formatted, classes="msg-text")
+        yield Button("\U0001f4cb", classes="msg-copy-btn")
+
+    @on(Button.Pressed, ".msg-copy-btn")
+    def on_copy_pressed(self) -> None:
+        from natshell.ui import clipboard
+
+        if clipboard.copy(self._raw_text, self.app):
+            self.app.notify("Copied!", timeout=2)
+        else:
+            self.app.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
+
+
+class UserMessage(CopyableMessage):
     """A message from the user."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[bold cyan]You:[/] {text}")
+        super().__init__(f"[bold cyan]You:[/] {text}", text)
 
 
-class AssistantMessage(Static):
+class AssistantMessage(CopyableMessage):
     """A text response from the assistant."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[bold green]NatShell:[/] {text}")
+        super().__init__(f"[bold green]NatShell:[/] {text}", text)
 
 
-class PlanningMessage(Static):
+class PlanningMessage(CopyableMessage):
     """The assistant's planning/reasoning text before tool calls."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[dim italic]{text}[/]")
+        super().__init__(f"[dim italic]{text}[/]", text)
 
 
 class CommandBlock(Vertical):
@@ -69,38 +95,42 @@ class CommandBlock(Vertical):
         elif output:
             self.mount(Static(output, classes="cmd-output"))
 
+    @property
+    def copyable_text(self) -> str:
+        text = f"$ {self._command}"
+        if self._output:
+            text += f"\n{self._output}"
+        return text
+
     @on(Button.Pressed, ".copy-btn")
     def on_copy_pressed(self) -> None:
         from natshell.ui import clipboard
 
-        text = f"$ {self._command}"
-        if self._output:
-            text += f"\n{self._output}"
-        if clipboard.copy(text, self.app):
+        if clipboard.copy(self.copyable_text, self.app):
             self.app.notify("Copied!", timeout=2)
         else:
             self.app.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
 
 
-class BlockedMessage(Static):
+class BlockedMessage(CopyableMessage):
     """Warning that a command was blocked."""
 
     def __init__(self, command: str) -> None:
-        super().__init__(f"⛔ BLOCKED: {command}")
+        super().__init__(f"⛔ BLOCKED: {command}", f"BLOCKED: {command}")
 
 
-class SystemMessage(Static):
+class SystemMessage(CopyableMessage):
     """A system/feedback message for slash command responses."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[bold yellow]System:[/] {text}")
+        super().__init__(f"[bold yellow]System:[/] {text}", text)
 
 
-class HelpMessage(Static):
+class HelpMessage(CopyableMessage):
     """A bordered help display showing available commands."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(text)
+        super().__init__(text, text)
 
 
 class ThinkingIndicator(Static):
