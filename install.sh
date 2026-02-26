@@ -66,6 +66,10 @@ if [[ "$IS_MACOS" == true ]]; then
     fi
 elif command -v apt-get &>/dev/null; then
     PKG_MGR="apt"
+elif command -v rpm-ostree &>/dev/null && [[ -f /run/ostree-booted ]]; then
+    # Fedora Atomic (Bazzite, Silverblue, Kinoite, etc.) — must come before
+    # dnf because dnf exists as a shim that refuses to install packages.
+    PKG_MGR="rpm-ostree"
 elif command -v dnf &>/dev/null; then
     PKG_MGR="dnf"
 elif command -v pacman &>/dev/null; then
@@ -88,6 +92,13 @@ install_pkg() {
             read -rp "  Install $apt_pkg now? (requires sudo) [Y/n]: " answer
             if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
                 sudo apt-get install -y "$apt_pkg"
+                return $?
+            fi
+            ;;
+        rpm-ostree)
+            read -rp "  Install $dnf_pkg now? (requires sudo, uses rpm-ostree --apply-live) [Y/n]: " answer
+            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+                sudo rpm-ostree install --apply-live "$dnf_pkg"
                 return $?
             fi
             ;;
@@ -115,6 +126,7 @@ install_pkg() {
         die "Please install it manually:
   Debian/Ubuntu:  sudo apt install $apt_pkg
   Fedora:         sudo dnf install $dnf_pkg
+  Fedora Atomic:  sudo rpm-ostree install --apply-live $dnf_pkg
   Arch:           sudo pacman -S $pacman_pkg"
     fi
 }
@@ -218,15 +230,19 @@ if [[ "$IS_MACOS" != true ]]; then
             info "GPU detected — checking Vulkan build dependencies..."
 
             # Install Vulkan headers + devel
+            # Run in subshell so install_pkg failures don't kill the installer
+            # (GPU support is optional — CPU fallback always works)
             if ! pkg-config --exists vulkan 2>/dev/null; then
                 warn "Vulkan development headers not found (needed to build GPU support)."
-                install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers"
+                (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || \
+                    warn "Vulkan headers could not be installed — GPU build may fail"
             fi
 
             # Install shader compiler
             if ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; then
                 warn "GLSL shader compiler not found (needed to build GPU support)."
-                install_pkg "glslang-tools" "glslc" "glslang"
+                (install_pkg "glslang-tools" "glslc" "glslang") || \
+                    warn "Shader compiler could not be installed — GPU build may fail"
             fi
 
             # Verify after install
@@ -329,6 +345,7 @@ if [[ "$GPU_DETECTED" == true ]]; then
             warn "  To fix: install Vulkan development packages and re-run install.sh"
             case "$PKG_MGR" in
                 apt)  warn "    sudo apt install libvulkan-dev glslang-tools" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install --apply-live vulkan-devel glslc" ;;
                 dnf)  warn "    sudo dnf install vulkan-devel glslc" ;;
                 pacman) warn "    sudo pacman -S vulkan-headers glslang" ;;
             esac

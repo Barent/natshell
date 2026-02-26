@@ -186,8 +186,11 @@ def main() -> None:
 def _print_vulkan_dep_hint() -> None:
     """Print distro-specific instructions for installing Vulkan build deps."""
     import shutil
+    from pathlib import Path
 
-    if shutil.which("dnf"):
+    if shutil.which("rpm-ostree") and Path("/run/ostree-booted").exists():
+        print("  Install Vulkan build deps: sudo rpm-ostree install --apply-live vulkan-devel glslc")
+    elif shutil.which("dnf"):
         print("  Install Vulkan build deps: sudo dnf install vulkan-devel glslc")
     elif shutil.which("apt-get"):
         print("  Install Vulkan build deps: sudo apt install libvulkan-dev glslang-tools")
