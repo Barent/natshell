@@ -126,6 +126,13 @@ def main() -> None:
             n_threads=config.model.n_threads,
             n_gpu_layers=config.model.n_gpu_layers,
         )
+        try:
+            from llama_cpp import llama_supports_gpu_offload
+            if config.model.n_gpu_layers != 0 and not llama_supports_gpu_offload():
+                print("WARNING: GPU offloading requested but llama-cpp-python was built without GPU support.")
+                print('  Reinstall with: CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python --no-binary llama-cpp-python --force-reinstall')
+        except ImportError:
+            pass
         print("Model loaded.")
 
     # Build the tool registry

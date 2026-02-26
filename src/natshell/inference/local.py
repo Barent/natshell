@@ -47,6 +47,13 @@ class LocalEngine:
             n_gpu_layers=n_gpu_layers,
             verbose=False,
         )
+        if n_gpu_layers != 0:
+            try:
+                from llama_cpp import llama_supports_gpu_offload
+                if not llama_supports_gpu_offload():
+                    logger.warning("GPU layers requested but llama-cpp-python has no GPU support — running on CPU")
+            except ImportError:
+                pass
         logger.info(f"Loaded model: {model_path} (ctx={n_ctx}, threads={n_threads})")
 
     def engine_info(self) -> EngineInfo:

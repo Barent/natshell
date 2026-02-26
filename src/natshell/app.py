@@ -370,6 +370,14 @@ class NatShellApp(App):
             parts.append(f"  Context: {info.n_ctx} tokens")
         if info.n_gpu_layers:
             parts.append(f"  GPU layers: {info.n_gpu_layers}")
+        if info.engine_type == "local":
+            try:
+                from llama_cpp import llama_supports_gpu_offload
+                gpu_ok = llama_supports_gpu_offload()
+            except ImportError:
+                gpu_ok = False
+            status = "[green]active[/]" if gpu_ok else "[red]unavailable (CPU-only build)[/]"
+            parts.append(f"  GPU backend: {status}")
         remote_url = self._get_remote_base_url()
         if remote_url:
             parts.append(f"\n[dim]Tip: /model list — see available remote models[/]")

@@ -173,7 +173,7 @@ fi
 
 info "Installing llama-cpp-python (this may take a few minutes)..."
 if [[ -n "$CMAKE_ARGS" ]]; then
-    CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q
+    CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir -q
 else
     "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q
 fi
