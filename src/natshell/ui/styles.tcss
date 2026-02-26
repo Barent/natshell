@@ -1,0 +1,108 @@
+/* NatShell TUI Stylesheet */
+
+Screen {
+    background: #1a1a2e;
+}
+
+Header {
+    background: #16213e;
+    color: #e2e2e2;
+}
+
+Footer {
+    background: #16213e;
+    color: #a0a0a0;
+}
+
+/* Conversation area */
+#conversation {
+    height: 1fr;
+    padding: 1 2;
+    scrollbar-size: 1 1;
+    scrollbar-color: #30304a;
+    scrollbar-color-hover: #4a4a6a;
+    scrollbar-color-active: #6a6a8a;
+    background: #1a1a2e;
+}
+
+/* User input */
+#user-input {
+    dock: bottom;
+    margin: 0 1 1 1;
+    background: #0f3460;
+    color: #e2e2e2;
+    border: tall #30304a;
+}
+
+#user-input:focus {
+    border: tall #5390d9;
+}
+
+/* User messages */
+UserMessage {
+    margin: 1 0 0 4;
+    padding: 0 1;
+    color: #48bfe6;
+}
+
+/* Assistant messages */
+AssistantMessage {
+    margin: 1 0 0 0;
+    padding: 0 1;
+    color: #e2e2e2;
+}
+
+/* Planning/reasoning text */
+PlanningMessage {
+    margin: 1 0 0 0;
+    padding: 0 1;
+    color: #7a7a9a;
+}
+
+/* Command execution blocks */
+CommandBlock {
+    margin: 0 2;
+    padding: 1 2;
+    border: round #30304a;
+    background: #0d1b2a;
+}
+
+/* Blocked command warning */
+BlockedMessage {
+    margin: 0 2;
+    padding: 1 2;
+    background: #3d0000;
+    color: #ff6b6b;
+    border: round #ff6b6b;
+}
+
+/* Thinking indicator */
+ThinkingIndicator {
+    margin: 1 0 0 0;
+    padding: 0 1;
+    color: #7a7a9a;
+}
+
+/* Confirmation dialog */
+ConfirmScreen {
+    align: center middle;
+}
+
+#confirm-dialog {
+    width: 70;
+    max-width: 90%;
+    height: auto;
+    max-height: 80%;
+    padding: 2 4;
+    border: thick #e6b800;
+    background: #1a1a2e;
+}
+
+#confirm-buttons {
+    margin-top: 2;
+    align: center middle;
+}
+
+#confirm-buttons Button {
+    margin: 0 2;
+}

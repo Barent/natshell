@@ -1,0 +1,163 @@
+"""NatShell entry point — CLI argument parsing, model setup, and app launch."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+from natshell.config import load_config
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="natshell",
+        description="NatShell — Natural language shell interface for Linux",
+    )
+    parser.add_argument(
+        "--config", "-c",
+        help="Path to config.toml file",
+    )
+    parser.add_argument(
+        "--model", "-m",
+        help="Path to a GGUF model file (overrides config)",
+    )
+    parser.add_argument(
+        "--remote",
+        help="URL of an OpenAI-compatible API to use instead of local model "
+             "(e.g., http://localhost:11434/v1)",
+    )
+    parser.add_argument(
+        "--remote-model",
+        help="Model name for the remote API (e.g., qwen3:4b)",
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Download the default model and exit",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging",
+    )
+
+    args = parser.parse_args()
+
+    # Setup logging
+    level = logging.DEBUG if args.verbose else logging.WARNING
+    logging.basicConfig(level=level, format="%(name)s: %(message)s")
+
+    # Load config
+    config = load_config(args.config)
+
+    # Override config with CLI args
+    if args.model:
+        config.model.path = args.model
+    if args.remote:
+        config.remote.url = args.remote
+    if args.remote_model:
+        config.remote.model = args.remote_model
+
+    # Handle model download
+    if args.download or config.model.path == "auto":
+        model_path = _ensure_model(config)
+        if args.download:
+            print(f"Model ready at: {model_path}")
+            return
+        config.model.path = model_path
+
+    # Build the inference engine
+    if config.remote.url:
+        from natshell.inference.remote import RemoteEngine
+        engine = RemoteEngine(
+            base_url=config.remote.url,
+            model=config.remote.model,
+            api_key=config.remote.api_key,
+        )
+        print(f"Using remote model: {config.remote.model} at {config.remote.url}")
+    else:
+        from natshell.inference.local import LocalEngine
+        print(f"Loading model: {config.model.path}...")
+        engine = LocalEngine(
+            model_path=config.model.path,
+            n_ctx=config.model.n_ctx,
+            n_threads=config.model.n_threads,
+            n_gpu_layers=config.model.n_gpu_layers,
+        )
+        print("Model loaded.")
+
+    # Build the tool registry
+    from natshell.tools.registry import create_default_registry
+    tools = create_default_registry()
+
+    # Build the safety classifier
+    from natshell.safety.classifier import SafetyClassifier
+    safety = SafetyClassifier(config.safety)
+
+    # Build the agent
+    from natshell.agent.loop import AgentLoop
+    agent = AgentLoop(
+        engine=engine,
+        tools=tools,
+        safety=safety,
+        config=config.agent,
+    )
+
+    # Gather system context and initialize agent
+    from natshell.agent.context import gather_system_context
+    print("Gathering system information...")
+    context = asyncio.run(gather_system_context())
+    agent.initialize(context)
+
+    # Launch the TUI
+    from natshell.app import NatShellApp
+    app = NatShellApp(agent=agent)
+    app.run()
+
+
+def _ensure_model(config) -> str:
+    """Ensure the default model is downloaded. Returns the model path."""
+    model_dir = Path.home() / ".local" / "share" / "natshell" / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    target = model_dir / config.model.hf_file
+    if target.exists():
+        return str(target)
+
+    # Prompt user
+    print(f"\nNo local model found.")
+    print(f"Download {config.model.hf_file} from {config.model.hf_repo}?")
+    print(f"This is approximately 2.5 GB.\n")
+
+    response = input("Download now? [Y/n]: ").strip().lower()
+    if response and response != "y":
+        print("No model available. Use --model or --remote to specify one.")
+        sys.exit(1)
+
+    try:
+        from huggingface_hub import hf_hub_download
+
+        print(f"Downloading from HuggingFace...")
+        path = hf_hub_download(
+            repo_id=config.model.hf_repo,
+            filename=config.model.hf_file,
+            local_dir=str(model_dir),
+            local_dir_use_symlinks=False,
+        )
+        print(f"Model saved to: {path}")
+        return path
+
+    except ImportError:
+        print("huggingface-hub is required for model download.")
+        print("Install it: pip install huggingface-hub")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Download failed: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
