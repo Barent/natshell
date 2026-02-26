@@ -116,7 +116,7 @@ class TestRuntimeFallback:
 
         fallback = ModelConfig(
             path="/tmp/test-model.gguf",
-            n_ctx=8192, n_threads=0, n_gpu_layers=0,
+            n_ctx=0, n_threads=0, n_gpu_layers=0,
         )
         agent = _make_agent(engine=remote_engine, fallback_config=fallback)
 

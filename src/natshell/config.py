@@ -13,7 +13,7 @@ class ModelConfig:
     path: str = "auto"
     hf_repo: str = "Qwen/Qwen3-4B-GGUF"
     hf_file: str = "Qwen3-4B-Q4_K_M.gguf"
-    n_ctx: int = 8192
+    n_ctx: int = 0  # 0 = auto (inferred from model size)
     n_threads: int = 0
     n_gpu_layers: int = -1
 

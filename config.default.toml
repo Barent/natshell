@@ -7,8 +7,10 @@ path = "auto"
 # HuggingFace repo for auto-download
 hf_repo = "Qwen/Qwen3-4B-GGUF"
 hf_file = "Qwen3-4B-Q4_K_M.gguf"
-# Context window size (tokens) — 8192 is a good balance of memory vs capability
-n_ctx = 8192
+# Context window size (tokens).
+# 0 = auto: 4096 for models ≤4B parameters, 8192 for larger models.
+# Set explicitly to override (e.g. 8192, 16384).
+n_ctx = 0
 # Number of CPU threads (0 = auto-detect based on core count)
 n_threads = 0
 # GPU layers to offload (0 = CPU only, -1 = all layers to GPU)

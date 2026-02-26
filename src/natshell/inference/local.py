@@ -25,17 +25,36 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _THINK_UNCLOSED_RE = re.compile(r"<think>(?:(?!</think>).)*$", re.DOTALL)
 
 
+def _infer_context_size(model_path: str) -> int:
+    """Infer an appropriate context size from the model filename.
+
+    Looks for a parameter-count pattern like '4B', '8B', '1.7B' in the
+    filename.  Models with ≤4B parameters get 4096; larger models get 8192.
+    Falls back to 4096 if no pattern is found.
+    """
+    name = Path(model_path).name.lower()
+    match = re.search(r"(\d+(?:\.\d+)?)b", name)
+    if match:
+        param_billions = float(match.group(1))
+        if param_billions > 4:
+            return 8192
+    return 4096
+
+
 class LocalEngine:
     """LLM inference via bundled llama.cpp (llama-cpp-python)."""
 
     def __init__(
         self,
         model_path: str,
-        n_ctx: int = 8192,
+        n_ctx: int = 0,
         n_threads: int = 0,
         n_gpu_layers: int = 0,
     ) -> None:
         from llama_cpp import Llama
+
+        if n_ctx <= 0:
+            n_ctx = _infer_context_size(model_path)
 
         self.model_path = model_path
         self.n_ctx = n_ctx
