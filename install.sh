@@ -113,6 +113,35 @@ if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v 
 fi
 ok "C++ compiler — OK"
 
+# Clipboard tool — needed for copy buttons in the TUI
+if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+    if ! command -v wl-copy &>/dev/null; then
+        warn "Wayland session detected but wl-copy is not installed."
+        echo "  Without it, copy/paste in NatShell won't reach Wayland apps."
+        install_pkg "wl-clipboard" "wl-clipboard" "wl-clipboard"
+        if command -v wl-copy &>/dev/null; then
+            ok "wl-clipboard — OK"
+        else
+            warn "wl-clipboard not installed — clipboard may not work"
+        fi
+    else
+        ok "wl-clipboard — OK"
+    fi
+else
+    if ! command -v xclip &>/dev/null && ! command -v xsel &>/dev/null; then
+        warn "No clipboard tool found (xclip or xsel)."
+        echo "  Without one, copy/paste in NatShell won't work."
+        install_pkg "xclip" "xclip" "xclip"
+        if command -v xclip &>/dev/null; then
+            ok "xclip — OK"
+        else
+            warn "xclip not installed — clipboard may not work"
+        fi
+    else
+        ok "Clipboard tool — OK"
+    fi
+fi
+
 # ─── Get source code ─────────────────────────────────────────────────────────
 
 if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then

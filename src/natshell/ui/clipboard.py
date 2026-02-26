@@ -115,7 +115,19 @@ def _build_command(backend: str) -> list[str]:
 
 
 def _build_read_command(backend: str) -> list[str] | None:
-    """Build a command to read from the clipboard, for verification."""
+    """Build a command to read from the clipboard, for verification.
+
+    On Wayland sessions, always verify via wl-paste when available —
+    even if the write backend was xclip/xsel (X11).  This catches the
+    common case where xclip writes to the X11 clipboard but Wayland
+    apps read from the separate Wayland clipboard.
+    """
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+
+    # On Wayland, prefer verifying through the Wayland clipboard
+    if session_type == "wayland" and shutil.which("wl-paste"):
+        return ["wl-paste", "--no-newline"]
+
     match backend:
         case "xclip":
             return ["xclip", "-selection", "clipboard", "-o"]
