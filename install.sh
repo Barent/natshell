@@ -46,21 +46,70 @@ info "Python $PY_VERSION — OK"
 
 # ─── System dependency checks ─────────────────────────────────────────────────
 
+# Detect package manager
+PKG_MGR=""
+if command -v apt-get &>/dev/null; then
+    PKG_MGR="apt"
+elif command -v dnf &>/dev/null; then
+    PKG_MGR="dnf"
+elif command -v pacman &>/dev/null; then
+    PKG_MGR="pacman"
+fi
+
+# Helper: offer to install a system package, or show manual instructions
+install_pkg() {
+    local apt_pkg="$1" dnf_pkg="$2" pacman_pkg="$3"
+
+    case "$PKG_MGR" in
+        apt)
+            read -rp "  Install $apt_pkg now? (requires sudo) [Y/n]: " answer
+            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+                sudo apt-get install -y "$apt_pkg"
+                return $?
+            fi
+            ;;
+        dnf)
+            read -rp "  Install $dnf_pkg now? (requires sudo) [Y/n]: " answer
+            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+                sudo dnf install -y "$dnf_pkg"
+                return $?
+            fi
+            ;;
+        pacman)
+            read -rp "  Install $pacman_pkg now? (requires sudo) [Y/n]: " answer
+            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+                sudo pacman -S --noconfirm "$pacman_pkg"
+                return $?
+            fi
+            ;;
+    esac
+
+    # Unknown distro or user declined
+    die "Please install it manually:
+  Debian/Ubuntu:  sudo apt install $apt_pkg
+  Fedora:         sudo dnf install $dnf_pkg
+  Arch:           sudo pacman -S $pacman_pkg"
+}
+
 # Verify python3-venv is available (separate package on Debian/Ubuntu)
 if ! "$PYTHON" -m venv --help &>/dev/null; then
-    die "python3-venv is required but not installed.
-  Debian/Ubuntu:  sudo apt install python3-venv
-  Fedora:         sudo dnf install python3-libs   (usually included)
-  Arch:           included with python"
+    warn "python3-venv is required but not installed."
+    install_pkg "python3-venv" "python3-libs" "python"
+    # Re-check after install
+    if ! "$PYTHON" -m venv --help &>/dev/null; then
+        die "python3-venv still not available after install attempt."
+    fi
 fi
 ok "python3-venv — OK"
 
 # Verify a C++ compiler is available (needed to build llama-cpp-python)
 if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v clang++ &>/dev/null; then
-    die "A C++ compiler is required to build llama-cpp-python.
-  Debian/Ubuntu:  sudo apt install g++
-  Fedora:         sudo dnf install gcc-c++
-  Arch:           sudo pacman -S gcc"
+    warn "A C++ compiler is required to build llama-cpp-python."
+    install_pkg "g++" "gcc-c++" "gcc"
+    # Re-check after install
+    if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v clang++ &>/dev/null; then
+        die "C++ compiler still not available after install attempt."
+    fi
 fi
 ok "C++ compiler — OK"
 
