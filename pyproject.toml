@@ -24,10 +24,6 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
-[project.urls]
-Repository = "https://github.com/Barent/natshell"
-Issues = "https://github.com/Barent/natshell/issues"
-
 dependencies = [
     "llama-cpp-python>=0.3.0",
     "textual>=1.0.0",
@@ -45,6 +41,10 @@ dev = [
     "pytest-asyncio",
     "ruff",
 ]
+
+[project.urls]
+Repository = "https://github.com/Barent/natshell"
+Issues = "https://github.com/Barent/natshell/issues"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
