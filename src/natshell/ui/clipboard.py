@@ -1,8 +1,9 @@
 """Clipboard support for NatShell.
 
-Tries real clipboard tools (xclip, xsel, wl-copy) before falling back
-to OSC52 terminal escape sequences.  VM consoles typically don't support
-OSC52, so having a real tool available is important.
+Tries real clipboard tools before falling back to OSC52 terminal escape
+sequences.  Supports macOS (pbcopy/pbpaste), WSL (clip.exe), and Linux
+(xclip, xsel, wl-copy).  VM consoles typically don't support OSC52, so
+having a real tool available is important.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +20,22 @@ _backend: str | None = None  # cached after first detection
 _wayland_warned: bool = False  # one-time warning flag
 
 
+def _is_wsl() -> bool:
+    """Quick local WSL check (avoids importing natshell.platform)."""
+    if sys.platform != "linux":
+        return False
+    try:
+        with open("/proc/version", "r") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
 def detect_backend() -> str:
     """Detect the best available clipboard backend.
 
+    On macOS, uses pbcopy/pbpaste.
+    On WSL, uses clip.exe if available.
     On Wayland sessions, prefers wl-copy before falling back to X11 tools.
     On X11 sessions, prefers xclip/xsel before wl-copy.
     Falls back to "osc52" if no tool is found.
@@ -30,6 +45,17 @@ def detect_backend() -> str:
     if _backend is not None:
         return _backend
 
+    # macOS — pbcopy is always available
+    if sys.platform == "darwin":
+        _backend = "pbcopy"
+        return _backend
+
+    # WSL — prefer clip.exe for write access to Windows clipboard
+    if _is_wsl() and shutil.which("clip.exe"):
+        _backend = "clip.exe"
+        return _backend
+
+    # Linux — Wayland/X11 detection
     session_type = os.environ.get("XDG_SESSION_TYPE", "")
 
     if session_type == "wayland":
@@ -104,6 +130,10 @@ def backend_name() -> str:
 def _build_command(backend: str) -> list[str]:
     """Build the subprocess command list for the given backend."""
     match backend:
+        case "pbcopy":
+            return ["pbcopy"]
+        case "clip.exe":
+            return ["clip.exe"]
         case "xclip":
             return ["xclip", "-selection", "clipboard"]
         case "xsel":
@@ -129,6 +159,12 @@ def _build_read_command(backend: str) -> list[str] | None:
         return ["wl-paste", "--no-newline"]
 
     match backend:
+        case "pbcopy":
+            return ["pbpaste"]
+        case "clip.exe":
+            if shutil.which("powershell.exe"):
+                return ["powershell.exe", "-c", "Get-Clipboard"]
+            return None
         case "xclip":
             return ["xclip", "-selection", "clipboard", "-o"]
         case "xsel":

@@ -1,20 +1,21 @@
 [project]
 name = "natshell"
 version = "0.1.0"
-description = "Natural language shell interface for Linux — a local-first agentic TUI powered by a bundled LLM"
+description = "Natural language shell interface — a local-first agentic TUI powered by a bundled LLM"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
     { name = "Nicholas B Considine" }
 ]
-keywords = ["shell", "natural-language", "tui", "llm", "agent", "cli", "linux"]
+keywords = ["shell", "natural-language", "tui", "llm", "agent", "cli", "linux", "macos"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
 "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

@@ -18,7 +18,7 @@ TAIL_CHARS = 1500
 DEFINITION = ToolDefinition(
     name="execute_shell",
     description=(
-        "Execute a shell command on the user's Linux system and return the output. "
+        "Execute a shell command on the user's system and return the output. "
         "Use this to run any CLI command: check system state, install packages, "
         "manage services, scan networks, analyze disk usage, process files, etc. "
         "The command runs as the current user via bash. Use sudo when elevated "

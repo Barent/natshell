@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NatShell installer
+# NatShell installer — supports Linux, macOS, and WSL
 # Usage: bash install.sh
 set -euo pipefail
 
@@ -15,6 +15,18 @@ info()  { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()    { echo -e "\033[1;32m==>\033[0m $*"; }
 warn()  { echo -e "\033[1;33mWARN:\033[0m $*"; }
 die()   { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
+
+# ─── Platform detection ─────────────────────────────────────────────────────
+
+OS="$(uname -s)"
+IS_MACOS=false
+IS_WSL=false
+
+if [[ "$OS" == "Darwin" ]]; then
+    IS_MACOS=true
+elif [[ "$OS" == "Linux" ]] && grep -qi microsoft /proc/version 2>/dev/null; then
+    IS_WSL=true
+fi
 
 # ─── Preflight checks ────────────────────────────────────────────────────────
 
@@ -48,7 +60,11 @@ info "Python $PY_VERSION — OK"
 
 # Detect package manager
 PKG_MGR=""
-if command -v apt-get &>/dev/null; then
+if [[ "$IS_MACOS" == true ]]; then
+    if command -v brew &>/dev/null; then
+        PKG_MGR="brew"
+    fi
+elif command -v apt-get &>/dev/null; then
     PKG_MGR="apt"
 elif command -v dnf &>/dev/null; then
     PKG_MGR="dnf"
@@ -58,9 +74,16 @@ fi
 
 # Helper: offer to install a system package, or show manual instructions
 install_pkg() {
-    local apt_pkg="$1" dnf_pkg="$2" pacman_pkg="$3"
+    local apt_pkg="$1" dnf_pkg="$2" pacman_pkg="$3" brew_pkg="${4:-}"
 
     case "$PKG_MGR" in
+        brew)
+            read -rp "  Install $brew_pkg now? [Y/n]: " answer
+            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+                brew install "$brew_pkg"
+                return $?
+            fi
+            ;;
         apt)
             read -rp "  Install $apt_pkg now? (requires sudo) [Y/n]: " answer
             if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
@@ -85,27 +108,48 @@ install_pkg() {
     esac
 
     # Unknown distro or user declined
-    die "Please install it manually:
+    if [[ "$IS_MACOS" == true ]]; then
+        die "Please install it manually:
+  macOS:          brew install ${brew_pkg:-$apt_pkg}"
+    else
+        die "Please install it manually:
   Debian/Ubuntu:  sudo apt install $apt_pkg
   Fedora:         sudo dnf install $dnf_pkg
   Arch:           sudo pacman -S $pacman_pkg"
+    fi
 }
 
-# Verify python3-venv is available (separate package on Debian/Ubuntu)
-if ! "$PYTHON" -m venv --help &>/dev/null; then
-    warn "python3-venv is required but not installed."
-    install_pkg "python3-venv" "python3-libs" "python"
-    # Re-check after install
+# Verify python3-venv is available (separate package on Debian/Ubuntu; bundled on macOS)
+if [[ "$IS_MACOS" != true ]]; then
     if ! "$PYTHON" -m venv --help &>/dev/null; then
-        die "python3-venv still not available after install attempt."
+        warn "python3-venv is required but not installed."
+        install_pkg "python3-venv" "python3-libs" "python"
+        # Re-check after install
+        if ! "$PYTHON" -m venv --help &>/dev/null; then
+            die "python3-venv still not available after install attempt."
+        fi
     fi
+    ok "python3-venv — OK"
+else
+    ok "python3-venv — OK (bundled with Homebrew Python)"
 fi
-ok "python3-venv — OK"
 
 # Verify a C++ compiler is available (needed to build llama-cpp-python)
 if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v clang++ &>/dev/null; then
     warn "A C++ compiler is required to build llama-cpp-python."
-    install_pkg "g++" "gcc-c++" "gcc"
+    if [[ "$IS_MACOS" == true ]]; then
+        echo "  macOS requires Xcode Command Line Tools."
+        read -rp "  Run 'xcode-select --install' now? [Y/n]: " answer
+        if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+            xcode-select --install 2>/dev/null || true
+            echo "  Follow the dialog to complete installation, then re-run install.sh."
+            exit 0
+        else
+            die "A C++ compiler is required. Install Xcode Command Line Tools: xcode-select --install"
+        fi
+    else
+        install_pkg "g++" "gcc-c++" "gcc"
+    fi
     # Re-check after install
     if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v clang++ &>/dev/null; then
         die "C++ compiler still not available after install attempt."
@@ -114,7 +158,9 @@ fi
 ok "C++ compiler — OK"
 
 # Clipboard tool — needed for copy buttons in the TUI
-if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+if [[ "$IS_MACOS" == true ]]; then
+    ok "Clipboard — OK (pbcopy built-in)"
+elif [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
     if ! command -v wl-copy &>/dev/null; then
         warn "Wayland session detected but wl-copy is not installed."
         echo "  Without it, copy/paste in NatShell won't reach Wayland apps."
@@ -188,7 +234,11 @@ ok "NatShell package installed"
 CMAKE_ARGS=""
 GPU_DETECTED=false
 
-if command -v vulkaninfo &>/dev/null 2>&1; then
+if [[ "$IS_MACOS" == true ]]; then
+    info "macOS detected — building llama-cpp-python with Metal support"
+    CMAKE_ARGS="-DGGML_METAL=on"
+    GPU_DETECTED=true
+elif command -v vulkaninfo &>/dev/null 2>&1; then
     info "Vulkan detected — building llama-cpp-python with Vulkan support"
     CMAKE_ARGS="-DGGML_VULKAN=on"
     GPU_DETECTED=true

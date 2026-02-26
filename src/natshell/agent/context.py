@@ -7,6 +7,8 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 
+from natshell.platform import is_macos
+
 
 @dataclass
 class DiskInfo:
@@ -107,11 +109,62 @@ async def _run(cmd: str) -> str:
         return ""
 
 
-async def gather_system_context() -> SystemContext:
-    """Gather system information. Non-blocking, tolerates failures."""
-    ctx = SystemContext()
+def _parse_linux_df(df_output: str) -> list[DiskInfo]:
+    """Parse Linux ``df -h --output=...`` output into DiskInfo entries."""
+    disks = []
+    for line in df_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 5:
+            disks.append(DiskInfo(
+                mount=parts[0], total=parts[1], used=parts[2],
+                available=parts[3], use_percent=parts[4],
+            ))
+    return disks
 
-    # Run all queries concurrently
+
+def _parse_macos_df(df_output: str) -> list[DiskInfo]:
+    """Parse macOS ``df -h`` output (no ``--output`` flag) into DiskInfo entries."""
+    disks = []
+    for line in df_output.splitlines():
+        parts = line.split()
+        # macOS df -h: Filesystem Size Used Avail Capacity ... Mounted on
+        if len(parts) >= 9 and parts[4].endswith("%"):
+            mount = " ".join(parts[8:])  # Mounted on may contain spaces
+            disks.append(DiskInfo(
+                mount=mount, total=parts[1], used=parts[2],
+                available=parts[3], use_percent=parts[4],
+            ))
+    return disks
+
+
+def _parse_linux_ip(ip_output: str) -> list[NetInfo]:
+    """Parse Linux ``ip -4 -o addr show`` output into NetInfo entries."""
+    interfaces = []
+    for line in ip_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and "/" in parts[1]:
+            ip, prefix = parts[1].split("/")
+            if not ip.startswith("127."):
+                interfaces.append(NetInfo(name=parts[0], ip=ip, subnet=prefix))
+    return interfaces
+
+
+def _parse_macos_ifconfig(ifconfig_output: str) -> list[NetInfo]:
+    """Parse macOS ``ifconfig | grep 'inet '`` output into NetInfo entries."""
+    interfaces = []
+    for line in ifconfig_output.splitlines():
+        line = line.strip()
+        # Format: "inet 192.168.1.5 netmask 0xffffff00 broadcast ..."
+        parts = line.split()
+        if len(parts) >= 4 and parts[0] == "inet" and not parts[1].startswith("127."):
+            ip = parts[1]
+            netmask = parts[3] if parts[2] == "netmask" else ""
+            interfaces.append(NetInfo(name="", ip=ip, subnet=netmask))
+    return interfaces
+
+
+async def _gather_linux(ctx: SystemContext) -> None:
+    """Gather system context using Linux commands."""
     (
         ctx.hostname,
         distro_line,
@@ -144,12 +197,8 @@ async def gather_system_context() -> SystemContext:
     ctx.cpu = cpu_line or "Unknown"
     ctx.has_sudo = sudo_check.strip() == "yes"
     ctx.default_gateway = gateway_line
-    ctx.username = os.environ.get("USER", "unknown")
-    ctx.is_root = os.geteuid() == 0
-    ctx.shell = os.environ.get("SHELL", "/bin/sh")
-    ctx.cwd = os.getcwd()
 
-    # Parse memory
+    # Parse memory (free -b output: Mem: total used free shared buff/cache available)
     if mem_line:
         parts = mem_line.split()
         if len(parts) >= 7:
@@ -159,27 +208,94 @@ async def gather_system_context() -> SystemContext:
             except (ValueError, IndexError):
                 pass
 
-    # Parse disk info
-    if df_output:
-        for line in df_output.splitlines():
-            parts = line.split()
-            if len(parts) >= 5:
-                ctx.disks.append(DiskInfo(
-                    mount=parts[0], total=parts[1], used=parts[2],
-                    available=parts[3], use_percent=parts[4],
-                ))
+    ctx.disks = _parse_linux_df(df_output)
+    ctx.network = _parse_linux_ip(ip_output)
 
-    # Parse network interfaces
-    if ip_output:
-        for line in ip_output.splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and "/" in parts[1]:
-                ip, prefix = parts[1].split("/")
-                if not ip.startswith("127."):
-                    ctx.network.append(NetInfo(name=parts[0], ip=ip, subnet=prefix))
+    if services_output:
+        ctx.running_services = [s.strip() for s in services_output.splitlines() if s.strip()]
+    if docker_output:
+        ctx.containers = [c.strip() for c in docker_output.splitlines() if c.strip()]
+
+
+async def _gather_macos(ctx: SystemContext) -> None:
+    """Gather system context using macOS commands."""
+    (
+        ctx.hostname,
+        distro_line,
+        ctx.kernel,
+        ctx.arch,
+        cpu_line,
+        ram_total_raw,
+        ram_avail_raw,
+        sudo_check,
+        gateway_line,
+        df_output,
+        ifconfig_output,
+        services_output,
+        docker_output,
+    ) = await asyncio.gather(
+        _run("hostname"),
+        _run("sw_vers -productName -productVersion"),
+        _run("uname -r"),
+        _run("uname -m"),
+        _run("sysctl -n machdep.cpu.brand_string"),
+        _run("sysctl -n hw.memsize"),
+        _run("vm_stat | awk '/Pages free|Pages inactive/ {sum += $NF} END {print sum * 4096}'"),
+        _run("sudo -n true 2>/dev/null && echo yes || echo no"),
+        _run("route -n get default 2>/dev/null | awk '/gateway/{print $2}'"),
+        _run("df -h | grep -vE '^(devfs|map |Filesystem)' | tail -n +1"),
+        _run("ifconfig | grep 'inet '"),
+        _run("launchctl list 2>/dev/null | awk 'NR>1 {print $3}' | head -20"),
+        _run("docker ps --format '{{.Names}} ({{.Image}})' 2>/dev/null | head -10"),
+    )
+
+    ctx.distro = distro_line.replace("\n", " ") if distro_line else "macOS"
+    ctx.cpu = cpu_line or "Unknown"
+    ctx.has_sudo = sudo_check.strip() == "yes"
+    ctx.default_gateway = gateway_line
+
+    # Parse memory
+    if ram_total_raw:
+        try:
+            ctx.ram_total_gb = int(ram_total_raw) / (1024 ** 3)
+        except ValueError:
+            pass
+    if ram_avail_raw:
+        try:
+            ctx.ram_available_gb = int(ram_avail_raw) / (1024 ** 3)
+        except ValueError:
+            pass
+
+    ctx.disks = _parse_macos_df(df_output)
+    ctx.network = _parse_macos_ifconfig(ifconfig_output)
+
+    if services_output:
+        ctx.running_services = [s.strip() for s in services_output.splitlines() if s.strip()]
+    if docker_output:
+        ctx.containers = [c.strip() for c in docker_output.splitlines() if c.strip()]
+
+
+async def gather_system_context() -> SystemContext:
+    """Gather system information. Non-blocking, tolerates failures."""
+    ctx = SystemContext()
+
+    if is_macos():
+        await _gather_macos(ctx)
+    else:
+        await _gather_linux(ctx)
+
+    # Common fields
+    ctx.username = os.environ.get("USER", "unknown")
+    ctx.is_root = os.geteuid() == 0
+    ctx.shell = os.environ.get("SHELL", "/bin/sh")
+    ctx.cwd = os.getcwd()
 
     # Detect package manager
-    for pm in ["apt", "dnf", "yum", "pacman", "zypper", "apk", "emerge"]:
+    pm_list = ["brew", "apt", "dnf", "yum", "pacman", "zypper", "apk", "emerge"]
+    if not is_macos():
+        # On Linux, don't prioritize brew
+        pm_list = ["apt", "dnf", "yum", "pacman", "zypper", "apk", "emerge", "brew"]
+    for pm in pm_list:
         check = await _run(f"which {pm} 2>/dev/null")
         if check:
             ctx.package_manager = pm
@@ -196,13 +312,5 @@ async def gather_system_context() -> SystemContext:
     ctx.installed_tools = {
         tool: bool(result) for tool, result in zip(tools_to_check, tool_checks)
     }
-
-    # Parse services
-    if services_output:
-        ctx.running_services = [s.strip() for s in services_output.splitlines() if s.strip()]
-
-    # Parse containers
-    if docker_output:
-        ctx.containers = [c.strip() for c in docker_output.splitlines() if c.strip()]
 
     return ctx

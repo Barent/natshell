@@ -70,6 +70,8 @@ always_confirm = [
     "^iptables",
     "^ufw",
     "^crontab",
+    "^brew\\s+(install|uninstall|remove|upgrade)",
+    "^launchctl\\s+(load|unload|stop|start|bootout|bootstrap)",
 ]
 
 # Commands that are blocked entirely — never executed
@@ -81,6 +83,7 @@ blocked = [
     "^dd\\s+.*of=/dev/[sh]d[a-z]\\s*$",
     "^mkfs.*\\s/dev/[sh]d[a-z][0-9]?\\s*$",
     "> /dev/[sh]d[a-z]",
+    "^diskutil\\s+eraseDisk",
 ]
 
 [ui]

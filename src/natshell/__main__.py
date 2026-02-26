@@ -129,8 +129,13 @@ def main() -> None:
         try:
             from llama_cpp import llama_supports_gpu_offload
             if config.model.n_gpu_layers != 0 and not llama_supports_gpu_offload():
+                import sys as _sys
+                if _sys.platform == "darwin":
+                    gpu_flag = "-DGGML_METAL=on"
+                else:
+                    gpu_flag = "-DGGML_VULKAN=on"
                 print("WARNING: GPU offloading requested but llama-cpp-python was built without GPU support.")
-                print('  Reinstall with: CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python --no-binary llama-cpp-python --force-reinstall')
+                print(f'  Reinstall with: CMAKE_ARGS="{gpu_flag}" pip install llama-cpp-python --no-binary llama-cpp-python --force-reinstall')
         except ImportError:
             pass
         print("Model loaded.")

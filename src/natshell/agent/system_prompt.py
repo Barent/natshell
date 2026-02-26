@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 from natshell.agent.context import SystemContext
+from natshell.platform import current_platform
+
+
+def _platform_role() -> str:
+    """Return a platform-specific role description."""
+    match current_platform():
+        case "macos":
+            return "macOS system administration assistant"
+        case "wsl":
+            return "Linux (WSL) system administration assistant"
+        case _:
+            return "Linux system administration assistant"
 
 
 def build_system_prompt(context: SystemContext) -> str:
     """Construct the full system prompt with role, rules, and system context."""
+    role = _platform_role()
     return f"""\
-You are NatShell, a Linux system administration assistant running directly on the user's machine. You help users accomplish tasks by planning and executing shell commands, then analyzing the results.
+You are NatShell, a {role} running directly on the user's machine. You help users accomplish tasks by planning and executing shell commands, then analyzing the results.
 
 IMPORTANT: You are running on the user's REAL system. Commands you execute have real effects. Be careful and precise.
 
