@@ -50,22 +50,39 @@ class LocalEngine:
         n_ctx: int = 0,
         n_threads: int = 0,
         n_gpu_layers: int = 0,
+        main_gpu: int = -1,
     ) -> None:
         from llama_cpp import Llama
 
         if n_ctx <= 0:
             n_ctx = _infer_context_size(model_path)
 
+        # Resolve main_gpu: -1 means auto-detect best GPU
+        from natshell.gpu import best_gpu_index, gpu_backend_available
+
+        resolved_gpu = main_gpu
+        if main_gpu == -1 and n_gpu_layers != 0 and gpu_backend_available():
+            resolved_gpu = best_gpu_index()
+            if resolved_gpu != 0:
+                logger.info(f"Auto-selected GPU device {resolved_gpu}")
+
         self.model_path = model_path
         self.n_ctx = n_ctx
         self.n_gpu_layers = n_gpu_layers
-        self.llm = Llama(
-            model_path=model_path,
-            n_ctx=n_ctx,
-            n_threads=n_threads or os.cpu_count() or 4,
-            n_gpu_layers=n_gpu_layers,
-            verbose=False,
-        )
+        self.main_gpu = resolved_gpu
+
+        llama_kwargs: dict[str, Any] = {
+            "model_path": model_path,
+            "n_ctx": n_ctx,
+            "n_threads": n_threads or os.cpu_count() or 4,
+            "n_gpu_layers": n_gpu_layers,
+            "verbose": False,
+        }
+        if resolved_gpu > 0 and gpu_backend_available():
+            llama_kwargs["main_gpu"] = resolved_gpu
+
+        self.llm = Llama(**llama_kwargs)
+
         if n_gpu_layers != 0:
             try:
                 from llama_cpp import llama_supports_gpu_offload
@@ -73,7 +90,7 @@ class LocalEngine:
                     logger.warning("GPU layers requested but llama-cpp-python has no GPU support — running on CPU")
             except ImportError:
                 pass
-        logger.info(f"Loaded model: {model_path} (ctx={n_ctx}, threads={n_threads})")
+        logger.info(f"Loaded model: {model_path} (ctx={n_ctx}, threads={n_threads}, main_gpu={resolved_gpu})")
 
     def engine_info(self) -> EngineInfo:
         return EngineInfo(
@@ -81,6 +98,7 @@ class LocalEngine:
             model_name=Path(self.model_path).name,
             n_ctx=self.n_ctx,
             n_gpu_layers=self.n_gpu_layers,
+            main_gpu=self.main_gpu,
         )
 
     async def chat_completion(

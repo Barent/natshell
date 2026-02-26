@@ -125,17 +125,30 @@ def main() -> None:
             n_ctx=config.model.n_ctx,
             n_threads=config.model.n_threads,
             n_gpu_layers=config.model.n_gpu_layers,
+            main_gpu=config.model.main_gpu,
         )
         try:
             from llama_cpp import llama_supports_gpu_offload
             if config.model.n_gpu_layers != 0 and not llama_supports_gpu_offload():
-                import sys as _sys
-                if _sys.platform == "darwin":
+                from natshell.gpu import detect_gpus
+                from natshell.platform import is_macos
+
+                gpus = detect_gpus()
+                if is_macos():
                     gpu_flag = "-DGGML_METAL=on"
                 else:
                     gpu_flag = "-DGGML_VULKAN=on"
+
                 print("WARNING: GPU offloading requested but llama-cpp-python was built without GPU support.")
+                if gpus:
+                    gpu = gpus[0]
+                    vram = f" ({gpu.vram_mb} MB VRAM)" if gpu.vram_mb else ""
+                    print(f"  Detected GPU: {gpu.name}{vram}")
+
                 print(f'  Reinstall with: CMAKE_ARGS="{gpu_flag}" pip install llama-cpp-python --no-binary llama-cpp-python --force-reinstall')
+
+                if not is_macos():
+                    _print_vulkan_dep_hint()
         except ImportError:
             pass
         print("Model loaded.")
@@ -168,6 +181,20 @@ def main() -> None:
     from natshell.app import NatShellApp
     app = NatShellApp(agent=agent, config=config)
     app.run()
+
+
+def _print_vulkan_dep_hint() -> None:
+    """Print distro-specific instructions for installing Vulkan build deps."""
+    import shutil
+
+    if shutil.which("dnf"):
+        print("  Install Vulkan build deps: sudo dnf install vulkan-devel glslc")
+    elif shutil.which("apt-get"):
+        print("  Install Vulkan build deps: sudo apt install libvulkan-dev glslang-tools")
+    elif shutil.which("pacman"):
+        print("  Install Vulkan build deps: sudo pacman -S vulkan-headers glslang")
+    else:
+        print("  Ensure Vulkan development headers and a GLSL shader compiler are installed.")
 
 
 def _self_update() -> None:

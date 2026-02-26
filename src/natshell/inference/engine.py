@@ -33,6 +33,7 @@ class EngineInfo:
     base_url: str = ""
     n_ctx: int = 0
     n_gpu_layers: int = 0
+    main_gpu: int | None = None
 
 
 class InferenceEngine(Protocol):

@@ -188,6 +188,64 @@ else
     fi
 fi
 
+# ─── Vulkan build dependencies (Linux only) ──────────────────────────────────
+
+if [[ "$IS_MACOS" != true ]]; then
+    # Check if there's a GPU that would benefit from Vulkan
+    HAS_GPU=false
+    if command -v vulkaninfo &>/dev/null 2>&1 || command -v nvidia-smi &>/dev/null 2>&1; then
+        HAS_GPU=true
+    elif command -v lspci &>/dev/null 2>&1; then
+        if lspci 2>/dev/null | grep -qiE 'VGA|3D|Display'; then
+            HAS_GPU=true
+        fi
+    fi
+
+    if [[ "$HAS_GPU" == true ]]; then
+        NEED_VULKAN_DEPS=false
+
+        # Check for Vulkan headers (vulkan/vulkan.h)
+        if ! pkg-config --exists vulkan 2>/dev/null; then
+            NEED_VULKAN_DEPS=true
+        fi
+
+        # Check for GLSL shader compiler (glslc or glslangValidator)
+        if ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; then
+            NEED_VULKAN_DEPS=true
+        fi
+
+        if [[ "$NEED_VULKAN_DEPS" == true ]]; then
+            info "GPU detected — checking Vulkan build dependencies..."
+
+            # Install Vulkan headers + devel
+            if ! pkg-config --exists vulkan 2>/dev/null; then
+                warn "Vulkan development headers not found (needed to build GPU support)."
+                install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers"
+            fi
+
+            # Install shader compiler
+            if ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; then
+                warn "GLSL shader compiler not found (needed to build GPU support)."
+                install_pkg "glslang-tools" "glslc" "glslang"
+            fi
+
+            # Verify after install
+            if pkg-config --exists vulkan 2>/dev/null; then
+                ok "Vulkan development headers — OK"
+            else
+                warn "Vulkan headers still not found — GPU build may fail"
+            fi
+            if command -v glslc &>/dev/null || command -v glslangValidator &>/dev/null; then
+                ok "GLSL shader compiler — OK"
+            else
+                warn "Shader compiler still not found — GPU build may fail"
+            fi
+        else
+            ok "Vulkan build dependencies — OK"
+        fi
+    fi
+fi
+
 # ─── Get source code ─────────────────────────────────────────────────────────
 
 if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
@@ -257,6 +315,26 @@ else
     "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q
 fi
 ok "llama-cpp-python installed"
+
+# Verify GPU support in the build
+if [[ "$GPU_DETECTED" == true ]]; then
+    if "$VENV_DIR/bin/python" -c "from llama_cpp import llama_supports_gpu_offload; exit(0 if llama_supports_gpu_offload() else 1)" 2>/dev/null; then
+        ok "GPU backend — verified working"
+    else
+        warn "llama-cpp-python was built without GPU support."
+        warn "  GPU acceleration will not be available."
+        if [[ "$IS_MACOS" == true ]]; then
+            warn "  To fix: ensure Xcode Command Line Tools are installed and re-run install.sh"
+        else
+            warn "  To fix: install Vulkan development packages and re-run install.sh"
+            case "$PKG_MGR" in
+                apt)  warn "    sudo apt install libvulkan-dev glslang-tools" ;;
+                dnf)  warn "    sudo dnf install vulkan-devel glslc" ;;
+                pacman) warn "    sudo pacman -S vulkan-headers glslang" ;;
+            esac
+        fi
+    fi
+fi
 
 # ─── Symlink ──────────────────────────────────────────────────────────────────
 

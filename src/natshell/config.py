@@ -16,6 +16,7 @@ class ModelConfig:
     n_ctx: int = 0  # 0 = auto (inferred from model size)
     n_threads: int = 0
     n_gpu_layers: int = -1
+    main_gpu: int = -1  # -1 = auto-detect best GPU
 
 
 @dataclass

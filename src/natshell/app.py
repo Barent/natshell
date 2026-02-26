@@ -382,6 +382,21 @@ class NatShellApp(App):
                 gpu_ok = False
             status = "[green]active[/]" if gpu_ok else "[red]unavailable (CPU-only build)[/]"
             parts.append(f"  GPU backend: {status}")
+
+            # Show detected GPU hardware
+            from natshell.gpu import detect_gpus
+            gpus = detect_gpus()
+            if gpus:
+                if info.main_gpu is not None and info.main_gpu >= 0:
+                    # Find the selected GPU by device index
+                    selected = next((g for g in gpus if g.device_index == info.main_gpu), gpus[0])
+                else:
+                    selected = gpus[0]
+                vram = f", {selected.vram_mb} MB VRAM" if selected.vram_mb else ""
+                parts.append(f"  GPU: {selected.name}{vram}")
+                if len(gpus) > 1:
+                    parts.append(f"  Device index: {selected.device_index} (of {len(gpus)} GPUs)")
+
         remote_url = self._get_remote_base_url()
         if remote_url:
             parts.append(f"\n[dim]Tip: /model list — see available remote models[/]")
@@ -479,6 +494,7 @@ class NatShellApp(App):
                 n_ctx=mc.n_ctx,
                 n_threads=mc.n_threads,
                 n_gpu_layers=mc.n_gpu_layers,
+                main_gpu=mc.main_gpu,
             )
             await self.agent.swap_engine(engine)
             conversation.mount(SystemMessage(
@@ -548,6 +564,7 @@ class NatShellApp(App):
                 n_ctx=mc.n_ctx,
                 n_threads=mc.n_threads,
                 n_gpu_layers=mc.n_gpu_layers,
+                main_gpu=mc.main_gpu,
             )
             await self.agent.swap_engine(engine)
 
