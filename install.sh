@@ -96,9 +96,9 @@ install_pkg() {
             fi
             ;;
         rpm-ostree)
-            read -rp "  Install $dnf_pkg now? (requires sudo, uses rpm-ostree --apply-live) [Y/n]: " answer
+            read -rp "  Install $dnf_pkg now? (requires sudo, uses rpm-ostree) [Y/n]: " answer
             if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
-                sudo rpm-ostree install --apply-live "$dnf_pkg"
+                sudo rpm-ostree install --idempotent "$dnf_pkg"
                 return $?
             fi
             ;;
@@ -126,7 +126,7 @@ install_pkg() {
         die "Please install it manually:
   Debian/Ubuntu:  sudo apt install $apt_pkg
   Fedora:         sudo dnf install $dnf_pkg
-  Fedora Atomic:  sudo rpm-ostree install --apply-live $dnf_pkg
+  Fedora Atomic:  sudo rpm-ostree install $dnf_pkg  (then reboot)
   Arch:           sudo pacman -S $pacman_pkg"
     fi
 }
@@ -168,6 +168,16 @@ if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v 
     fi
 fi
 ok "C++ compiler — OK"
+
+# Verify cmake is available (needed to build llama-cpp-python with GPU support)
+# Prefer system cmake, but pip-installed cmake works fine and avoids rpm-ostree reboots
+if ! command -v cmake &>/dev/null; then
+    info "cmake not found — will install via pip during build"
+    NEED_PIP_CMAKE=true
+else
+    ok "cmake — OK"
+    NEED_PIP_CMAKE=false
+fi
 
 # Clipboard tool — needed for copy buttons in the TUI
 if [[ "$IS_MACOS" == true ]]; then
@@ -256,6 +266,15 @@ if [[ "$IS_MACOS" != true ]]; then
             else
                 warn "Shader compiler still not found — GPU build may fail"
             fi
+
+            # On Fedora Atomic, layered packages need a reboot to take effect
+            if [[ "$PKG_MGR" == "rpm-ostree" ]]; then
+                if ! pkg-config --exists vulkan 2>/dev/null || { ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; }; then
+                    warn "On Fedora Atomic, layered packages take effect after reboot."
+                    warn "  Reboot, then re-run install.sh to build with GPU support."
+                    warn "  (Continuing with CPU-only build for now.)"
+                fi
+            fi
         else
             ok "Vulkan build dependencies — OK"
         fi
@@ -324,6 +343,13 @@ else
     info "No GPU detected — building llama-cpp-python for CPU"
 fi
 
+# Ensure cmake is available in the venv for the build
+if [[ "${NEED_PIP_CMAKE:-false}" == true ]]; then
+    info "Installing cmake via pip..."
+    "$VENV_DIR/bin/pip" install cmake -q
+    ok "cmake installed via pip"
+fi
+
 info "Installing llama-cpp-python (this may take a few minutes)..."
 if [[ -n "$CMAKE_ARGS" ]]; then
     CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir -q
@@ -344,10 +370,10 @@ if [[ "$GPU_DETECTED" == true ]]; then
         else
             warn "  To fix: install Vulkan development packages and re-run install.sh"
             case "$PKG_MGR" in
-                apt)  warn "    sudo apt install libvulkan-dev glslang-tools" ;;
-                rpm-ostree) warn "    sudo rpm-ostree install --apply-live vulkan-devel glslc" ;;
-                dnf)  warn "    sudo dnf install vulkan-devel glslc" ;;
-                pacman) warn "    sudo pacman -S vulkan-headers glslang" ;;
+                apt)  warn "    sudo apt install libvulkan-dev glslang-tools cmake" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel glslc cmake  (then reboot)" ;;
+                dnf)  warn "    sudo dnf install vulkan-devel glslc cmake" ;;
+                pacman) warn "    sudo pacman -S vulkan-headers glslang cmake" ;;
             esac
         fi
     fi

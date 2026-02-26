@@ -189,7 +189,8 @@ def _print_vulkan_dep_hint() -> None:
     from pathlib import Path
 
     if shutil.which("rpm-ostree") and Path("/run/ostree-booted").exists():
-        print("  Install Vulkan build deps: sudo rpm-ostree install --apply-live vulkan-devel glslc")
+        print("  Install Vulkan build deps: sudo rpm-ostree install vulkan-devel glslc")
+        print("  Then reboot and re-run install.sh")
     elif shutil.which("dnf"):
         print("  Install Vulkan build deps: sudo dnf install vulkan-devel glslc")
     elif shutil.which("apt-get"):
