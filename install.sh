@@ -119,6 +119,10 @@ if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
     # Running from an existing checkout — copy to install dir
     if [[ "$SCRIPT_DIR" != "$INSTALL_DIR" ]]; then
         info "Copying source from $SCRIPT_DIR to $INSTALL_DIR..."
+        # Remove stale install dir (may be root-owned from a previous sudo install)
+        if [[ -d "$INSTALL_DIR" ]]; then
+            rm -rf "$INSTALL_DIR" 2>/dev/null || sudo rm -rf "$INSTALL_DIR"
+        fi
         mkdir -p "$INSTALL_DIR"
         cp -a "$SCRIPT_DIR/." "$INSTALL_DIR/"
         # Clean build artifacts from the copy
