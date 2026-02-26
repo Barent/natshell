@@ -81,11 +81,14 @@ def copy(text: str, app=None) -> bool:
         proc = subprocess.run(
             cmd,
             input=text,
-            capture_output=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             text=True,
             timeout=5,
         )
-        return proc.returncode == 0
+        if proc.returncode != 0:
+            return False
+        return _verify_copy(backend)
     except Exception:
         return False
 
@@ -109,6 +112,38 @@ def _build_command(backend: str) -> list[str]:
             return ["wl-copy"]
         case _:
             raise ValueError(f"Unknown clipboard backend: {backend}")
+
+
+def _build_read_command(backend: str) -> list[str] | None:
+    """Build a command to read from the clipboard, for verification."""
+    match backend:
+        case "xclip":
+            return ["xclip", "-selection", "clipboard", "-o"]
+        case "xsel":
+            return ["xsel", "--clipboard", "--output"]
+        case "wl-copy":
+            if shutil.which("wl-paste"):
+                return ["wl-paste", "--no-newline"]
+            return None
+        case _:
+            return None
+
+
+def _verify_copy(backend: str) -> bool:
+    """Read back from the clipboard to verify it was populated."""
+    read_cmd = _build_read_command(backend)
+    if read_cmd is None:
+        return True  # can't verify, assume success
+    try:
+        result = subprocess.run(
+            read_cmd, capture_output=True, text=True, timeout=2,
+        )
+        if result.returncode != 0 or not result.stdout:
+            logger.warning("Clipboard verify failed: backend %s wrote OK but read-back empty", backend)
+            return False
+        return True
+    except Exception:
+        return True  # verification errored, assume the write worked
 
 
 def _reset() -> None:

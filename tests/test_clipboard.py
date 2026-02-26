@@ -83,66 +83,80 @@ class TestDetectBackend:
 
 class TestCopy:
     def test_copy_with_xclip_success(self):
-        with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-            mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
-            detect_backend()
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
 
         with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+            mock_run.return_value = MagicMock(returncode=0, stdout="hello")
             assert copy("hello") is True
-            mock_run.assert_called_once_with(
-                ["xclip", "-selection", "clipboard"],
-                input="hello",
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            # First call: write, second call: verify read-back
+            write_call = mock_run.call_args_list[0]
+            assert write_call.args[0] == ["xclip", "-selection", "clipboard"]
+            assert write_call.kwargs["input"] == "hello"
+            verify_call = mock_run.call_args_list[1]
+            assert verify_call.args[0] == ["xclip", "-selection", "clipboard", "-o"]
 
     def test_copy_with_xsel_success(self):
-        with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-            mock_which.side_effect = lambda t: "/usr/bin/xsel" if t == "xsel" else None
-            detect_backend()
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xsel" if t == "xsel" else None
+                detect_backend()
 
         with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+            mock_run.return_value = MagicMock(returncode=0, stdout="hello")
             assert copy("hello") is True
-            mock_run.assert_called_once_with(
-                ["xsel", "--clipboard", "--input"],
-                input="hello",
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            write_call = mock_run.call_args_list[0]
+            assert write_call.args[0] == ["xsel", "--clipboard", "--input"]
+            verify_call = mock_run.call_args_list[1]
+            assert verify_call.args[0] == ["xsel", "--clipboard", "--output"]
 
     def test_copy_with_wl_copy_success(self):
         with patch("natshell.ui.clipboard.shutil.which") as mock_which:
             mock_which.side_effect = lambda t: "/usr/bin/wl-copy" if t == "wl-copy" else None
             detect_backend()
 
+        with patch("natshell.ui.clipboard.shutil.which") as mock_which2:
+            mock_which2.return_value = "/usr/bin/wl-paste"
+            with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="hello")
+                assert copy("hello") is True
+                write_call = mock_run.call_args_list[0]
+                assert write_call.args[0] == ["wl-copy"]
+                verify_call = mock_run.call_args_list[1]
+                assert verify_call.args[0] == ["wl-paste", "--no-newline"]
+
+    def test_copy_verify_fails_returns_false(self):
+        """Write succeeds but read-back is empty — daemon died."""
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
+
         with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            assert copy("hello") is True
-            mock_run.assert_called_once_with(
-                ["wl-copy"],
-                input="hello",
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            # Write returns 0 but verify read-back returns empty
+            mock_run.side_effect = [
+                MagicMock(returncode=0),           # write
+                MagicMock(returncode=0, stdout=""), # verify: empty
+            ]
+            assert copy("hello") is False
 
     def test_copy_failure_returns_false(self):
-        with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-            mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
-            detect_backend()
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
 
         with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1)
             assert copy("hello") is False
 
     def test_copy_exception_returns_false(self):
-        with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-            mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
-            detect_backend()
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
 
         with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="xclip", timeout=5)
