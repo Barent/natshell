@@ -20,6 +20,8 @@ _TOOL_CALL_RE = re.compile(
 )
 # Regex to match <think>...</think> blocks (including empty ones)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+# Regex to match unclosed <think> blocks (truncated responses)
+_THINK_UNCLOSED_RE = re.compile(r"<think>(?:(?!</think>).)*$", re.DOTALL)
 
 
 class LocalEngine:
@@ -56,6 +58,10 @@ class LocalEngine:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
 
         # llama-cpp-python's create_chat_completion is synchronous
         response = await asyncio.to_thread(self.llm.create_chat_completion, **kwargs)
@@ -110,6 +116,7 @@ class LocalEngine:
 
         # Strip <think> and <tool_call> tags from content
         content = _THINK_RE.sub("", content)
+        content = _THINK_UNCLOSED_RE.sub("", content)  # handle truncated think blocks
         content = _TOOL_CALL_RE.sub("", content)
         content = content.strip() or None
 

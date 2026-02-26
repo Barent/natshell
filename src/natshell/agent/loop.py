@@ -100,7 +100,9 @@ class AgentLoop:
             if result.finish_reason == "length" and not result.tool_calls:
                 raw = result.content or ""
                 # Check if content is only <think> residue or empty
-                stripped = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                # Strip both closed and unclosed <think> blocks
+                stripped = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+                stripped = re.sub(r"<think>(?:(?!</think>).)*$", "", stripped, flags=re.DOTALL).strip()
                 if not stripped:
                     yield AgentEvent(
                         type=EventType.ERROR,
