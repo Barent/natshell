@@ -153,13 +153,16 @@ ok "NatShell package installed"
 # ─── Detect GPU and install llama-cpp-python ──────────────────────────────────
 
 CMAKE_ARGS=""
+GPU_DETECTED=false
 
 if command -v vulkaninfo &>/dev/null 2>&1; then
     info "Vulkan detected — building llama-cpp-python with Vulkan support"
     CMAKE_ARGS="-DGGML_VULKAN=on"
+    GPU_DETECTED=true
 elif command -v nvidia-smi &>/dev/null 2>&1; then
     info "NVIDIA GPU detected — building llama-cpp-python with CUDA support"
     CMAKE_ARGS="-DGGML_CUDA=on"
+    GPU_DETECTED=true
 else
     info "No GPU detected — building llama-cpp-python for CPU"
 fi
@@ -198,13 +201,15 @@ echo "  Select a model preset:"
 echo ""
 echo "    1) Light    — Qwen3-4B  (~2.5 GB, low RAM)"
 echo "    2) Standard — Qwen3-8B  (~5 GB, better quality)"
-echo "    3) Remote only — use an Ollama server (no local download)"
-echo "    4) Skip — configure later"
+echo "    3) Both     — download Light + Standard (~7.5 GB)"
+echo "    4) Remote only — use an Ollama server (no local download)"
+echo "    5) Skip — configure later"
 echo ""
 read -rp "  Choice [1]: " model_choice
 model_choice="${model_choice:-1}"
 
 DOWNLOAD_MODEL=false
+DOWNLOAD_BOTH=false
 SETUP_OLLAMA=false
 WRITE_MODEL_CONFIG=false
 HF_REPO=""
@@ -223,10 +228,17 @@ case "$model_choice" in
         HF_FILE="Qwen3-8B-Q4_K_M.gguf"
         ;;
     3)
+        info "Both models selected (Qwen3-4B + Qwen3-8B)"
+        DOWNLOAD_BOTH=true
+        WRITE_MODEL_CONFIG=true
+        HF_REPO="Qwen/Qwen3-8B-GGUF"
+        HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+        ;;
+    4)
         info "Remote only — skipping local model download"
         SETUP_OLLAMA=true
         ;;
-    4)
+    5)
         info "Skipping setup. Run 'natshell' later to configure."
         ;;
     *)
@@ -237,7 +249,7 @@ case "$model_choice" in
 esac
 
 # Offer Ollama setup for local model options
-if [[ "$model_choice" == "1" || "$model_choice" == "2" ]]; then
+if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" ]]; then
     echo ""
     read -rp "  Configure a remote Ollama server too? [y/N]: " ollama_answer
     if [[ "${ollama_answer,,}" == "y" ]]; then
@@ -304,7 +316,8 @@ fi
 
 # ─── Write Config ────────────────────────────────────────────────────────────
 
-if [[ "$WRITE_MODEL_CONFIG" == true || -n "$OLLAMA_URL" ]]; then
+# Write config if any section needs non-default values
+if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true || -n "$OLLAMA_URL" ]]; then
     # Back up existing config if present
     if [[ -f "$CONFIG_FILE" ]]; then
         cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
@@ -314,15 +327,20 @@ if [[ "$WRITE_MODEL_CONFIG" == true || -n "$OLLAMA_URL" ]]; then
     # Build config content (only sections that differ from defaults)
     config_content=""
 
-    if [[ "$WRITE_MODEL_CONFIG" == true ]]; then
-        config_content="[model]
-hf_repo = \"${HF_REPO}\"
-hf_file = \"${HF_FILE}\"
-"
+    # [model] section — written for 8B preset and/or GPU detection
+    if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true ]]; then
+        config_content="[model]"$'\n'
+        if [[ "$WRITE_MODEL_CONFIG" == true ]]; then
+            config_content+="hf_repo = \"${HF_REPO}\""$'\n'
+            config_content+="hf_file = \"${HF_FILE}\""$'\n'
+        fi
+        if [[ "$GPU_DETECTED" == true ]]; then
+            config_content+="n_gpu_layers = -1"$'\n'
+        fi
+        config_content+=$'\n'
     fi
 
     if [[ -n "$OLLAMA_URL" ]]; then
-        [[ -n "$config_content" ]] && config_content+=$'\n'
         config_content+="[ollama]
 url = \"${OLLAMA_URL}\"
 default_model = \"${OLLAMA_MODEL}\"
@@ -337,7 +355,23 @@ fi
 
 # ─── Model Download ──────────────────────────────────────────────────────────
 
-if [[ "$DOWNLOAD_MODEL" == true ]]; then
+if [[ "$DOWNLOAD_BOTH" == true ]]; then
+    echo ""
+    info "Downloading Light model (Qwen3-4B)..."
+    "$VENV_DIR/bin/python" -c "
+from huggingface_hub import hf_hub_download
+from pathlib import Path
+model_dir = Path.home() / '.local' / 'share' / 'natshell' / 'models'
+model_dir.mkdir(parents=True, exist_ok=True)
+hf_hub_download(repo_id='Qwen/Qwen3-4B-GGUF', filename='Qwen3-4B-Q4_K_M.gguf', local_dir=str(model_dir))
+print('Done.')
+"
+    ok "Light model downloaded"
+
+    info "Downloading Standard model (Qwen3-8B)..."
+    "$SYMLINK" --download
+    ok "Standard model downloaded"
+elif [[ "$DOWNLOAD_MODEL" == true ]]; then
     echo ""
     info "Downloading model..."
     "$SYMLINK" --download

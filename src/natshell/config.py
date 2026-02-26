@@ -15,7 +15,7 @@ class ModelConfig:
     hf_file: str = "Qwen3-4B-Q4_K_M.gguf"
     n_ctx: int = 8192
     n_threads: int = 0
-    n_gpu_layers: int = 0
+    n_gpu_layers: int = -1
 
 
 @dataclass
