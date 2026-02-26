@@ -169,16 +169,6 @@ if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v 
 fi
 ok "C++ compiler — OK"
 
-# Verify cmake is available (needed to build llama-cpp-python with GPU support)
-# Prefer system cmake, but pip-installed cmake works fine and avoids rpm-ostree reboots
-if ! command -v cmake &>/dev/null; then
-    info "cmake not found — will install via pip during build"
-    NEED_PIP_CMAKE=true
-else
-    ok "cmake — OK"
-    NEED_PIP_CMAKE=false
-fi
-
 # Clipboard tool — needed for copy buttons in the TUI
 if [[ "$IS_MACOS" == true ]]; then
     ok "Clipboard — OK (pbcopy built-in)"
@@ -315,14 +305,15 @@ info "Creating virtual environment..."
 "$PYTHON" -m venv "$VENV_DIR"
 ok "Virtual environment created at $VENV_DIR"
 
-# ─── Install NatShell package ─────────────────────────────────────────────────
+# ─── Install packages ─────────────────────────────────────────────────────────
 
-info "Installing NatShell..."
 "$VENV_DIR/bin/pip" install --upgrade pip -q
-"$VENV_DIR/bin/pip" install -e "$INSTALL_DIR" -q
-ok "NatShell package installed"
 
 # ─── Detect GPU and install llama-cpp-python ──────────────────────────────────
+# llama-cpp-python MUST be installed before the natshell package.
+# If pip installs it as a natshell dependency, it pulls a pre-built CPU-only
+# binary wheel from PyPI — and the later GPU-flagged install becomes a no-op
+# because the requirement is already satisfied.
 
 CMAKE_ARGS=""
 GPU_DETECTED=false
@@ -343,13 +334,6 @@ else
     info "No GPU detected — building llama-cpp-python for CPU"
 fi
 
-# Ensure cmake is available in the venv for the build
-if [[ "${NEED_PIP_CMAKE:-false}" == true ]]; then
-    info "Installing cmake via pip..."
-    "$VENV_DIR/bin/pip" install cmake -q
-    ok "cmake installed via pip"
-fi
-
 info "Installing llama-cpp-python (this may take a few minutes)..."
 if [[ -n "$CMAKE_ARGS" ]]; then
     CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir -q
@@ -357,6 +341,14 @@ else
     "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q
 fi
 ok "llama-cpp-python installed"
+
+# ─── Install NatShell package ─────────────────────────────────────────────────
+# llama-cpp-python is already installed above with GPU support, so pip will
+# see the requirement is satisfied and skip it.
+
+info "Installing NatShell..."
+"$VENV_DIR/bin/pip" install -e "$INSTALL_DIR" -q
+ok "NatShell package installed"
 
 # Verify GPU support in the build
 if [[ "$GPU_DETECTED" == true ]]; then
@@ -370,10 +362,10 @@ if [[ "$GPU_DETECTED" == true ]]; then
         else
             warn "  To fix: install Vulkan development packages and re-run install.sh"
             case "$PKG_MGR" in
-                apt)  warn "    sudo apt install libvulkan-dev glslang-tools cmake" ;;
-                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel glslc cmake  (then reboot)" ;;
-                dnf)  warn "    sudo dnf install vulkan-devel glslc cmake" ;;
-                pacman) warn "    sudo pacman -S vulkan-headers glslang cmake" ;;
+                apt)  warn "    sudo apt install libvulkan-dev glslang-tools" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel glslc  (then reboot)" ;;
+                dnf)  warn "    sudo dnf install vulkan-devel glslc" ;;
+                pacman) warn "    sudo pacman -S vulkan-headers glslang" ;;
             esac
         fi
     fi
