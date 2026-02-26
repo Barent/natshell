@@ -37,12 +37,16 @@ fi
 
 info "Python $PY_VERSION — OK"
 
-# ─── System dependencies ─────────────────────────────────────────────────────
+# ─── System dependency checks ─────────────────────────────────────────────────
 
-info "Installing system dependencies..."
-apt-get update -qq
-apt-get install -y -qq python3-venv xclip git >/dev/null 2>&1
-ok "System dependencies installed (python3-venv, xclip, git)"
+# Verify python3-venv is available (separate package on Debian/Ubuntu)
+if ! "$PYTHON" -m venv --help &>/dev/null; then
+    die "python3-venv is required but not installed.
+  Debian/Ubuntu:  sudo apt install python3-venv
+  Fedora:         sudo dnf install python3-libs   (usually included)
+  Arch:           included with python"
+fi
+ok "python3-venv — OK"
 
 # ─── Get source code ─────────────────────────────────────────────────────────
 
@@ -105,21 +109,179 @@ ok "llama-cpp-python installed"
 ln -sf "$VENV_DIR/bin/natshell" "$SYMLINK"
 ok "Symlink created: $SYMLINK -> $VENV_DIR/bin/natshell"
 
-# ─── Model download ──────────────────────────────────────────────────────────
+# ─── Interactive Setup ────────────────────────────────────────────────────────
+
+# Determine real user home for config/model paths
+if [[ -n "${SUDO_USER:-}" ]]; then
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    USER_HOME="$HOME"
+fi
+
+CONFIG_DIR="$USER_HOME/.config/natshell"
+CONFIG_FILE="$CONFIG_DIR/config.toml"
 
 echo ""
-read -rp "Download the default model now (~2.5 GB)? [y/N] " answer
-if [[ "${answer,,}" == "y" ]]; then
-    # Run as the real user if invoked via sudo, otherwise as root
+echo "  ─── NatShell Setup ───"
+echo ""
+echo "  Select a model preset:"
+echo ""
+echo "    1) Light    — Qwen3-4B  (~2.5 GB, low RAM)"
+echo "    2) Standard — Qwen3-8B  (~5 GB, better quality)"
+echo "    3) Remote only — use an Ollama server (no local download)"
+echo "    4) Skip — configure later"
+echo ""
+read -rp "  Choice [1]: " model_choice
+model_choice="${model_choice:-1}"
+
+DOWNLOAD_MODEL=false
+SETUP_OLLAMA=false
+WRITE_MODEL_CONFIG=false
+HF_REPO=""
+HF_FILE=""
+
+case "$model_choice" in
+    1)
+        info "Light preset selected (Qwen3-4B)"
+        DOWNLOAD_MODEL=true
+        ;;
+    2)
+        info "Standard preset selected (Qwen3-8B)"
+        DOWNLOAD_MODEL=true
+        WRITE_MODEL_CONFIG=true
+        HF_REPO="Qwen/Qwen3-8B-GGUF"
+        HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+        ;;
+    3)
+        info "Remote only — skipping local model download"
+        SETUP_OLLAMA=true
+        ;;
+    4)
+        info "Skipping setup. Run 'natshell' later to configure."
+        ;;
+    *)
+        warn "Invalid choice '$model_choice', defaulting to Light preset"
+        model_choice=1
+        DOWNLOAD_MODEL=true
+        ;;
+esac
+
+# Offer Ollama setup for local model options
+if [[ "$model_choice" == "1" || "$model_choice" == "2" ]]; then
+    echo ""
+    read -rp "  Configure a remote Ollama server too? [y/N]: " ollama_answer
+    if [[ "${ollama_answer,,}" == "y" ]]; then
+        SETUP_OLLAMA=true
+    fi
+fi
+
+# ─── Ollama Setup ────────────────────────────────────────────────────────────
+
+OLLAMA_URL=""
+OLLAMA_MODEL=""
+
+if [[ "$SETUP_OLLAMA" == true ]]; then
+    echo ""
+    echo "  ─── Ollama Server Setup ───"
+    echo ""
+    read -rp "  Server URL [http://localhost:11434]: " ollama_url_input
+    OLLAMA_URL="${ollama_url_input:-http://localhost:11434}"
+
+    # Ping the server
+    echo ""
+    info "Checking server at $OLLAMA_URL..."
+    if curl -sf "${OLLAMA_URL%/}/" --connect-timeout 5 >/dev/null 2>&1; then
+        ok "Server is reachable"
+
+        # List available models
+        models_json=$(curl -sf "${OLLAMA_URL%/}/api/tags" --connect-timeout 5 2>/dev/null || true)
+        if [[ -n "$models_json" ]]; then
+            echo ""
+            echo "$models_json" | "$PYTHON" -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    models = data.get('models', [])
+    if models:
+        print('  Available models:')
+        for m in models:
+            name = m.get('name', '?')
+            size_gb = m.get('size', 0) / (1024**3)
+            print(f'    - {name}  ({size_gb:.1f} GB)')
+    else:
+        print('  No models found on server.')
+except Exception:
+    print('  Could not parse model list.')
+" 2>/dev/null || echo "  Could not query model list."
+        fi
+
+        echo ""
+        read -rp "  Default model name [qwen3:4b]: " ollama_model_input
+        OLLAMA_MODEL="${ollama_model_input:-qwen3:4b}"
+    else
+        warn "Server not reachable at $OLLAMA_URL"
+        echo ""
+        read -rp "  Save this URL anyway for later? [Y/n]: " save_anyway
+        if [[ -z "$save_anyway" || "${save_anyway,,}" == "y" ]]; then
+            read -rp "  Default model name [qwen3:4b]: " ollama_model_input
+            OLLAMA_MODEL="${ollama_model_input:-qwen3:4b}"
+        else
+            info "Skipping Ollama configuration"
+            OLLAMA_URL=""
+        fi
+    fi
+fi
+
+# ─── Write Config ────────────────────────────────────────────────────────────
+
+if [[ "$WRITE_MODEL_CONFIG" == true || -n "$OLLAMA_URL" ]]; then
+    # Back up existing config if present
+    if [[ -f "$CONFIG_FILE" ]]; then
+        cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
+        info "Existing config backed up to config.toml.bak"
+    fi
+
+    # Build config content (only sections that differ from defaults)
+    config_content=""
+
+    if [[ "$WRITE_MODEL_CONFIG" == true ]]; then
+        config_content="[model]
+hf_repo = \"${HF_REPO}\"
+hf_file = \"${HF_FILE}\"
+"
+    fi
+
+    if [[ -n "$OLLAMA_URL" ]]; then
+        [[ -n "$config_content" ]] && config_content+=$'\n'
+        config_content+="[ollama]
+url = \"${OLLAMA_URL}\"
+default_model = \"${OLLAMA_MODEL}\"
+"
+    fi
+
+    # Write as the real user (not root)
     if [[ -n "${SUDO_USER:-}" ]]; then
-        info "Downloading model as $SUDO_USER..."
+        sudo -u "$SUDO_USER" mkdir -p "$CONFIG_DIR"
+        printf '%s' "$config_content" | sudo -u "$SUDO_USER" tee "$CONFIG_FILE" >/dev/null
+    else
+        mkdir -p "$CONFIG_DIR"
+        printf '%s' "$config_content" > "$CONFIG_FILE"
+    fi
+
+    ok "Config written to $CONFIG_FILE"
+fi
+
+# ─── Model Download ──────────────────────────────────────────────────────────
+
+if [[ "$DOWNLOAD_MODEL" == true ]]; then
+    echo ""
+    info "Downloading model..."
+    if [[ -n "${SUDO_USER:-}" ]]; then
         sudo -u "$SUDO_USER" "$SYMLINK" --download
     else
         "$SYMLINK" --download
     fi
     ok "Model downloaded"
-else
-    info "Skipping model download. Run 'natshell --download' later."
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────

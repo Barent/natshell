@@ -79,7 +79,7 @@ class CommandBlock(Vertical):
         if clipboard.copy(text, self.app):
             self.app.notify("Copied!", timeout=2)
         else:
-            self.app.notify("Copy failed — install xclip", severity="error", timeout=3)
+            self.app.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
 
 
 class BlockedMessage(Static):

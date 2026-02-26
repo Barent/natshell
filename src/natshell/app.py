@@ -499,7 +499,7 @@ class NatShellApp(App):
                 if clipboard.copy(selected, self):
                     self.notify("Copied to clipboard", timeout=2)
                 else:
-                    self.notify("Copy failed — install xclip", severity="error", timeout=3)
+                    self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
 
     def action_copy_selection(self) -> None:
         """Copy selected text to clipboard (Ctrl+Y)."""
@@ -508,7 +508,7 @@ class NatShellApp(App):
             if clipboard.copy(selected, self):
                 self.notify("Copied to clipboard", timeout=2)
             else:
-                self.notify("Copy failed — install xclip", severity="error", timeout=3)
+                self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
 
     def action_clear_chat(self) -> None:
         """Clear the conversation and agent history."""
