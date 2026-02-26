@@ -48,6 +48,15 @@ if ! "$PYTHON" -m venv --help &>/dev/null; then
 fi
 ok "python3-venv — OK"
 
+# Verify a C++ compiler is available (needed to build llama-cpp-python)
+if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v clang++ &>/dev/null; then
+    die "A C++ compiler is required to build llama-cpp-python.
+  Debian/Ubuntu:  sudo apt install g++
+  Fedora:         sudo dnf install gcc-c++
+  Arch:           sudo pacman -S gcc"
+fi
+ok "C++ compiler — OK"
+
 # ─── Get source code ─────────────────────────────────────────────────────────
 
 if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
