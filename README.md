@@ -4,22 +4,23 @@ Natural language shell interface for Linux — a local-first agentic TUI powered
 
 Type requests in plain English and NatShell plans and executes shell commands to fulfill them, using a ReAct-style agent loop with a small local model (Qwen3-4B via llama.cpp).
 
-## Quick Start
+## Install
 
 ```bash
-# Clone and set up
-git clone <repo-url> natshell && cd natshell
+git clone https://github.com/Barent/natshell.git && cd natshell
+bash install.sh
+```
+
+The installer handles everything — Python venv, GPU detection, llama.cpp build, and model download. No sudo required. Missing system dependencies (C++ compiler, etc.) are detected and offered for install automatically.
+
+### Development setup
+
+```bash
+git clone https://github.com/Barent/natshell.git && cd natshell
 python3 -m venv .venv && source .venv/bin/activate
-
-# Install (CPU-only)
 pip install -e ".[dev]"
-pip install llama-cpp-python
-
-# Or install with Vulkan GPU support
-pip install -e ".[dev]"
-CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python --no-cache-dir
-
-# Launch (downloads the model on first run)
+pip install llama-cpp-python                # CPU-only
+# CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python --no-cache-dir  # Vulkan GPU
 natshell
 ```
 

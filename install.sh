@@ -134,7 +134,7 @@ elif [[ -d "$INSTALL_DIR/.git" ]]; then
     git pull --ff-only
 else
     info "Cloning NatShell to $INSTALL_DIR..."
-    git clone https://github.com/natshell/natshell.git "$INSTALL_DIR"
+    git clone https://github.com/Barent/natshell.git "$INSTALL_DIR"
 fi
 
 # ─── Virtual environment ─────────────────────────────────────────────────────
