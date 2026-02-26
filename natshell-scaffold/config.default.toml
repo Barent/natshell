@@ -1,0 +1,79 @@
+# NatShell Configuration
+# Copy to ~/.config/natshell/config.toml to customize
+
+[model]
+# Path to GGUF model file. "auto" triggers download of default model.
+path = "auto"
+# HuggingFace repo for auto-download
+hf_repo = "Qwen/Qwen3-4B-GGUF"
+hf_file = "qwen3-4b-q4_k_m.gguf"
+# Context window size (tokens) — 8192 is a good balance of memory vs capability
+n_ctx = 8192
+# Number of CPU threads (0 = auto-detect based on core count)
+n_threads = 0
+# GPU layers to offload (0 = CPU only, -1 = all layers to GPU)
+n_gpu_layers = 0
+
+[remote]
+# Uncomment to use a remote OpenAI-compatible API instead of local model.
+# When enabled, the local model is not loaded.
+# url = "http://localhost:11434/v1"
+# model = "qwen3:4b"
+# api_key = ""
+
+[agent]
+# Maximum tool calls per user request before forcing a text response
+max_steps = 15
+# Temperature for generation — lower = more deterministic
+temperature = 0.3
+# Max tokens per model generation
+max_tokens = 2048
+
+[safety]
+# Safety mode:
+#   "confirm"  = ask user before moderate/dangerous commands (recommended)
+#   "warn"     = show warning but auto-execute
+#   "yolo"     = execute everything without confirmation (dangerous!)
+mode = "confirm"
+
+# Commands that always require user confirmation (regex patterns matched against full command)
+always_confirm = [
+    "^rm\\s",
+    "^sudo\\s",
+    "^dd\\s",
+    "^mkfs",
+    "^shutdown",
+    "^reboot",
+    "^systemctl\\s+(stop|disable|mask|restart|enable|start)",
+    "^chmod\\s+[0-7]*7",
+    "^chown",
+    "\\|\\s*tee\\s",
+    ">\\s*/etc/",
+    "^kill",
+    "^wipefs",
+    "^fdisk",
+    "^parted",
+    "^apt\\s+(install|remove|purge|autoremove)",
+    "^dnf\\s+(install|remove|erase)",
+    "^pacman\\s+-[SRU]",
+    "^pip\\s+install",
+    "^docker\\s+(rm|rmi|stop|kill|system\\s+prune)",
+    "^iptables",
+    "^ufw",
+    "^crontab",
+]
+
+# Commands that are blocked entirely — never executed
+blocked = [
+    ":(){ :|:& };:",
+    "^rm\\s+-[rR]f\\s+/\\s*$",
+    "^rm\\s+-[rR]f\\s+/\\*",
+    "^mv\\s+/\\s",
+    "^dd\\s+.*of=/dev/[sh]d[a-z]\\s*$",
+    "^mkfs.*\\s/dev/[sh]d[a-z][0-9]?\\s*$",
+    "> /dev/[sh]d[a-z]",
+]
+
+[ui]
+# Theme: "dark" or "light"
+theme = "dark"

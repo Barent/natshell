@@ -1,0 +1,46 @@
+[project]
+name = "natshell"
+version = "0.1.0"
+description = "Natural language shell interface for Linux — a local-first agentic TUI powered by a bundled LLM"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Nicholas" }
+]
+
+dependencies = [
+    "llama-cpp-python>=0.3.0",
+    "textual>=1.0.0",
+    "rich>=13.0.0",
+    "httpx>=0.27.0",
+    "huggingface-hub>=0.24",
+]
+
+[project.scripts]
+natshell = "natshell.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
