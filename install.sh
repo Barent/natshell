@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# NatShell global installer
-# Usage: sudo bash install.sh
+# NatShell installer
+# Usage: bash install.sh
 set -euo pipefail
 
-INSTALL_DIR="/opt/natshell"
+INSTALL_DIR="$HOME/.local/share/natshell/app"
 VENV_DIR="$INSTALL_DIR/.venv"
-SYMLINK="/usr/local/bin/natshell"
+BIN_DIR="$HOME/.local/bin"
+SYMLINK="$BIN_DIR/natshell"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -17,8 +18,14 @@ die()   { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
 
 # ─── Preflight checks ────────────────────────────────────────────────────────
 
-if [[ $EUID -ne 0 ]]; then
-    die "This script must be run as root (sudo bash install.sh)"
+if [[ $EUID -eq 0 ]]; then
+    warn "Running as root is not recommended — NatShell installs to your home directory."
+    echo "  Consider running without sudo:  bash install.sh"
+    echo ""
+    read -rp "  Continue as root anyway? [y/N]: " root_answer
+    if [[ "${root_answer,,}" != "y" ]]; then
+        exit 1
+    fi
 fi
 
 # Check Python version
@@ -60,12 +67,15 @@ ok "C++ compiler — OK"
 # ─── Get source code ─────────────────────────────────────────────────────────
 
 if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
-    # Running from an existing checkout — copy it to /opt/natshell
+    # Running from an existing checkout — copy to install dir
     if [[ "$SCRIPT_DIR" != "$INSTALL_DIR" ]]; then
         info "Copying source from $SCRIPT_DIR to $INSTALL_DIR..."
         mkdir -p "$INSTALL_DIR"
-        rsync -a --exclude='.venv' --exclude='__pycache__' --exclude='*.egg-info' \
-            "$SCRIPT_DIR/" "$INSTALL_DIR/"
+        cp -a "$SCRIPT_DIR/." "$INSTALL_DIR/"
+        # Clean build artifacts from the copy
+        rm -rf "$INSTALL_DIR/.venv"
+        find "$INSTALL_DIR" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+        find "$INSTALL_DIR" -name '*.egg-info' -type d -exec rm -rf {} + 2>/dev/null || true
     else
         info "Already in $INSTALL_DIR"
     fi
@@ -115,19 +125,21 @@ ok "llama-cpp-python installed"
 
 # ─── Symlink ──────────────────────────────────────────────────────────────────
 
+mkdir -p "$BIN_DIR"
 ln -sf "$VENV_DIR/bin/natshell" "$SYMLINK"
-ok "Symlink created: $SYMLINK -> $VENV_DIR/bin/natshell"
+ok "Symlink created: $SYMLINK"
+
+# Check if ~/.local/bin is in PATH
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    warn "$BIN_DIR is not in your PATH"
+    echo "  Add this to your shell profile (~/.bashrc or ~/.zshrc):"
+    echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+fi
 
 # ─── Interactive Setup ────────────────────────────────────────────────────────
 
-# Determine real user home for config/model paths
-if [[ -n "${SUDO_USER:-}" ]]; then
-    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-else
-    USER_HOME="$HOME"
-fi
-
-CONFIG_DIR="$USER_HOME/.config/natshell"
+CONFIG_DIR="$HOME/.config/natshell"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 
 echo ""
@@ -268,14 +280,8 @@ default_model = \"${OLLAMA_MODEL}\"
 "
     fi
 
-    # Write as the real user (not root)
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        sudo -u "$SUDO_USER" mkdir -p "$CONFIG_DIR"
-        printf '%s' "$config_content" | sudo -u "$SUDO_USER" tee "$CONFIG_FILE" >/dev/null
-    else
-        mkdir -p "$CONFIG_DIR"
-        printf '%s' "$config_content" > "$CONFIG_FILE"
-    fi
+    mkdir -p "$CONFIG_DIR"
+    printf '%s' "$config_content" > "$CONFIG_FILE"
 
     ok "Config written to $CONFIG_FILE"
 fi
@@ -285,11 +291,7 @@ fi
 if [[ "$DOWNLOAD_MODEL" == true ]]; then
     echo ""
     info "Downloading model..."
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        sudo -u "$SUDO_USER" "$SYMLINK" --download
-    else
-        "$SYMLINK" --download
-    fi
+    "$SYMLINK" --download
     ok "Model downloaded"
 fi
 
@@ -301,5 +303,5 @@ echo ""
 echo "  Run:       natshell"
 echo "  Config:    ~/.config/natshell/config.toml"
 echo "  Models:    ~/.local/share/natshell/models/"
-echo "  Uninstall: sudo bash $INSTALL_DIR/uninstall.sh"
+echo "  Uninstall: bash $INSTALL_DIR/uninstall.sh"
 echo ""
