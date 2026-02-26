@@ -2,7 +2,7 @@
 
 ## What is this?
 
-NatShell is an agentic TUI that provides a natural language interface to Linux. Users type requests in plain English (e.g., "scan my local network for computers") and a bundled local LLM plans and executes multi-step shell operations to fulfill them.
+NatShell is an agentic TUI that provides a natural language interface to Linux, macOS, and WSL. Users type requests in plain English (e.g., "scan my local network for computers") and a bundled local LLM plans and executes multi-step shell operations to fulfill them.
 
 ## Architecture
 
@@ -20,6 +20,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux. 
 4. Local inference uses `llama-cpp-python` with `chat_format="chatml-function-calling"` for Hermes/Qwen tool calling
 5. The agent loop is async — local inference calls are wrapped in `asyncio.to_thread()` to avoid blocking the TUI
 6. Output from commands is truncated to ~4000 chars to fit context windows
+7. Platform detection is centralized in `src/natshell/platform.py` (cached `lru_cache`). Use `is_macos()`, `is_wsl()`, `is_linux()` — don't scatter `sys.platform` checks
 
 ## Build Order
 
@@ -37,11 +38,11 @@ NatShell is an agentic TUI that provides a natural language interface to Linux. 
 ## Tech Stack
 
 - Python 3.11+
-- llama-cpp-python (with Vulkan or CPU backend)
+- llama-cpp-python (with Vulkan, Metal, or CPU backend)
 - Textual >= 1.0
 - httpx for remote API
 - huggingface-hub for model download
-- Target: Debian 13 (Trixie)
+- Platforms: Linux, macOS, WSL
 
 ## Model
 
@@ -51,12 +52,21 @@ Auto-downloaded on first run to ~/.local/share/natshell/models/
 ## Key Files Reference
 
 - `PROJECT_SCAFFOLD.md` — Full architectural specification with detailed pseudocode for every module
-- `config.default.toml` — Default configuration with all safety patterns
+- `src/natshell/platform.py` — Platform detection (macOS/WSL/Linux), used by clipboard, context, system prompt, installer
+- `config.default.toml` — Default configuration with all safety patterns (includes macOS-specific: brew, launchctl, diskutil)
 - `pyproject.toml` — Dependencies and entry point
 
 ## Testing
 
 Run tests with `pytest`. Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
+
+## Cross-Platform Notes
+
+- **Clipboard**: macOS uses `pbcopy`/`pbpaste`, WSL uses `clip.exe`/`powershell.exe Get-Clipboard`, Linux uses `xclip`/`xsel`/`wl-copy`
+- **System context** (`agent/context.py`): macOS branch uses `sw_vers`, `sysctl`, `vm_stat`, `ifconfig`, `launchctl`; Linux/WSL branch uses `lscpu`, `free`, `ip`, `systemctl`
+- **System prompt**: Role string adapts per platform ("macOS" / "Linux (WSL)" / "Linux")
+- **Installer** (`install.sh`): Detects macOS via `uname -s`, uses `brew` for packages, `xcode-select` for compiler, Metal for GPU
+- **Safety patterns**: macOS-specific patterns for `brew`, `launchctl`, `diskutil` in `config.default.toml`
 
 ## Installing for development
 
@@ -67,6 +77,8 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 # For CPU-only llama.cpp:
 pip install llama-cpp-python
-# For Vulkan (AMD GPUs):
+# For Vulkan (AMD/Linux GPUs):
 CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python
+# For Metal (macOS):
+CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python
 ```
