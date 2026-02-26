@@ -92,6 +92,8 @@ async def execute_shell(
             timeout=timeout,
             env=env,
             cwd=os.getcwd(),
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
         )
 
         stdout, stdout_truncated = _truncate_output(result.stdout)
