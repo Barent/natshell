@@ -193,9 +193,10 @@ class AgentLoop:
     def _append_tool_exchange(self, tool_call: ToolCall, result_content: str) -> None:
         """Append a tool call + result pair to the message history."""
         # Assistant message with tool call
+        # Use "" instead of None — llama-cpp-python may iterate content and choke on None
         self.messages.append({
             "role": "assistant",
-            "content": None,
+            "content": "",
             "tool_calls": [{
                 "id": tool_call.id,
                 "type": "function",

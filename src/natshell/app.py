@@ -8,7 +8,8 @@ from typing import Any
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer
+from textual.containers import ScrollableContainer, Vertical
+from textual.events import MouseUp
 from textual.widgets import Footer, Header, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
@@ -28,6 +29,15 @@ from natshell.ui.widgets import (
 )
 
 
+SLASH_COMMANDS = [
+    ("/help", "Show available commands"),
+    ("/clear", "Clear chat and model context"),
+    ("/cmd", "Execute a shell command directly"),
+    ("/model", "Show current inference engine info"),
+    ("/history", "Show conversation context size"),
+]
+
+
 class NatShellApp(App):
     """The NatShell TUI application."""
 
@@ -35,9 +45,12 @@ class NatShellApp(App):
     SUB_TITLE = "Natural Language Shell"
     CSS_PATH = Path("ui/styles.tcss")
 
+    ALLOW_SELECT = True
+
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_chat", "Clear Chat"),
+        Binding("ctrl+y", "copy_selection", "Copy", show=False),
     ]
 
     def __init__(self, agent: AgentLoop, **kwargs: Any) -> None:
@@ -48,21 +61,46 @@ class NatShellApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield ScrollableContainer(
-            Static("[dim]Welcome to NatShell. Type a request to get started.[/]\n"),
+            Static("[dim]Welcome to NatShell. Type a request to get started. Use /help for commands.[/]\n"),
             id="conversation",
         )
-        yield Input(
-            placeholder="Ask me anything about your system...",
-            id="user-input",
-        )
+        with Vertical(id="input-area"):
+            yield Static(id="slash-suggestions")
+            yield Input(
+                placeholder="Ask me anything about your system...",
+                id="user-input",
+            )
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
 
+    @on(Input.Changed, "#user-input")
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Show/hide slash command suggestions as the user types."""
+        text = event.value
+        suggestions = self.query_one("#slash-suggestions", Static)
+
+        if text.startswith("/") and " " not in text:
+            matches = [
+                (cmd, desc) for cmd, desc in SLASH_COMMANDS
+                if cmd.startswith(text.lower())
+            ]
+            if matches:
+                lines = [
+                    f"  [bold cyan]{cmd}[/]  [dim]{desc}[/]"
+                    for cmd, desc in matches
+                ]
+                suggestions.update("\n".join(lines))
+                suggestions.display = True
+                return
+
+        suggestions.display = False
+
     @on(Input.Submitted, "#user-input")
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         user_text = event.value.strip()
+        self.query_one("#slash-suggestions", Static).display = False
         if not user_text or self._busy:
             return
 
@@ -246,6 +284,10 @@ class NatShellApp(App):
             "  [bold cyan]/cmd <command>[/]  Execute a shell command directly\n"
             "  [bold cyan]/model[/]          Show current inference engine info\n"
             "  [bold cyan]/history[/]        Show conversation context size\n\n"
+            "[bold]Copy & Paste[/]\n\n"
+            "  Select text by clicking and dragging.\n"
+            "  [bold cyan]Right-click[/] or [bold cyan]Ctrl+Y[/] to copy selection.\n"
+            "  [bold cyan]Ctrl+Shift+V[/] or terminal paste to paste.\n\n"
             "[dim]Tip: Use /cmd when you know the exact command to run.[/]"
         )
         conversation.mount(HelpMessage(help_text))
@@ -275,6 +317,21 @@ class NatShellApp(App):
         conversation.mount(SystemMessage(
             f"Conversation: {msg_count} messages, ~{char_count} chars"
         ))
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        """Copy selected text to clipboard on right-click."""
+        if event.button == 3:
+            selected = self.screen.get_selected_text()
+            if selected:
+                self.copy_to_clipboard(selected)
+                self.notify("Copied to clipboard", timeout=2)
+
+    def action_copy_selection(self) -> None:
+        """Copy selected text to clipboard (Ctrl+Y)."""
+        selected = self.screen.get_selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+            self.notify("Copied to clipboard", timeout=2)
 
     def action_clear_chat(self) -> None:
         """Clear the conversation and agent history."""

@@ -25,9 +25,24 @@ Footer {
     background: #1a1a2e;
 }
 
+/* Input area (suggestions + input) */
+#input-area {
+    dock: bottom;
+    height: auto;
+}
+
+/* Slash command suggestions */
+#slash-suggestions {
+    display: none;
+    padding: 0 2;
+    margin: 0 1;
+    background: #16213e;
+    color: #e2e2e2;
+    height: auto;
+}
+
 /* User input */
 #user-input {
-    dock: bottom;
     margin: 0 1 1 1;
     background: #0f3460;
     color: #e2e2e2;

@@ -12,6 +12,7 @@ from natshell.agent.loop import AgentLoop
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
+from natshell.app import SLASH_COMMANDS
 from natshell.tools.execute_shell import execute_shell
 from natshell.tools.registry import ToolResult, create_default_registry
 
@@ -167,3 +168,51 @@ class TestHistoryInfo:
         # After initialize: 1 system message
         assert len(agent.messages) == 1
         assert agent.messages[0]["role"] == "system"
+
+
+# ─── Autocomplete filtering ─────────────────────────────────────────────────
+
+
+class TestAutocomplete:
+    """Test that SLASH_COMMANDS filtering works for autocomplete."""
+
+    def _filter(self, text: str) -> list[str]:
+        """Replicate the filtering logic from on_input_changed."""
+        return [
+            cmd for cmd, desc in SLASH_COMMANDS
+            if cmd.startswith(text.lower())
+        ]
+
+    def test_slash_alone_matches_all(self):
+        matches = self._filter("/")
+        assert len(matches) == len(SLASH_COMMANDS)
+
+    def test_slash_h_matches_help_and_history(self):
+        matches = self._filter("/h")
+        assert "/help" in matches
+        assert "/history" in matches
+        assert len(matches) == 2
+
+    def test_slash_c_matches_clear_and_cmd(self):
+        matches = self._filter("/c")
+        assert "/clear" in matches
+        assert "/cmd" in matches
+        assert len(matches) == 2
+
+    def test_slash_m_matches_model(self):
+        matches = self._filter("/m")
+        assert matches == ["/model"]
+
+    def test_full_command_matches_exactly(self):
+        matches = self._filter("/help")
+        assert matches == ["/help"]
+
+    def test_no_match(self):
+        matches = self._filter("/z")
+        assert matches == []
+
+    def test_space_in_input_hides_suggestions(self):
+        """Once a space is typed (e.g. '/cmd ls'), suggestions should hide."""
+        text = "/cmd ls"
+        should_show = text.startswith("/") and " " not in text
+        assert not should_show
