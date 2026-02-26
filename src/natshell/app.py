@@ -20,6 +20,7 @@ from natshell.inference.engine import ToolCall
 from natshell.inference.ollama import list_models, normalize_base_url, ping_server
 from natshell.safety.classifier import Risk
 from natshell.tools.execute_shell import execute_shell
+from natshell.ui import clipboard
 from natshell.ui.widgets import (
     AssistantMessage,
     BlockedMessage,
@@ -302,7 +303,8 @@ class NatShellApp(App):
             "[bold]Copy & Paste[/]\n\n"
             "  Select text by clicking and dragging.\n"
             "  [bold cyan]Right-click[/] or [bold cyan]Ctrl+Y[/] to copy selection.\n"
-            "  [bold cyan]Ctrl+Shift+V[/] or terminal paste to paste.\n\n"
+            "  [bold cyan]Ctrl+Shift+V[/] or terminal paste to paste.\n"
+            f"  Clipboard backend: [bold cyan]{clipboard.backend_name()}[/]\n\n"
             "[dim]Tip: Use /cmd when you know the exact command to run.[/]"
         )
         conversation.mount(HelpMessage(help_text))
@@ -497,15 +499,19 @@ class NatShellApp(App):
         if event.button == 3:
             selected = self.screen.get_selected_text()
             if selected:
-                self.copy_to_clipboard(selected)
-                self.notify("Copied to clipboard", timeout=2)
+                if clipboard.copy(selected, self):
+                    self.notify("Copied to clipboard", timeout=2)
+                else:
+                    self.notify("Copy failed — install xclip", severity="error", timeout=3)
 
     def action_copy_selection(self) -> None:
         """Copy selected text to clipboard (Ctrl+Y)."""
         selected = self.screen.get_selected_text()
         if selected:
-            self.copy_to_clipboard(selected)
-            self.notify("Copied to clipboard", timeout=2)
+            if clipboard.copy(selected, self):
+                self.notify("Copied to clipboard", timeout=2)
+            else:
+                self.notify("Copy failed — install xclip", severity="error", timeout=3)
 
     def action_clear_chat(self) -> None:
         """Clear the conversation and agent history."""
