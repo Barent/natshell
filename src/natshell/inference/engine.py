@@ -24,6 +24,17 @@ class CompletionResult:
     finish_reason: str = "stop"
 
 
+@dataclass
+class EngineInfo:
+    """Metadata about the current inference engine."""
+
+    engine_type: str  # "local" or "remote"
+    model_name: str = ""
+    base_url: str = ""
+    n_ctx: int = 0
+    n_gpu_layers: int = 0
+
+
 class InferenceEngine(Protocol):
     """Protocol for LLM inference backends."""
 
@@ -34,3 +45,5 @@ class InferenceEngine(Protocol):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> CompletionResult: ...
+
+    def engine_info(self) -> EngineInfo: ...

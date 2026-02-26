@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from natshell.agent.context import SystemContext
 from natshell.agent.system_prompt import build_system_prompt
-from natshell.config import AgentConfig
+from natshell.config import AgentConfig, ModelConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.tools.registry import ToolRegistry, ToolResult
@@ -49,17 +51,31 @@ class AgentLoop:
         tools: ToolRegistry,
         safety: SafetyClassifier,
         config: AgentConfig,
+        fallback_config: ModelConfig | None = None,
     ) -> None:
         self.engine = engine
         self.tools = tools
         self.safety = safety
         self.config = config
+        self.fallback_config = fallback_config
+        self._system_context: SystemContext | None = None
         self.messages: list[dict[str, Any]] = []
 
     def initialize(self, system_context: SystemContext) -> None:
         """Build the system prompt and initialize conversation."""
+        self._system_context = system_context
         system_prompt = build_system_prompt(system_context)
         self.messages = [{"role": "system", "content": system_prompt}]
+
+    async def swap_engine(self, new_engine: InferenceEngine) -> None:
+        """Replace the inference engine at runtime. Clears conversation history."""
+        old_engine = self.engine
+        self.engine = new_engine
+        self.clear_history()
+        if self._system_context:
+            self.initialize(self._system_context)
+        if hasattr(old_engine, "close"):
+            await old_engine.close()
 
     async def handle_user_message(
         self,
@@ -93,6 +109,14 @@ class AgentLoop:
                 )
             except Exception as e:
                 logger.exception("Inference error")
+                if self._can_fallback(e):
+                    fell_back = await self._try_local_fallback()
+                    if fell_back:
+                        yield AgentEvent(
+                            type=EventType.ERROR,
+                            data="Remote server unreachable. Switched to local model. History cleared.",
+                        )
+                        return
                 yield AgentEvent(type=EventType.ERROR, data=f"Inference error: {e}")
                 return
 
@@ -189,6 +213,48 @@ class AgentLoop:
             data=f"I've reached the maximum number of steps ({self.config.max_steps}). "
             f"Here's what I've done so far. You can continue with a follow-up request.",
         )
+
+    def _can_fallback(self, error: Exception) -> bool:
+        """Check if we should attempt fallback to local model."""
+        import httpx
+        from natshell.inference.remote import RemoteEngine
+
+        if not isinstance(self.engine, RemoteEngine):
+            return False
+        if self.fallback_config is None:
+            return False
+        return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
+
+    async def _try_local_fallback(self) -> bool:
+        """Attempt to load and swap to the local model. Returns True on success."""
+        if self.fallback_config is None:
+            return False
+
+        # Resolve model path
+        model_path = self.fallback_config.path
+        if model_path == "auto":
+            model_dir = Path.home() / ".local" / "share" / "natshell" / "models"
+            model_path = str(model_dir / self.fallback_config.hf_file)
+
+        if not Path(model_path).exists():
+            logger.warning("Local model not found at %s — cannot fall back", model_path)
+            return False
+
+        try:
+            from natshell.inference.local import LocalEngine
+
+            engine = await asyncio.to_thread(
+                LocalEngine,
+                model_path=model_path,
+                n_ctx=self.fallback_config.n_ctx,
+                n_threads=self.fallback_config.n_threads,
+                n_gpu_layers=self.fallback_config.n_gpu_layers,
+            )
+            await self.swap_engine(engine)
+            return True
+        except Exception:
+            logger.exception("Failed to load local model for fallback")
+            return False
 
     def _append_tool_exchange(self, tool_call: ToolCall, result_content: str) -> None:
         """Append a tool call + result pair to the message history."""

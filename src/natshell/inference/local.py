@@ -8,9 +8,10 @@ import logging
 import os
 import re
 import uuid
+from pathlib import Path
 from typing import Any
 
-from natshell.inference.engine import CompletionResult, ToolCall
+from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ class LocalEngine:
     ) -> None:
         from llama_cpp import Llama
 
+        self.model_path = model_path
+        self.n_ctx = n_ctx
+        self.n_gpu_layers = n_gpu_layers
         self.llm = Llama(
             model_path=model_path,
             n_ctx=n_ctx,
@@ -44,6 +48,14 @@ class LocalEngine:
             verbose=False,
         )
         logger.info(f"Loaded model: {model_path} (ctx={n_ctx}, threads={n_threads})")
+
+    def engine_info(self) -> EngineInfo:
+        return EngineInfo(
+            engine_type="local",
+            model_name=Path(self.model_path).name,
+            n_ctx=self.n_ctx,
+            n_gpu_layers=self.n_gpu_layers,
+        )
 
     async def chat_completion(
         self,

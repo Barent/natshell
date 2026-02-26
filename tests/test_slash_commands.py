@@ -201,7 +201,8 @@ class TestAutocomplete:
 
     def test_slash_m_matches_model(self):
         matches = self._filter("/m")
-        assert matches == ["/model"]
+        assert "/model" in matches
+        assert all(m.startswith("/model") for m in matches)
 
     def test_full_command_matches_exactly(self):
         matches = self._filter("/help")

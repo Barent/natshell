@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from natshell.inference.engine import CompletionResult, ToolCall
+from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,13 @@ class RemoteEngine:
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
+        )
+
+    def engine_info(self) -> EngineInfo:
+        return EngineInfo(
+            engine_type="remote",
+            model_name=self.model,
+            base_url=self.base_url,
         )
 
     async def close(self) -> None:

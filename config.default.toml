@@ -21,6 +21,13 @@ n_gpu_layers = -1
 # model = "qwen3:4b"
 # api_key = ""
 
+[ollama]
+# Remote server URL (Ollama or any OpenAI-compatible API).
+# Used by /model list and /model use commands.
+# url = "http://localhost:11434"
+# Default model for the remote server
+# default_model = "qwen3:4b"
+
 [agent]
 # Maximum tool calls per user request before forcing a text response
 max_steps = 15

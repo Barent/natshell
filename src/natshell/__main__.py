@@ -69,16 +69,44 @@ def main() -> None:
             return
         config.model.path = model_path
 
+    # Determine remote URL and model (CLI --remote > [remote] > [ollama])
+    remote_url = config.remote.url
+    remote_model = config.remote.model
+    remote_api_key = config.remote.api_key
+    use_remote = bool(remote_url)
+    fallback_config = None
+
+    if not remote_url and config.ollama.url:
+        from natshell.inference.ollama import normalize_base_url
+        base = normalize_base_url(config.ollama.url)
+        remote_url = f"{base}/v1"
+        remote_model = remote_model or config.ollama.default_model or "qwen3:4b"
+        use_remote = True
+
+    if not remote_model:
+        remote_model = "qwen3:4b"
+
     # Build the inference engine
-    if config.remote.url:
-        from natshell.inference.remote import RemoteEngine
-        engine = RemoteEngine(
-            base_url=config.remote.url,
-            model=config.remote.model,
-            api_key=config.remote.api_key,
-        )
-        print(f"Using remote model: {config.remote.model} at {config.remote.url}")
-    else:
+    if use_remote:
+        from natshell.inference.ollama import ping_server
+
+        print(f"Checking remote server: {remote_url}...")
+        reachable = asyncio.run(ping_server(remote_url))
+
+        if reachable:
+            from natshell.inference.remote import RemoteEngine
+            engine = RemoteEngine(
+                base_url=remote_url,
+                model=remote_model,
+                api_key=remote_api_key,
+            )
+            fallback_config = config.model
+            print(f"Using remote model: {remote_model} at {remote_url}")
+        else:
+            print(f"Remote server unreachable at {remote_url}. Falling back to local model.")
+            use_remote = False
+
+    if not use_remote:
         from natshell.inference.local import LocalEngine
         print(f"Loading model: {config.model.path}...")
         engine = LocalEngine(
@@ -104,6 +132,7 @@ def main() -> None:
         tools=tools,
         safety=safety,
         config=config.agent,
+        fallback_config=fallback_config,
     )
 
     # Gather system context and initialize agent
@@ -114,7 +143,7 @@ def main() -> None:
 
     # Launch the TUI
     from natshell.app import NatShellApp
-    app = NatShellApp(agent=agent)
+    app = NatShellApp(agent=agent, config=config)
     app.run()
 
 

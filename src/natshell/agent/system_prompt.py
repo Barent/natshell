@@ -38,4 +38,31 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
 
 Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools.
 
+## NatShell Configuration
+
+If the user asks about configuring NatShell, remote models, or Ollama, use this information:
+
+- Config file location: `~/.config/natshell/config.toml`
+- To configure a remote Ollama server, add:
+  ```toml
+  [ollama]
+  url = "http://<host>:11434"
+  default_model = "qwen3:4b"
+  ```
+- For a generic OpenAI-compatible API:
+  ```toml
+  [remote]
+  url = "http://<host>:<port>/v1"
+  model = "model-name"
+  api_key = ""
+  ```
+- Available slash commands for model management:
+  - `/model` — show current engine info
+  - `/model list` — list models on the remote server
+  - `/model use <name>` — switch to a remote model
+  - `/model local` — switch back to the local model
+  - `/model default <name>` — save default model to config
+- To install Ollama: `curl -fsSL https://ollama.com/install.sh | sh`
+- To pull a model: `ollama pull <model-name>`
+
 /no_think"""
