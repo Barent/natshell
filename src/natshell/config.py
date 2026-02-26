@@ -123,8 +123,8 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
                 setattr(config.ui, key, value)
 
 
-def save_ollama_default(model_name: str) -> Path:
-    """Persist the default Ollama model to user config.
+def save_ollama_default(model_name: str, url: str | None = None) -> Path:
+    """Persist the default Ollama model (and optionally URL) to user config.
 
     Uses simple line-based TOML editing to avoid a tomli_w dependency.
     Returns the path to the config file.
@@ -138,10 +138,11 @@ def save_ollama_default(model_name: str) -> Path:
     else:
         lines = []
 
-    # Find [ollama] section and update/insert default_model
+    # Find [ollama] section and locate existing keys
     ollama_idx = None
     next_section_idx = None
     default_model_idx = None
+    url_idx = None
 
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -152,22 +153,41 @@ def save_ollama_default(model_name: str) -> Path:
                 next_section_idx = i
             elif stripped.startswith("default_model") or stripped.startswith("# default_model"):
                 default_model_idx = i
+            elif stripped.startswith("url") or stripped.startswith("# url"):
+                url_idx = i
 
-    new_line = f'default_model = "{model_name}"\n'
+    model_line = f'default_model = "{model_name}"\n'
+    url_line = f'url = "{url}"\n' if url else None
 
     if ollama_idx is not None:
+        # Section exists — update or insert keys
+        # Insert point: end of section or before next section
+        insert_at = next_section_idx if next_section_idx is not None else len(lines)
+
         if default_model_idx is not None:
-            lines[default_model_idx] = new_line
-        elif next_section_idx is not None:
-            lines.insert(next_section_idx, new_line)
+            lines[default_model_idx] = model_line
         else:
-            lines.append(new_line)
+            lines.insert(insert_at, model_line)
+            # Adjust indices after insertion
+            if url_idx is not None and url_idx >= insert_at:
+                url_idx += 1
+            insert_at += 1
+
+        if url_line:
+            if url_idx is not None:
+                lines[url_idx] = url_line
+            else:
+                # Insert URL before default_model for readability
+                target = default_model_idx if default_model_idx is not None else insert_at
+                lines.insert(target, url_line)
     else:
         # No [ollama] section — add one at the end
         if lines and not lines[-1].endswith("\n"):
             lines.append("\n")
         lines.append("\n[ollama]\n")
-        lines.append(new_line)
+        if url_line:
+            lines.append(url_line)
+        lines.append(model_line)
 
     config_path.write_text("".join(lines))
     return config_path

@@ -175,15 +175,9 @@ class NatShellApp(App):
                         block_id = f"cmd-{event.tool_call.id}"
                         try:
                             block = self.query_one(f"#{block_id}", CommandBlock)
-                            cmd = event.tool_call.arguments.get(
-                                "command", str(event.tool_call.arguments)
-                            )
-                            block.update(
-                                CommandBlock(
-                                    cmd,
-                                    event.tool_result.output or event.tool_result.error,
-                                    event.tool_result.exit_code,
-                                ).render()
+                            block.set_result(
+                                event.tool_result.output or event.tool_result.error,
+                                event.tool_result.exit_code,
                             )
                         except Exception:
                             # Fallback: just mount a new block
@@ -301,10 +295,11 @@ class NatShellApp(App):
             "  [bold cyan]/model default <name>[/]  Save default remote model\n"
             "  [bold cyan]/history[/]               Show conversation context size\n\n"
             "[bold]Copy & Paste[/]\n\n"
-            "  Select text by clicking and dragging.\n"
-            "  [bold cyan]Right-click[/] or [bold cyan]Ctrl+Y[/] to copy selection.\n"
+            "  Click [bold cyan]Copy[/] on any command block to copy it.\n"
+            "  [bold cyan]Shift+drag[/] to select text, then use terminal copy.\n"
+            "  [bold cyan]Right-click[/] or [bold cyan]Ctrl+Y[/] to copy Textual selection.\n"
             "  [bold cyan]Ctrl+Shift+V[/] or terminal paste to paste.\n"
-            f"  Clipboard backend: [bold cyan]{clipboard.backend_name()}[/]\n\n"
+            f"  Clipboard: [bold cyan]{clipboard.backend_name()}[/]\n\n"
             "[dim]Tip: Use /cmd when you know the exact command to run.[/]"
         )
         conversation.mount(HelpMessage(help_text))
@@ -475,12 +470,14 @@ class NatShellApp(App):
             conversation.mount(SystemMessage(f"[red]Failed to load local model: {e}[/]"))
 
     def _model_set_default(self, model_name: str, conversation: ScrollableContainer) -> None:
-        """Persist the default model to user config."""
-        config_path = save_ollama_default(model_name)
-        conversation.mount(SystemMessage(
-            f"Default model set to [bold]{model_name}[/]\n"
-            f"Saved to {config_path}"
-        ))
+        """Persist the default model and remote URL to user config."""
+        remote_url = self._get_remote_base_url()
+        config_path = save_ollama_default(model_name, url=remote_url)
+        parts = [f"Default model set to [bold]{model_name}[/]"]
+        if remote_url:
+            parts.append(f"Server: {remote_url}")
+        parts.append(f"Saved to {config_path}")
+        conversation.mount(SystemMessage("\n".join(parts)))
 
     def _show_history_info(self, conversation: ScrollableContainer) -> None:
         """Show conversation context size."""

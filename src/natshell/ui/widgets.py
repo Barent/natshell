@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 
@@ -32,15 +32,54 @@ class PlanningMessage(Static):
         super().__init__(f"[dim italic]{text}[/]")
 
 
-class CommandBlock(Static):
-    """A command execution block showing the command and its output."""
+class CommandBlock(Vertical):
+    """A command execution block showing the command, output, and a copy button."""
 
     def __init__(self, command: str, output: str = "", exit_code: int = 0) -> None:
+        super().__init__()
+        self._command = command
+        self._output = output
+        self._exit_code = exit_code
+
+    def compose(self) -> ComposeResult:
+        color = "green" if self._exit_code == 0 else "red"
+        with Horizontal(classes="cmd-header"):
+            yield Static(
+                f"[bold {color}]$[/] [bold]{self._command}[/]",
+                classes="cmd-text",
+            )
+            yield Button("Copy", classes="copy-btn")
+        if self._output:
+            yield Static(self._output, classes="cmd-output")
+
+    def set_result(self, output: str, exit_code: int) -> None:
+        """Update the block with command output after execution."""
+        self._output = output
+        self._exit_code = exit_code
         color = "green" if exit_code == 0 else "red"
-        parts = [f"[bold {color}]$[/] [bold]{command}[/]"]
-        if output:
-            parts.append(f"\n{output}")
-        super().__init__("\n".join(parts))
+        try:
+            self.query_one(".cmd-text", Static).update(
+                f"[bold {color}]$[/] [bold]{self._command}[/]"
+            )
+        except Exception:
+            pass
+        existing = self.query(".cmd-output")
+        if existing:
+            existing.first().update(output)
+        elif output:
+            self.mount(Static(output, classes="cmd-output"))
+
+    @on(Button.Pressed, ".copy-btn")
+    def on_copy_pressed(self) -> None:
+        from natshell.ui import clipboard
+
+        text = f"$ {self._command}"
+        if self._output:
+            text += f"\n{self._output}"
+        if clipboard.copy(text, self.app):
+            self.app.notify("Copied!", timeout=2)
+        else:
+            self.app.notify("Copy failed — install xclip", severity="error", timeout=3)
 
 
 class BlockedMessage(Static):

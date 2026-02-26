@@ -129,3 +129,46 @@ class TestSaveOllamaDefault:
         content = config_file.read_text()
         assert 'default_model = "mistral:7b"' in content
         assert "# default_model" not in content
+
+    def test_saves_url_with_model(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        path = save_ollama_default("qwen3:8b", url="http://gpu-box:11434")
+
+        content = path.read_text()
+        assert "[ollama]" in content
+        assert 'url = "http://gpu-box:11434"' in content
+        assert 'default_model = "qwen3:8b"' in content
+
+    def test_updates_existing_url(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        config_dir = tmp_path / ".config" / "natshell"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text(textwrap.dedent("""\
+            [ollama]
+            url = "http://old-host:11434"
+            default_model = "old-model"
+        """))
+
+        save_ollama_default("new-model", url="http://new-host:11434")
+        content = config_file.read_text()
+        assert 'url = "http://new-host:11434"' in content
+        assert 'default_model = "new-model"' in content
+        assert "old-host" not in content
+        assert "old-model" not in content
+
+    def test_url_none_preserves_existing_url(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        config_dir = tmp_path / ".config" / "natshell"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.toml"
+        config_file.write_text(textwrap.dedent("""\
+            [ollama]
+            url = "http://keep-this:11434"
+            default_model = "old-model"
+        """))
+
+        save_ollama_default("new-model")
+        content = config_file.read_text()
+        assert 'url = "http://keep-this:11434"' in content
+        assert 'default_model = "new-model"' in content
