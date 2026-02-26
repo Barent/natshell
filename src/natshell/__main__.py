@@ -145,7 +145,6 @@ def _ensure_model(config) -> str:
             repo_id=config.model.hf_repo,
             filename=config.model.hf_file,
             local_dir=str(model_dir),
-            local_dir_use_symlinks=False,
         )
         print(f"Model saved to: {path}")
         return path
