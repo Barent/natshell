@@ -16,50 +16,34 @@ from natshell.inference.engine import ToolCall
 # gold star, green sparkle dots, with a neon sign box for the title.
 
 _LOGO_STATIC = (
-    "  [#00ff88]✧[/]     [bold #ffcc00]★[/]\n"
-    "       [bold #00ffff]███[/]       [#008877]╭────────────────────────╮[/]\n"
-    "      [bold #00ffff]█████[/]      [#008877]│[/]        [bold #00ffff]NatShell[/]        [#008877]│[/]\n"
-    "       [#00ccaa]███[/]       [#008877]│[/] [dim #00ccaa]Natural Language Shell[/] [#008877]│[/]\n"
-    "     [#00ccaa]███████[/]     [#008877]╰────────────────────────╯[/]\n"
-    "      [#00aa88]█████[/]\n"
-    "    [#00aa88]█████████[/]\n"
-    "       [#30304a]██[/]  [#00ff88]·[/]"
+    " [#00ff88]✧[/] [bold #ffcc00]★[/]\n"
+    "  [bold #00ffff]███[/]   [bold #00ffff]NatShell[/]\n"
+    " [#00ccaa]█████[/]\n"
+    "  [#30304a]██[/] [#00ff88]·[/]"
 )
 
 _LOGO_FRAMES = [
     _LOGO_STATIC,
-    # Frame 1: sparkle upper-right, colors rotated
+    # Frame 1: sparkle upper-right
     (
-        "        [bold #ffcc00]★[/]  [#66ffff]✧[/]\n"
-        " [#00ff88]·[/]     [#00ccaa]███[/]       [#009988]╭────────────────────────╮[/]\n"
-        "      [#00ccaa]█████[/]      [#009988]│[/]        [bold #00ffff]NatShell[/]        [#009988]│[/]\n"
-        "       [#00aa88]███[/]       [#009988]│[/] [dim #00ccaa]Natural Language Shell[/] [#009988]│[/]\n"
-        "     [#00aa88]███████[/]     [#009988]╰────────────────────────╯[/]\n"
-        "      [bold #00ffff]█████[/]\n"
-        "    [bold #00ffff]█████████[/]\n"
-        "       [#30304a]██[/]"
+        "   [bold #ffcc00]★[/] [#66ffff]✧[/]\n"
+        " [#00ff88]·[/] [#00ccaa]███[/]   [bold #00ffff]NatShell[/]\n"
+        " [#00aa88]█████[/]\n"
+        "  [#30304a]██[/]"
     ),
-    # Frame 2: sparkle upper-left, sparkle mid-right
+    # Frame 2: sparkle upper-left, dot mid-right
     (
-        "  [#66ffff]✧[/]     [bold #ffcc00]★[/]\n"
-        "       [#00aa88]███[/]       [#00aa99]╭────────────────────────╮[/]\n"
-        "      [#00aa88]█████[/]      [#00aa99]│[/]        [bold #00ffff]NatShell[/]        [#00aa99]│[/]\n"
-        "       [bold #00ffff]███[/]       [#00aa99]│[/] [dim #00ccaa]Natural Language Shell[/] [#00aa99]│[/]\n"
-        "     [bold #00ffff]███████[/]     [#00aa99]╰────────────────────────╯[/]\n"
-        "      [#00ccaa]█████[/]  [#00ff88]·[/]\n"
-        "    [#00ccaa]█████████[/]\n"
-        "       [#30304a]██[/]"
+        "[#66ffff]✧[/]  [bold #ffcc00]★[/]\n"
+        "  [#00aa88]███[/]   [bold #00ffff]NatShell[/]\n"
+        " [bold #00ffff]█████[/] [#00ff88]·[/]\n"
+        "  [#30304a]██[/]"
     ),
-    # Frame 3: sparkle between tree and box, sparkle lower-left
+    # Frame 3: dot between tree and text, dot lower-left
     (
-        "        [bold #ffcc00]★[/]\n"
-        "       [bold #00ffff]███[/]   [#00ff88]·[/]   [#009988]╭────────────────────────╮[/]\n"
-        "      [bold #00ffff]█████[/]      [#009988]│[/]        [bold #00ffff]NatShell[/]        [#009988]│[/]\n"
-        "       [#00ccaa]███[/]       [#009988]│[/] [dim #00ccaa]Natural Language Shell[/] [#009988]│[/]\n"
-        "     [#00ccaa]███████[/]     [#009988]╰────────────────────────╯[/]\n"
-        "      [#00aa88]█████[/]\n"
-        "    [#00aa88]█████████[/]\n"
-        "  [#00ff88]·[/]    [#30304a]██[/]"
+        "   [bold #ffcc00]★[/]\n"
+        "  [bold #00ffff]███[/] [#00ff88]·[/] [bold #00ffff]NatShell[/]\n"
+        " [#00ccaa]█████[/]\n"
+        " [#00ff88]·[/] [#30304a]██[/]"
     ),
 ]
 
@@ -72,13 +56,41 @@ _THINKING_FRAMES = [
 ]
 
 
-class LogoBanner(Static):
+class LogoBanner(Vertical):
     """Tree logo with neon NatShell branding and sparkle animation."""
 
+    DEFAULT_CSS = """
+    LogoBanner {
+        dock: top;
+        height: auto;
+        padding: 0 2;
+        background: #16213e;
+    }
+    LogoBanner > .logo-line {
+        height: 1;
+    }
+    LogoBanner > #banner-row {
+        height: auto;
+    }
+    """
+
     def __init__(self) -> None:
-        super().__init__(_LOGO_STATIC, id="logo-banner")
+        super().__init__(id="logo-banner")
         self._animation_timer = None
         self._frame_index = 0
+
+    def compose(self) -> ComposeResult:
+        for line in _LOGO_STATIC.split("\n"):
+            yield Static(line, classes="logo-line")
+        with Horizontal(id="banner-row"):
+            yield Button("\U0001f4cb Copy Chat", id="copy-chat-btn")
+
+    def _update_content(self, content: str) -> None:
+        lines = content.split("\n")
+        children = list(self.query(".logo-line"))
+        for i, child in enumerate(children):
+            if i < len(lines):
+                child.update(lines[i])
 
     def start_animation(self) -> None:
         """Start sparkle animation around the tree."""
@@ -91,11 +103,11 @@ class LogoBanner(Static):
             self._animation_timer.stop()
             self._animation_timer = None
         self._frame_index = 0
-        self.update(_LOGO_STATIC)
+        self._update_content(_LOGO_STATIC)
 
     def _next_frame(self) -> None:
         self._frame_index = (self._frame_index + 1) % len(_LOGO_FRAMES)
-        self.update(_LOGO_FRAMES[self._frame_index])
+        self._update_content(_LOGO_FRAMES[self._frame_index])
 
 
 class CopyableMessage(Horizontal):

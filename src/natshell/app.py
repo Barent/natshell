@@ -82,8 +82,6 @@ class NatShellApp(App):
 
     def compose(self) -> ComposeResult:
         yield LogoBanner()
-        with Horizontal(id="chat-toolbar"):
-            yield Button("\U0001f4cb Copy Chat", id="copy-chat-btn")
         yield ScrollableContainer(
             Static("[dim]Welcome to NatShell. Type a request to get started. Use /help for commands.[/]\n"),
             id="conversation",

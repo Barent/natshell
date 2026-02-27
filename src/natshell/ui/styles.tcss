@@ -4,13 +4,7 @@ Screen {
     background: #1a1a2e;
 }
 
-/* Logo banner */
-#logo-banner {
-    dock: top;
-    height: auto;
-    padding: 0 2;
-    background: #16213e;
-}
+/* Logo banner — layout set via LogoBanner.DEFAULT_CSS */
 
 Footer {
     background: #16213e;
@@ -56,13 +50,9 @@ Footer {
     border: tall #5390d9;
 }
 
-/* Chat toolbar */
-#chat-toolbar {
-    dock: top;
-    height: auto;
+/* Copy Chat button inside banner */
+#banner-row {
     align: right middle;
-    padding: 0 2;
-    background: #16213e;
 }
 
 #copy-chat-btn {
