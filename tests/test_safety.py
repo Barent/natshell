@@ -215,6 +215,18 @@ class TestToolCallClassification:
         c = _make_classifier()
         assert c.classify_tool_call("write_file", {"path": "/tmp/x", "content": "hi"}) == Risk.CONFIRM
 
+    def test_edit_file_always_confirm(self):
+        c = _make_classifier()
+        assert c.classify_tool_call("edit_file", {"path": "/tmp/x", "old_text": "a", "new_text": "b"}) == Risk.CONFIRM
+
+    def test_edit_file_sensitive_path(self):
+        c = _make_classifier()
+        assert c.classify_tool_call("edit_file", {"path": "/home/user/.ssh/config", "old_text": "a", "new_text": "b"}) == Risk.CONFIRM
+
+    def test_run_code_always_confirm(self):
+        c = _make_classifier()
+        assert c.classify_tool_call("run_code", {"language": "python", "code": "print(1)"}) == Risk.CONFIRM
+
     def test_read_file_always_safe(self):
         c = _make_classifier()
         assert c.classify_tool_call("read_file", {"path": "/etc/passwd"}) == Risk.SAFE
@@ -245,3 +257,16 @@ class TestYoloMode:
     def test_yolo_does_not_downgrade_blocked(self):
         c = _make_classifier(mode="yolo")
         assert c.classify_tool_call("execute_shell", {"command": "rm -rf /"}) == Risk.BLOCKED
+
+    def test_yolo_downgrades_edit_file(self):
+        c = _make_classifier(mode="yolo")
+        assert c.classify_tool_call("edit_file", {"path": "/tmp/x", "old_text": "a", "new_text": "b"}) == Risk.SAFE
+
+    def test_yolo_downgrades_run_code(self):
+        c = _make_classifier(mode="yolo")
+        assert c.classify_tool_call("run_code", {"language": "python", "code": "print(1)"}) == Risk.SAFE
+
+    def test_yolo_edit_file_sensitive_path_still_confirm(self):
+        """Even in yolo mode, sensitive paths on edit_file stay CONFIRM."""
+        c = _make_classifier(mode="yolo")
+        assert c.classify_tool_call("edit_file", {"path": "/home/user/.env", "old_text": "a", "new_text": "b"}) == Risk.CONFIRM

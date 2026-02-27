@@ -305,6 +305,10 @@ async def gather_system_context() -> SystemContext:
     tools_to_check = [
         "docker", "git", "nmap", "curl", "wget", "ssh", "python3",
         "node", "go", "rsync", "tmux", "vim", "htop", "jq",
+        # Languages & compilers
+        "rustc", "gcc", "g++", "clang", "javac", "ruby", "php", "perl",
+        # Package managers & build tools
+        "pip", "npm", "yarn", "cargo", "composer", "gem", "make", "cmake",
     ]
     tool_checks = await asyncio.gather(
         *[_run(f"which {tool} 2>/dev/null") for tool in tools_to_check]
