@@ -19,7 +19,11 @@ from natshell.config import NatShellConfig, save_model_config, save_ollama_defau
 from natshell.inference.engine import ToolCall
 from natshell.inference.ollama import list_models, normalize_base_url, ping_server
 from natshell.safety.classifier import Risk
-from natshell.tools.execute_shell import execute_shell
+from natshell.tools.execute_shell import (
+    execute_shell,
+    needs_sudo_password,
+    set_sudo_password,
+)
 from natshell.ui import clipboard
 from natshell.ui.commands import MODELS_DIR, ModelSwitchProvider
 from natshell.ui.widgets import (
@@ -30,6 +34,7 @@ from natshell.ui.widgets import (
     HelpMessage,
     LogoBanner,
     PlanningMessage,
+    SudoPasswordScreen,
     SystemMessage,
     ThinkingIndicator,
     UserMessage,
@@ -150,9 +155,16 @@ class NatShellApp(App):
             """Show confirmation dialog and return user's choice."""
             return await self.push_screen_wait(ConfirmScreen(tool_call))
 
+        async def password_callback(tool_call: ToolCall) -> str | None:
+            """Show sudo password dialog and return the password."""
+            command = tool_call.arguments.get("command", "")
+            return await self.push_screen_wait(SudoPasswordScreen(command))
+
         try:
             async for event in self.agent.handle_user_message(
-                user_text, confirm_callback=confirm_callback
+                user_text,
+                confirm_callback=confirm_callback,
+                password_callback=password_callback,
             ):
                 # Remove thinking indicator when we get a real event
                 if thinking and event.type != EventType.THINKING:
@@ -238,7 +250,10 @@ class NatShellApp(App):
             case "/clear":
                 self.action_clear_chat()
             case "/cmd":
-                await self._handle_cmd(args, conversation)
+                if not args:
+                    conversation.mount(SystemMessage("Usage: /cmd <command>"))
+                else:
+                    self.run_cmd(args)
             case "/model":
                 await self._handle_model_command(args, conversation)
             case "/history":
@@ -250,12 +265,11 @@ class NatShellApp(App):
 
         conversation.scroll_end()
 
-    async def _handle_cmd(self, command: str, conversation: ScrollableContainer) -> None:
-        """Execute a shell command directly, bypassing the AI."""
-        if not command:
-            conversation.mount(SystemMessage("Usage: /cmd <command>"))
-            return
-
+    @work(exclusive=True, thread=False)
+    async def run_cmd(self, command: str) -> None:
+        """Execute a shell command directly, bypassing the AI. Runs in a worker
+        so that push_screen_wait (for confirmation/sudo password) works."""
+        conversation = self.query_one("#conversation", ScrollableContainer)
         conversation.mount(UserMessage(f"/cmd {command}"))
 
         # Safety classification
@@ -275,6 +289,14 @@ class NatShellApp(App):
         self._busy = True
         try:
             result = await execute_shell(command)
+
+            # If sudo needs a password, prompt and retry
+            if needs_sudo_password(result):
+                password = await self.push_screen_wait(SudoPasswordScreen(command))
+                if password:
+                    set_sudo_password(password)
+                    result = await execute_shell(command)
+
             output = result.output or result.error
             conversation.mount(CommandBlock(command, output, result.exit_code))
 
@@ -290,6 +312,7 @@ class NatShellApp(App):
         finally:
             self._busy = False
             self.query_one("#user-input", Input).focus()
+            conversation.scroll_end()
 
     def _show_help(self, conversation: ScrollableContainer) -> None:
         """Show available slash commands."""

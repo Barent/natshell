@@ -16,6 +16,7 @@ from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, ModelConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
+from natshell.tools.execute_shell import needs_sudo_password as _needs_sudo_password
 from natshell.tools.registry import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class AgentLoop:
         self,
         user_input: str,
         confirm_callback=None,
+        password_callback=None,
     ) -> AsyncIterator[AgentEvent]:
         """
         Process a user message through the full agent loop.
@@ -92,6 +94,8 @@ class AgentLoop:
             confirm_callback: An async callable that takes a ToolCall and returns
                             True (confirmed) or False (declined). Required when
                             safety mode is 'confirm'.
+            password_callback: An async callable that takes a ToolCall and returns
+                            the sudo password (str) or None if cancelled.
         """
         self.messages.append({"role": "user", "content": user_input})
 
@@ -176,6 +180,18 @@ class AgentLoop:
                     tool_result = await self.tools.execute(
                         tool_call.name, tool_call.arguments
                     )
+
+                    # If sudo needs a password, prompt the user and retry
+                    if (tool_call.name == "execute_shell"
+                            and password_callback
+                            and _needs_sudo_password(tool_result)):
+                        password = await password_callback(tool_call)
+                        if password:
+                            from natshell.tools.execute_shell import set_sudo_password
+                            set_sudo_password(password)
+                            tool_result = await self.tools.execute(
+                                tool_call.name, tool_call.arguments
+                            )
 
                     yield AgentEvent(
                         type=EventType.TOOL_RESULT,

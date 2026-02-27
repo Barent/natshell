@@ -6,7 +6,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Input, Label, Static
 
 from natshell.inference.engine import ToolCall
 
@@ -266,3 +266,38 @@ class ConfirmScreen(ModalScreen[bool]):
     @on(Button.Pressed, "#btn-no")
     def on_no(self) -> None:
         self.dismiss(False)
+
+
+class SudoPasswordScreen(ModalScreen[str | None]):
+    """Modal dialog for entering the sudo password."""
+
+    def __init__(self, command: str) -> None:
+        super().__init__()
+        self._command = command
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="sudo-dialog"):
+            yield Label("[bold yellow]Sudo Password Required[/]\n")
+            yield Label(f"Command: [bold]{self._command}[/]\n")
+            yield Label("Enter your password:")
+            yield Input(password=True, id="sudo-password")
+            with Horizontal(id="sudo-buttons"):
+                yield Button("Submit", variant="warning", id="btn-sudo-ok")
+                yield Button("Cancel", variant="default", id="btn-sudo-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#sudo-password", Input).focus()
+
+    @on(Input.Submitted, "#sudo-password")
+    def on_password_submitted(self) -> None:
+        password = self.query_one("#sudo-password", Input).value
+        self.dismiss(password if password else None)
+
+    @on(Button.Pressed, "#btn-sudo-ok")
+    def on_ok(self) -> None:
+        password = self.query_one("#sudo-password", Input).value
+        self.dismiss(password if password else None)
+
+    @on(Button.Pressed, "#btn-sudo-cancel")
+    def on_cancel(self) -> None:
+        self.dismiss(None)

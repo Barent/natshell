@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import subprocess
 from natshell.tools.registry import ToolDefinition, ToolResult
 
@@ -14,6 +15,40 @@ logger = logging.getLogger(__name__)
 MAX_OUTPUT_CHARS = 4000
 HEAD_CHARS = 2000
 TAIL_CHARS = 1500
+
+# ── Sudo password support ───────────────────────────────────────────────────
+
+_sudo_password: str | None = None
+_SUDO_RE = re.compile(r'\bsudo\b')
+
+# stderr patterns that mean "sudo wanted a password but couldn't get one"
+_SUDO_NEEDS_PW = [
+    "sudo: a terminal is required to read the password",
+    "sudo: a password is required",
+    "sudo: no tty present and no askpass program specified",
+]
+
+
+def set_sudo_password(password: str) -> None:
+    """Cache the sudo password for subsequent execute_shell calls."""
+    global _sudo_password
+    _sudo_password = password
+
+
+def clear_sudo_password() -> None:
+    """Clear the cached sudo password."""
+    global _sudo_password
+    _sudo_password = None
+
+
+def needs_sudo_password(result: ToolResult) -> bool:
+    """Return True if the result indicates sudo needed a password it didn't get."""
+    if result.exit_code == 0:
+        return False
+    return any(msg in result.error for msg in _SUDO_NEEDS_PW)
+
+
+# ── Tool definition ─────────────────────────────────────────────────────────
 
 DEFINITION = ToolDefinition(
     name="execute_shell",
@@ -83,21 +118,39 @@ async def execute_shell(
     env["LC_ALL"] = "C"  # Consistent output for parsing
 
     try:
+        run_kwargs: dict = {
+            "capture_output": True,
+            "text": True,
+            "timeout": timeout,
+            "env": env,
+            "cwd": os.getcwd(),
+            "start_new_session": True,
+        }
+
+        # If we have a cached sudo password and the command uses sudo,
+        # add -S so sudo reads the password from stdin.
+        if _sudo_password and _SUDO_RE.search(command):
+            command = _SUDO_RE.sub("sudo -S", command)
+            run_kwargs["input"] = _sudo_password + "\n"
+        else:
+            run_kwargs["stdin"] = subprocess.DEVNULL
+
         # Run in thread to avoid blocking the async event loop
         result = await asyncio.to_thread(
             subprocess.run,
             ["bash", "-c", command],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-            cwd=os.getcwd(),
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
+            **run_kwargs,
         )
 
         stdout, stdout_truncated = _truncate_output(result.stdout)
         stderr, stderr_truncated = _truncate_output(result.stderr)
+
+        # sudo -S echoes a password prompt to stderr — strip it
+        if _sudo_password:
+            stderr = "\n".join(
+                line for line in stderr.splitlines()
+                if not line.startswith("[sudo] password for")
+            ).strip()
 
         return ToolResult(
             output=stdout,

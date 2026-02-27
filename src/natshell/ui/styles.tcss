@@ -214,3 +214,33 @@ ConfirmScreen {
 #confirm-buttons Button {
     margin: 0 2;
 }
+
+/* Sudo password dialog */
+SudoPasswordScreen {
+    align: center middle;
+}
+
+#sudo-dialog {
+    width: 70;
+    max-width: 90%;
+    height: auto;
+    max-height: 80%;
+    padding: 2 4;
+    border: thick #e6b800;
+    background: #1a1a2e;
+}
+
+#sudo-password {
+    margin: 1 0;
+    background: #0f3460;
+    border: tall #30304a;
+}
+
+#sudo-buttons {
+    margin-top: 2;
+    height: auto;
+}
+
+#sudo-buttons Button {
+    margin: 0 2;
+}
