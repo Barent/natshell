@@ -26,7 +26,7 @@ DEFINITION = ToolDefinition(
             },
             "file_pattern": {
                 "type": "string",
-                "description": "Glob pattern for file names to search, e.g. '*.py', '*.conf'. Default: all files.",
+                "description": "Glob pattern for file names to search, e.g. '*.py', '*.conf'. Comma-separated for multiple: '*.py,*.sh'. Default: all files.",
             },
             "max_results": {
                 "type": "integer",
@@ -46,12 +46,27 @@ async def search_files(
 ) -> ToolResult:
     """Search files by content or name."""
     try:
+        # Split comma-separated glob patterns (e.g. '*.py,*.sh' -> ['*.py', '*.sh'])
+        patterns = [p.strip() for p in file_pattern.split(",") if p.strip()]
+
         if pattern:
-            # Text search with grep
-            cmd = ["grep", "-rn", "--include", file_pattern, "-m", str(max_results), pattern, path]
+            # Text search with grep — each glob needs its own --include flag
+            include_args = []
+            for p in patterns:
+                include_args += ["--include", p]
+            cmd = ["grep", "-rn"] + include_args + ["-m", str(max_results), pattern, path]
         else:
-            # File name search with find
-            cmd = ["find", path, "-name", file_pattern, "-maxdepth", "5"]
+            # File name search with find — combine multiple -name with -o
+            if len(patterns) == 1:
+                name_args = ["-name", patterns[0]]
+            else:
+                name_args = ["("]
+                for i, p in enumerate(patterns):
+                    if i > 0:
+                        name_args.append("-o")
+                    name_args += ["-name", p]
+                name_args.append(")")
+            cmd = ["find", path, "-maxdepth", "5"] + name_args
 
         result = await asyncio.to_thread(
             subprocess.run, cmd,
