@@ -300,12 +300,12 @@ SYSTEM CONTEXT:
 
   Example:
   <system_info>
-  Host: debbythekeeper | Debian GNU/Linux 13 (trixie) | 6.12.6-amd64 | x86_64
+  Host: myworkstation | Debian GNU/Linux 13 (trixie) | 6.12.6-amd64 | x86_64
   CPU: 12th Gen Intel i5-12600 | RAM: 64.0GB total, 41.2GB available
-  User: nicholas (sudo: yes) | Shell: /bin/bash | Pkg: apt
+  User: alex (sudo: yes) | Shell: /bin/bash | Pkg: apt
   Disks: / 458G (32% used), /home 916G (61% used)
-  Network: eth0 192.168.1.50/24 | tailscale0 100.64.x.x/32
-  Gateway: 192.168.1.1
+  Network: eth0 10.0.1.100/24 | tailscale0 100.64.x.x/32
+  Gateway: 10.0.1.1
   Tools: docker✓ git✓ nmap✓ curl✓ wget✓ ssh✓ python3✓ node✗ go✗
   Containers: gitea (gitea/gitea:latest), jellyfin (jellyfin/jellyfin)
   Services: docker, sshd, pihole-FTL, tailscaled, netdata
@@ -746,7 +746,7 @@ Responsibilities:
 
 Layout:
   ┌──────────────────────────────────────────────────┐
-  │  NatShell v0.1.0 | debian 13 | nicholas@debby    │  <- Header
+  │  NatShell v0.1.0 | debian 13 | alex@mybox          │  <- Header
   ├──────────────────────────────────────────────────┤
   │                                                    │
   │  You: scan my local network for computers          │
@@ -756,24 +756,24 @@ Layout:
   │                                                    │
   │  ┌─ execute_shell ────────────────────────────┐   │
   │  │ $ ip -4 route show default                  │   │
-  │  │ default via 192.168.1.1 dev eth0            │   │
+  │  │ default via 10.0.1.1 dev eth0               │   │
   │  └────────────────────────────────────────────┘   │
   │                                                    │
   │  ┌─ execute_shell ────────────────────────────┐   │
-  │  │ $ nmap -sn 192.168.1.0/24                   │   │
+  │  │ $ nmap -sn 10.0.1.0/24                      │   │
   │  │ Starting Nmap 7.94 ...                      │   │
-  │  │ Nmap scan report for router (192.168.1.1)   │   │
+  │  │ Nmap scan report for router (10.0.1.1)      │   │
   │  │ Host is up (0.001s latency).                │   │
-  │  │ Nmap scan report for debby (192.168.1.50)   │   │
+  │  │ Nmap scan report for mybox (10.0.1.100)     │   │
   │  │ Host is up (0.0001s latency).               │   │  <- Scrollable
   │  │ ...                                         │   │     output area
   │  └────────────────────────────────────────────┘   │
   │                                                    │
   │  NatShell: I found 8 devices on your network:      │
   │                                                    │
-  │  192.168.1.1   - router (gateway)                  │
-  │  192.168.1.50  - debbythekeeper (this machine)     │
-  │  192.168.1.51  - bazzite-old-asus                  │
+  │  10.0.1.1     - router (gateway)                    │
+  │  10.0.1.100   - myworkstation (this machine)       │
+  │  10.0.1.101   - media-server                       │
   │  ...                                               │
   │                                                    │
   ├──────────────────────────────────────────────────┤
@@ -850,8 +850,8 @@ Step 1: User submits "Can you scan my local network for computers?"
         -> Added to messages as user role
 
 Step 2: Model receives system prompt (which includes network info:
-        "eth0 192.168.1.50/24, gateway 192.168.1.1") and thinks:
-        "I can see the user is on 192.168.1.0/24. Let me check if
+        "eth0 10.0.1.100/24, gateway 10.0.1.1") and thinks:
+        "I can see the user is on 10.0.1.0/24. Let me check if
          nmap is available and run a ping scan."
         -> Model emits tool_call: execute_shell(command="which nmap")
         
