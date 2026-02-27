@@ -195,7 +195,13 @@ class NatShellApp(App):
                 password_callback=password_callback,
             ):
                 # Remove thinking indicator when we get a real event
-                if thinking and event.type != EventType.THINKING:
+                if thinking and event.type in (
+                    EventType.PLANNING,
+                    EventType.TOOL_RESULT,
+                    EventType.RESPONSE,
+                    EventType.BLOCKED,
+                    EventType.ERROR,
+                ):
                     thinking.remove()
                     thinking = None
                     self.query_one(LogoBanner).stop_animation()

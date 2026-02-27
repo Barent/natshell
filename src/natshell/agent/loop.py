@@ -215,6 +215,8 @@ class AgentLoop:
                             )
                             continue
 
+                    # Restart thinking animation before execution
+                    yield AgentEvent(type=EventType.THINKING)
                     # Execute the tool
                     yield AgentEvent(type=EventType.EXECUTING, tool_call=tool_call)
 
@@ -230,6 +232,7 @@ class AgentLoop:
                         if password:
                             from natshell.tools.execute_shell import set_sudo_password
                             set_sudo_password(password)
+                            yield AgentEvent(type=EventType.THINKING)
                             tool_result = await self.tools.execute(
                                 tool_call.name, tool_call.arguments
                             )

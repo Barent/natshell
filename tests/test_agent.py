@@ -133,7 +133,8 @@ class TestMultiStep:
         events = await _collect_events(agent, "what system am I on?")
         types = [e.type for e in events]
 
-        assert types.count(EventType.THINKING) == 3
+        # 3 from loop iterations + 2 from pre-EXECUTING restarts
+        assert types.count(EventType.THINKING) == 5
         assert types.count(EventType.EXECUTING) == 2
         assert types.count(EventType.TOOL_RESULT) == 2
         assert EventType.PLANNING in types
