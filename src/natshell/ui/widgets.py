@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
@@ -14,6 +15,67 @@ from natshell.inference.engine import ToolCall
 def _escape(text: str) -> str:
     """Escape Rich markup characters in untrusted text."""
     return text.replace("[", "\\[")
+
+
+class HistoryInput(Input):
+    """Input widget with shell-like up/down arrow history navigation."""
+
+    BINDINGS = [
+        Binding("up", "history_back", "Previous", show=False),
+        Binding("down", "history_forward", "Next", show=False),
+    ]
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._history: list[str] = []
+        self._history_index: int = -1  # -1 = not navigating
+        self._draft: str = ""
+
+    def add_to_history(self, text: str) -> None:
+        """Add text to history. Skips empty and consecutive duplicates."""
+        text = text.strip()
+        if not text:
+            return
+        if self._history and self._history[-1] == text:
+            # Skip consecutive duplicate
+            self._history_index = -1
+            return
+        self._history.append(text)
+        self._history_index = -1
+
+    def action_history_back(self) -> None:
+        """Navigate to the previous (older) history entry."""
+        if not self._history:
+            return
+        if self._history_index == -1:
+            # First press — save current input as draft
+            self._draft = self.value
+            self._history_index = len(self._history) - 1
+        elif self._history_index > 0:
+            self._history_index -= 1
+        else:
+            return  # Already at oldest
+        self.value = self._history[self._history_index]
+        self.cursor_position = len(self.value)
+
+    def action_history_forward(self) -> None:
+        """Navigate to the next (newer) history entry."""
+        if self._history_index == -1:
+            return  # Not navigating
+        if self._history_index < len(self._history) - 1:
+            self._history_index += 1
+            self.value = self._history[self._history_index]
+        else:
+            # Past newest — restore draft
+            self._history_index = -1
+            self.value = self._draft
+        self.cursor_position = len(self.value)
+
+    def clear_history(self) -> None:
+        """Clear all history state."""
+        self._history.clear()
+        self._history_index = -1
+        self._draft = ""
 
 
 # ─── Logo frames ─────────────────────────────────────────────────────────────

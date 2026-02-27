@@ -32,6 +32,7 @@ from natshell.ui.widgets import (
     CommandBlock,
     ConfirmScreen,
     HelpMessage,
+    HistoryInput,
     LogoBanner,
     PlanningMessage,
     SudoPasswordScreen,
@@ -89,7 +90,7 @@ class NatShellApp(App):
         )
         with Vertical(id="input-area"):
             yield Static(id="slash-suggestions")
-            yield Input(
+            yield HistoryInput(
                 placeholder="Ask me anything about your system...",
                 id="user-input",
             )
@@ -127,7 +128,8 @@ class NatShellApp(App):
         if not user_text or self._busy:
             return
 
-        input_widget = self.query_one("#user-input", Input)
+        input_widget = self.query_one("#user-input", HistoryInput)
+        input_widget.add_to_history(user_text)
         input_widget.value = ""
 
         # Intercept slash commands before the agent
@@ -679,3 +681,4 @@ class NatShellApp(App):
             Static("[dim]Chat cleared. Type a new request.[/]\n")
         )
         self.agent.clear_history()
+        self.query_one("#user-input", HistoryInput).clear_history()
