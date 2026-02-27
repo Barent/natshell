@@ -23,13 +23,20 @@ class OllamaModel:
 def normalize_base_url(url: str) -> str:
     """Strip /v1 suffix and trailing slash to get the server root URL.
 
+    Adds ``http://`` if no scheme is present.
+
     >>> normalize_base_url("http://localhost:11434/v1")
     'http://localhost:11434'
     >>> normalize_base_url("http://localhost:11434/v1/")
     'http://localhost:11434'
     >>> normalize_base_url("http://localhost:11434")
     'http://localhost:11434'
+    >>> normalize_base_url("myhost:11434/v1")
+    'http://myhost:11434'
     """
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
     url = url.rstrip("/")
     if url.endswith("/v1"):
         url = url[:-3]
@@ -43,7 +50,8 @@ async def ping_server(base_url: str) -> bool:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{base_url}/")
             return resp.status_code == 200
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, OSError):
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout,
+            httpx.UnsupportedProtocol, OSError):
         return False
 
 

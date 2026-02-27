@@ -87,6 +87,10 @@ def main() -> None:
     use_remote = bool(remote_url)
     fallback_config = None
 
+    # Ensure remote URL has a scheme
+    if remote_url and not remote_url.startswith(("http://", "https://")):
+        remote_url = f"http://{remote_url}"
+
     if not remote_url and config.ollama.url:
         from natshell.inference.ollama import normalize_base_url
         base = normalize_base_url(config.ollama.url)
