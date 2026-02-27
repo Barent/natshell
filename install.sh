@@ -323,9 +323,34 @@ if [[ "$IS_MACOS" == true ]]; then
     CMAKE_ARGS="-DGGML_METAL=on"
     GPU_DETECTED=true
 elif command -v vulkaninfo &>/dev/null 2>&1; then
-    info "Vulkan detected — building llama-cpp-python with Vulkan support"
-    CMAKE_ARGS="-DGGML_VULKAN=on"
-    GPU_DETECTED=true
+    # vulkaninfo (runtime) is present — verify the dev libs are too
+    if pkg-config --exists vulkan 2>/dev/null; then
+        info "Vulkan detected — building llama-cpp-python with Vulkan support"
+        CMAKE_ARGS="-DGGML_VULKAN=on"
+        GPU_DETECTED=true
+    else
+        warn "Vulkan runtime found but development libraries are missing."
+        warn "  GPU support requires the Vulkan dev package."
+        case "$PKG_MGR" in
+            apt)       warn "    sudo apt install libvulkan-dev" ;;
+            rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel  (then reboot)" ;;
+            dnf)       warn "    sudo dnf install vulkan-devel" ;;
+            pacman)    warn "    sudo pacman -S vulkan-headers" ;;
+        esac
+        echo ""
+        read -rp "  Try to install Vulkan dev libraries now? [Y/n]: " vk_answer
+        if [[ -z "$vk_answer" || "${vk_answer,,}" == "y" ]]; then
+            (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") && \
+                pkg-config --exists vulkan 2>/dev/null && {
+                    info "Vulkan dev libraries installed — building with Vulkan support"
+                    CMAKE_ARGS="-DGGML_VULKAN=on"
+                    GPU_DETECTED=true
+                }
+        fi
+        if [[ -z "$CMAKE_ARGS" ]]; then
+            warn "Continuing with CPU-only build. Re-run install.sh after installing Vulkan dev libs for GPU support."
+        fi
+    fi
 elif command -v nvidia-smi &>/dev/null 2>&1; then
     info "NVIDIA GPU detected — building llama-cpp-python with CUDA support"
     CMAKE_ARGS="-DGGML_CUDA=on"
@@ -355,8 +380,8 @@ if [[ "$GPU_DETECTED" == true ]]; then
     if "$VENV_DIR/bin/python" -c "from llama_cpp import llama_supports_gpu_offload; exit(0 if llama_supports_gpu_offload() else 1)" 2>/dev/null; then
         ok "GPU backend — verified working"
     else
-        warn "llama-cpp-python was built without GPU support."
-        warn "  GPU acceleration will not be available."
+        warn "llama-cpp-python was built but GPU offloading is NOT working."
+        warn "  The build likely fell back to CPU-only."
         if [[ "$IS_MACOS" == true ]]; then
             warn "  To fix: ensure Xcode Command Line Tools are installed and re-run install.sh"
         else
@@ -367,6 +392,27 @@ if [[ "$GPU_DETECTED" == true ]]; then
                 dnf)  warn "    sudo dnf install vulkan-devel glslc" ;;
                 pacman) warn "    sudo pacman -S vulkan-headers glslang" ;;
             esac
+            echo ""
+            read -rp "  Install Vulkan dev packages and rebuild now? [Y/n]: " rebuild_answer
+            if [[ -z "$rebuild_answer" || "${rebuild_answer,,}" == "y" ]]; then
+                (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || true
+                (install_pkg "glslang-tools" "glslc" "glslang") || true
+                if pkg-config --exists vulkan 2>/dev/null; then
+                    info "Rebuilding llama-cpp-python with Vulkan support..."
+                    CMAKE_ARGS="-DGGML_VULKAN=on" "$VENV_DIR/bin/pip" install llama-cpp-python \
+                        --no-binary llama-cpp-python --no-cache-dir --force-reinstall -q
+                    if "$VENV_DIR/bin/python" -c "from llama_cpp import llama_supports_gpu_offload; exit(0 if llama_supports_gpu_offload() else 1)" 2>/dev/null; then
+                        ok "GPU backend — verified working after rebuild"
+                    else
+                        warn "GPU support still not working after rebuild."
+                        warn "  NatShell will work fine on CPU, but inference will be slower."
+                    fi
+                else
+                    warn "Vulkan dev libs still not available. Continuing with CPU-only."
+                fi
+            else
+                warn "  NatShell will work fine on CPU, but inference will be slower."
+            fi
         fi
     fi
 fi
@@ -464,6 +510,11 @@ if [[ "$SETUP_OLLAMA" == true ]]; then
     echo ""
     read -rp "  Server URL [http://localhost:11434]: " ollama_url_input
     OLLAMA_URL="${ollama_url_input:-http://localhost:11434}"
+
+    # Ensure URL has a scheme (http:// or https://)
+    if [[ -n "$OLLAMA_URL" && "$OLLAMA_URL" != http://* && "$OLLAMA_URL" != https://* ]]; then
+        OLLAMA_URL="http://$OLLAMA_URL"
+    fi
 
     # Ping the server
     echo ""

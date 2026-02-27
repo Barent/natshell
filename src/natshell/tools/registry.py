@@ -110,6 +110,7 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.write_file import write_file, DEFINITION as WRITE_DEF
     from natshell.tools.list_directory import list_directory, DEFINITION as LIST_DEF
     from natshell.tools.search_files import search_files, DEFINITION as SEARCH_DEF
+    from natshell.tools.natshell_help import natshell_help, DEFINITION as HELP_DEF
 
     registry = ToolRegistry()
     registry.register(EXEC_DEF, execute_shell)
@@ -117,4 +118,5 @@ def create_default_registry() -> ToolRegistry:
     registry.register(WRITE_DEF, write_file)
     registry.register(LIST_DEF, list_directory)
     registry.register(SEARCH_DEF, search_files)
+    registry.register(HELP_DEF, natshell_help)
     return registry

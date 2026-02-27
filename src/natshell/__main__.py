@@ -165,6 +165,10 @@ def main() -> None:
     from natshell.safety.classifier import SafetyClassifier
     safety = SafetyClassifier(config.safety)
 
+    # Inject safety config into the natshell_help tool
+    from natshell.tools.natshell_help import set_safety_config
+    set_safety_config(config.safety)
+
     # Build the agent
     from natshell.agent.loop import AgentLoop
     agent = AgentLoop(

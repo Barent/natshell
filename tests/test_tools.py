@@ -222,11 +222,12 @@ class TestRegistry:
         assert "write_file" in registry.tool_names
         assert "list_directory" in registry.tool_names
         assert "search_files" in registry.tool_names
+        assert "natshell_help" in registry.tool_names
 
     def test_get_tool_schemas(self):
         registry = create_default_registry()
         schemas = registry.get_tool_schemas()
-        assert len(schemas) == 5
+        assert len(schemas) == 6
         for schema in schemas:
             assert schema["type"] == "function"
             assert "function" in schema
