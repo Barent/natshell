@@ -652,16 +652,37 @@ class NatShellApp(App):
         conversation.mount(SystemMessage("\n".join(parts)))
 
     def _show_history_info(self, conversation: ScrollableContainer) -> None:
-        """Show conversation context size."""
+        """Show conversation context size and context window usage."""
         msg_count = len(self.agent.messages)
-        # Estimate token count from message content
         char_count = sum(
             len(str(m.get("content", "")))
             for m in self.agent.messages
         )
-        conversation.mount(SystemMessage(
-            f"Conversation: {msg_count} messages, ~{char_count} chars"
-        ))
+
+        parts = [f"Conversation: {msg_count} messages, ~{char_count} chars"]
+
+        cm = self.agent._context_manager
+        if cm:
+            used = cm.estimate_tokens(self.agent.messages)
+            budget = cm.context_budget
+            pct = min(100, int(used / budget * 100)) if budget > 0 else 0
+            bar_len = 20
+            filled = int(bar_len * pct / 100)
+            bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
+
+            if pct >= 90:
+                color = "red"
+            elif pct >= 70:
+                color = "yellow"
+            else:
+                color = "green"
+
+            parts.append(f"  Context: [{color}]{bar}[/] {pct}% ({used}/{budget} tokens)")
+
+            if cm.trimmed_count > 0:
+                parts.append(f"  Trimmed: {cm.trimmed_count} messages compressed")
+
+        conversation.mount(SystemMessage("\n".join(parts)))
 
     def on_mouse_up(self, event: MouseUp) -> None:
         """Copy selected text to clipboard on right-click."""

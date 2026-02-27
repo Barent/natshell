@@ -8,7 +8,7 @@ path = "auto"
 hf_repo = "Qwen/Qwen3-4B-GGUF"
 hf_file = "Qwen3-4B-Q4_K_M.gguf"
 # Context window size (tokens).
-# 0 = auto: 4096 for models ≤4B parameters, 8192 for larger models.
+# 0 = auto: scales with model size (2048/4096/8192/16384/32768).
 # Set explicitly to override (e.g. 8192, 16384).
 n_ctx = 0
 # Number of CPU threads (0 = auto-detect based on core count)
@@ -40,6 +40,9 @@ max_steps = 15
 temperature = 0.3
 # Max tokens per model generation
 max_tokens = 2048
+# Extra context tokens to reserve beyond max_tokens (0 = auto ~400 tokens).
+# Increase if you add many custom safety patterns or use verbose tool outputs.
+# context_reserve = 0
 
 [safety]
 # Safety mode:

@@ -29,15 +29,23 @@ def _infer_context_size(model_path: str) -> int:
     """Infer an appropriate context size from the model filename.
 
     Looks for a parameter-count pattern like '4B', '8B', '1.7B' in the
-    filename.  Models with ≤4B parameters get 4096; larger models get 8192.
+    filename and maps it to a reasonable context size.
     Falls back to 4096 if no pattern is found.
     """
     name = Path(model_path).name.lower()
     match = re.search(r"(\d+(?:\.\d+)?)b", name)
     if match:
         param_billions = float(match.group(1))
-        if param_billions > 4:
+        if param_billions <= 1:
+            return 2048
+        elif param_billions <= 4:
+            return 4096
+        elif param_billions <= 8:
             return 8192
+        elif param_billions <= 14:
+            return 16384
+        else:
+            return 32768
     return 4096
 
 
@@ -131,6 +139,10 @@ class LocalEngine:
             except ImportError:
                 pass
         logger.info(f"Loaded model: {model_path} (ctx={n_ctx}, threads={n_threads}, main_gpu={resolved_gpu})")
+
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in text using the model's tokenizer."""
+        return len(self.llm.tokenize(text.encode("utf-8")))
 
     def engine_info(self) -> EngineInfo:
         return EngineInfo(
