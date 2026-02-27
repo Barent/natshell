@@ -1,16 +1,34 @@
-# NatShell — Natural Language Shell for Linux
+# NatShell — Original Design Specification
+
+> **Note**: This is the original architectural specification used to build NatShell.
+> The actual implementation has evolved beyond this document. For current architecture
+> and features, see **CLAUDE.md** and **README.md**. Key differences from this spec:
+>
+> - **Cross-platform**: Now supports Linux, macOS, and WSL (not just Debian)
+> - **Ollama integration**: New `inference/ollama.py` module for server discovery and model listing
+> - **GPU support**: New `gpu.py` module for GPU detection and best-device selection
+> - **Runtime model switching**: `/model` slash commands allow switching engines without restart
+> - **Clipboard integration**: New `ui/clipboard.py` with macOS/WSL/Wayland/X11/OSC52 support
+> - **Command palette**: New `ui/commands.py` for Ctrl+P model switching
+> - **Platform detection**: New `platform.py` module with cached `is_macos()`/`is_wsl()`/`is_linux()`
+> - **Security hardening**: Markup escaping, command chaining detection, env var filtering,
+>   sudo password timeout, sensitive file path gating, HTTPS warnings, config permissions checks
+> - **Tool calling**: Uses plain-text tool injection + `<tool_call>` XML parsing (not llama-cpp-python's built-in tool format)
+> - **Context auto-sizing**: `n_ctx = 0` auto-detects from model parameter count in filename
+> - **Config persistence**: `save_ollama_default()` and `save_model_config()` for TOML editing
+> - **Self-update**: `--update` flag for git-based installations
 
 ## Project Overview
 
-NatShell is a self-contained, local-first agentic TUI that lets users interact with their Linux system through natural language. It bundles a small quantized LLM (via llama.cpp) and uses a ReAct-style agent loop to plan, execute, and iterate on shell commands to fulfill user requests.
+NatShell is a self-contained, local-first agentic TUI that lets users interact with their system through natural language. It bundles a small quantized LLM (via llama.cpp) and uses a ReAct-style agent loop to plan, execute, and iterate on shell commands to fulfill user requests.
 
 ---
 
 ## Target Environment
 
-- **OS:** Debian 13 (Trixie) — but designed to work on any modern Linux
+- **OS:** Linux, macOS, and WSL
 - **Python:** 3.11+
-- **Inference:** llama-cpp-python (bundled, no Ollama required)
+- **Inference:** llama-cpp-python (bundled), with optional Ollama or OpenAI-compatible API fallback
 - **Default Model:** Qwen3-4B-Q4_K_M.gguf (~2.5GB)
 - **TUI:** Textual
 
@@ -22,44 +40,55 @@ NatShell is a self-contained, local-first agentic TUI that lets users interact w
 natshell/
 ├── pyproject.toml              # Project metadata, dependencies, entry point
 ├── README.md
-├── config.default.toml         # Default configuration
-├── models/                     # GGUF model storage (gitignored)
-│   └── .gitkeep
+├── CLAUDE.md                   # Claude Code build instructions
+├── config.default.toml         # Default configuration with safety patterns
+├── install.sh                  # Cross-platform installer
 ├── src/
 │   └── natshell/
 │       ├── __init__.py
-│       ├── __main__.py         # Entry point: `python -m natshell`
-│       ├── app.py              # Textual TUI application
-│       ├── config.py           # Configuration loader (TOML)
+│       ├── __main__.py         # Entry point: CLI args, model download, engine wiring
+│       ├── app.py              # Textual TUI with slash commands and model switching
+│       ├── config.py           # TOML config loading, env var support, persistence
+│       ├── gpu.py              # GPU detection (vulkaninfo/nvidia-smi/lspci)
+│       ├── platform.py         # Platform detection (Linux/macOS/WSL)
 │       ├── agent/
 │       │   ├── __init__.py
-│       │   ├── loop.py         # Core ReAct agent loop
-│       │   ├── system_prompt.py # System prompt builder
-│       │   └── context.py      # System context gathering
+│       │   ├── loop.py         # ReAct agent loop with safety, sudo, fallback
+│       │   ├── system_prompt.py # Platform-aware system prompt builder
+│       │   └── context.py      # System context gathering (per-platform)
 │       ├── inference/
 │       │   ├── __init__.py
-│       │   ├── engine.py       # LLM inference abstraction
-│       │   ├── local.py        # llama-cpp-python backend
-│       │   └── remote.py       # OpenAI-compatible API backend (Ollama, etc.)
+│       │   ├── engine.py       # Protocol types (CompletionResult, ToolCall, EngineInfo)
+│       │   ├── local.py        # llama-cpp-python with GPU, auto ctx, XML tool parsing
+│       │   ├── remote.py       # OpenAI-compatible API backend (httpx)
+│       │   └── ollama.py       # Ollama server ping, model listing, URL normalization
 │       ├── tools/
 │       │   ├── __init__.py
 │       │   ├── registry.py     # Tool registration and dispatch
-│       │   ├── execute_shell.py
+│       │   ├── execute_shell.py # Shell exec with sudo, env filtering, truncation
 │       │   ├── read_file.py
 │       │   ├── write_file.py
 │       │   ├── list_directory.py
 │       │   └── search_files.py
 │       ├── safety/
 │       │   ├── __init__.py
-│       │   └── classifier.py   # Command risk classification
+│       │   └── classifier.py   # Regex classifier with chaining + path sensitivity
 │       └── ui/
 │           ├── __init__.py
-│           ├── widgets.py      # Custom Textual widgets
+│           ├── widgets.py      # Widgets with Rich markup escaping
+│           ├── commands.py     # Command palette (model switching)
+│           ├── clipboard.py    # Cross-platform clipboard
 │           └── styles.tcss     # Textual CSS stylesheet
 └── tests/
     ├── test_agent.py
+    ├── test_safety.py
     ├── test_tools.py
-    └── test_safety.py
+    ├── test_clipboard.py
+    ├── test_platform.py
+    ├── test_engine_swap.py
+    ├── test_ollama.py
+    ├── test_ollama_config.py
+    └── test_slash_commands.py
 ```
 
 ---
@@ -929,3 +958,11 @@ def download_default_model(config) -> str:
 - **Session context** — Remember cwd changes, installed packages across turns
 - **Multi-machine** — Use SSH tool to manage remote hosts via Tailscale
 - **Undo tracking** — Log all changes made, offer rollback
+
+### Implemented Since Original Spec
+
+- ~~GPU offloading~~ — Implemented: auto-detection, multi-GPU selection, Vulkan/Metal support
+- ~~Remote API fallback~~ — Implemented: Ollama integration, runtime model switching, engine fallback
+- ~~Cross-platform~~ — Implemented: macOS + WSL support in installer, context, clipboard, safety patterns
+- ~~Clipboard integration~~ — Implemented: macOS/WSL/Wayland/X11/OSC52 with copy buttons on all messages
+- ~~Security hardening~~ — Implemented: 9-point audit covering markup injection, env filtering, sudo timeout, etc.
