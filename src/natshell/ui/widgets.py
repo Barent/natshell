@@ -56,7 +56,7 @@ _THINKING_FRAMES = [
 ]
 
 
-class LogoBanner(Vertical):
+class LogoBanner(Horizontal):
     """Tree logo with neon NatShell branding and sparkle animation."""
 
     DEFAULT_CSS = """
@@ -66,11 +66,17 @@ class LogoBanner(Vertical):
         padding: 0 2;
         background: #16213e;
     }
-    LogoBanner > .logo-line {
+    #logo-lines {
+        width: 1fr;
+        height: auto;
+    }
+    #logo-lines > Static {
         height: 1;
     }
-    LogoBanner > #banner-row {
+    #banner-btn-wrap {
+        width: auto;
         height: auto;
+        align: right top;
     }
     """
 
@@ -80,9 +86,10 @@ class LogoBanner(Vertical):
         self._frame_index = 0
 
     def compose(self) -> ComposeResult:
-        for line in _LOGO_STATIC.split("\n"):
-            yield Static(line, classes="logo-line")
-        with Horizontal(id="banner-row"):
+        with Vertical(id="logo-lines"):
+            for line in _LOGO_STATIC.split("\n"):
+                yield Static(line, classes="logo-line")
+        with Vertical(id="banner-btn-wrap"):
             yield Button("\U0001f4cb Copy Chat", id="copy-chat-btn")
 
     def _update_content(self, content: str) -> None:
