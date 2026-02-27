@@ -16,6 +16,9 @@ ok()    { echo -e "\033[1;32m==>\033[0m $*"; }
 warn()  { echo -e "\033[1;33mWARN:\033[0m $*"; }
 die()   { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
 
+# Case-insensitive yes check — bash 3.2 compatible (no ${,,})
+is_yes() { [[ "$1" =~ ^[Yy]$ ]]; }
+
 # ─── Platform detection ─────────────────────────────────────────────────────
 
 OS="$(uname -s)"
@@ -35,7 +38,7 @@ if [[ $EUID -eq 0 ]]; then
     echo "  Consider running without sudo:  bash install.sh"
     echo ""
     read -rp "  Continue as root anyway? [y/N]: " root_answer
-    if [[ "${root_answer,,}" != "y" ]]; then
+    if ! is_yes "$root_answer"; then
         exit 1
     fi
 fi
@@ -83,35 +86,35 @@ install_pkg() {
     case "$PKG_MGR" in
         brew)
             read -rp "  Install $brew_pkg now? [Y/n]: " answer
-            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+            if [[ -z "$answer" ]] || is_yes "$answer"; then
                 brew install "$brew_pkg"
                 return $?
             fi
             ;;
         apt)
             read -rp "  Install $apt_pkg now? (requires sudo) [Y/n]: " answer
-            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+            if [[ -z "$answer" ]] || is_yes "$answer"; then
                 sudo apt-get install -y "$apt_pkg"
                 return $?
             fi
             ;;
         rpm-ostree)
             read -rp "  Install $dnf_pkg now? (requires sudo, uses rpm-ostree) [Y/n]: " answer
-            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+            if [[ -z "$answer" ]] || is_yes "$answer"; then
                 sudo rpm-ostree install --idempotent "$dnf_pkg"
                 return $?
             fi
             ;;
         dnf)
             read -rp "  Install $dnf_pkg now? (requires sudo) [Y/n]: " answer
-            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+            if [[ -z "$answer" ]] || is_yes "$answer"; then
                 sudo dnf install -y "$dnf_pkg"
                 return $?
             fi
             ;;
         pacman)
             read -rp "  Install $pacman_pkg now? (requires sudo) [Y/n]: " answer
-            if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+            if [[ -z "$answer" ]] || is_yes "$answer"; then
                 sudo pacman -S --noconfirm "$pacman_pkg"
                 return $?
             fi
@@ -152,7 +155,7 @@ if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v 
     if [[ "$IS_MACOS" == true ]]; then
         echo "  macOS requires Xcode Command Line Tools."
         read -rp "  Run 'xcode-select --install' now? [Y/n]: " answer
-        if [[ -z "$answer" || "${answer,,}" == "y" ]]; then
+        if [[ -z "$answer" ]] || is_yes "$answer"; then
             xcode-select --install 2>/dev/null || true
             echo "  Follow the dialog to complete installation, then re-run install.sh."
             exit 0
@@ -339,7 +342,7 @@ elif command -v vulkaninfo &>/dev/null 2>&1; then
         esac
         echo ""
         read -rp "  Try to install Vulkan dev libraries now? [Y/n]: " vk_answer
-        if [[ -z "$vk_answer" || "${vk_answer,,}" == "y" ]]; then
+        if [[ -z "$vk_answer" ]] || is_yes "$vk_answer"; then
             (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") && \
                 pkg-config --exists vulkan 2>/dev/null && {
                     info "Vulkan dev libraries installed — building with Vulkan support"
@@ -394,7 +397,7 @@ if [[ "$GPU_DETECTED" == true ]]; then
             esac
             echo ""
             read -rp "  Install Vulkan dev packages and rebuild now? [Y/n]: " rebuild_answer
-            if [[ -z "$rebuild_answer" || "${rebuild_answer,,}" == "y" ]]; then
+            if [[ -z "$rebuild_answer" ]] || is_yes "$rebuild_answer"; then
                 (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || true
                 (install_pkg "glslang-tools" "glslc" "glslang") || true
                 if pkg-config --exists vulkan 2>/dev/null; then
@@ -506,7 +509,7 @@ esac
 if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" ]]; then
     echo ""
     read -rp "  Configure a remote Ollama server too? [y/N]: " ollama_answer
-    if [[ "${ollama_answer,,}" == "y" ]]; then
+    if is_yes "$ollama_answer"; then
         SETUP_OLLAMA=true
     fi
 fi
@@ -563,7 +566,7 @@ except Exception:
         warn "Server not reachable at $OLLAMA_URL"
         echo ""
         read -rp "  Save this URL anyway for later? [Y/n]: " save_anyway
-        if [[ -z "$save_anyway" || "${save_anyway,,}" == "y" ]]; then
+        if [[ -z "$save_anyway" ]] || is_yes "$save_anyway"; then
             read -rp "  Default model name [qwen3:4b]: " ollama_model_input
             OLLAMA_MODEL="${ollama_model_input:-qwen3:4b}"
         else
