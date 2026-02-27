@@ -76,6 +76,7 @@ class LocalEngine:
             "n_ctx": n_ctx,
             "n_threads": n_threads or os.cpu_count() or 4,
             "n_gpu_layers": n_gpu_layers,
+            "chat_format": "chatml-function-calling",
             "verbose": False,
         }
         if resolved_gpu > 0 and gpu_backend_available():
