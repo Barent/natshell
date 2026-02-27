@@ -38,6 +38,7 @@ from natshell.ui.widgets import (
     SystemMessage,
     ThinkingIndicator,
     UserMessage,
+    _escape,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,14 +220,14 @@ class NatShellApp(App):
 
                     case EventType.ERROR:
                         conversation.mount(
-                            Static(f"[bold red]Error:[/] {event.data}")
+                            Static(f"[bold red]Error:[/] {_escape(event.data)}")
                         )
 
                 # Auto-scroll to bottom
                 conversation.scroll_end()
 
         except Exception as e:
-            conversation.mount(Static(f"[bold red]Agent error:[/] {e}"))
+            conversation.mount(Static(f"[bold red]Agent error:[/] {_escape(str(e))}"))
 
         finally:
             if thinking:

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,6 +88,23 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
 
     if user_path.exists():
         _merge_toml(config, user_path)
+
+    # Support NATSHELL_API_KEY environment variable as alternative to config file
+    env_api_key = os.environ.get("NATSHELL_API_KEY")
+    if env_api_key:
+        config.remote.api_key = env_api_key
+
+    # Warn if config file contains an API key and has permissive permissions
+    if config.remote.api_key and user_path.exists():
+        try:
+            perms = user_path.stat().st_mode & 0o777
+            if perms & 0o077:
+                logger.warning(
+                    "Config file %s has permissive permissions (%04o) and contains an API key. "
+                    "Run: chmod 600 %s", user_path, perms, user_path
+                )
+        except OSError:
+            pass
 
     return config
 

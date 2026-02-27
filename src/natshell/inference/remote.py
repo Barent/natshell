@@ -7,6 +7,7 @@ import logging
 import re
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -24,6 +25,16 @@ class RemoteEngine:
         self.api_key = api_key
         self.client = httpx.AsyncClient(timeout=120.0)
         logger.info(f"Remote engine: {base_url} model={model}")
+
+        # Warn if sending API key over plaintext HTTP to a non-localhost host
+        if api_key:
+            parsed = urlparse(self.base_url)
+            if (parsed.scheme == "http"
+                    and parsed.hostname not in ("localhost", "127.0.0.1", "::1")):
+                logger.warning(
+                    "API key configured over HTTP (not HTTPS) to %s — "
+                    "credentials will be sent in plaintext.", base_url
+                )
 
     async def chat_completion(
         self,

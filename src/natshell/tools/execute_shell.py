@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,9 @@ TAIL_CHARS = 1500
 # ── Sudo password support ───────────────────────────────────────────────────
 
 _sudo_password: str | None = None
+_sudo_password_time: float = 0.0
+_SUDO_PW_TIMEOUT = 300  # 5 minutes
+
 _SUDO_RE = re.compile(r'\bsudo\b')
 
 # stderr patterns that mean "sudo wanted a password but couldn't get one"
@@ -28,11 +32,29 @@ _SUDO_NEEDS_PW = [
     "sudo: no tty present and no askpass program specified",
 ]
 
+# Environment variables that should not be exposed to LLM-executed commands
+_SENSITIVE_ENV_VARS = {
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+    "DATABASE_URL", "DB_PASSWORD",
+    "NATSHELL_API_KEY",
+}
+
+
+def _get_sudo_password() -> str | None:
+    """Return the cached sudo password, or None if expired."""
+    global _sudo_password, _sudo_password_time
+    if _sudo_password and (time.monotonic() - _sudo_password_time) > _SUDO_PW_TIMEOUT:
+        _sudo_password = None
+    return _sudo_password
+
 
 def set_sudo_password(password: str) -> None:
     """Cache the sudo password for subsequent execute_shell calls."""
-    global _sudo_password
+    global _sudo_password, _sudo_password_time
     _sudo_password = password
+    _sudo_password_time = time.monotonic()
 
 
 def clear_sudo_password() -> None:
@@ -112,9 +134,15 @@ async def execute_shell(
     # Clamp timeout
     timeout = max(1, min(timeout, 300))
 
-    logger.info(f"Executing: {command} (timeout={timeout}s)")
+    # Redact sudo -S from log output to avoid leaking password plumbing
+    sudo_pw = _get_sudo_password()
+    log_cmd = command
+    if sudo_pw and _SUDO_RE.search(command):
+        log_cmd = _SUDO_RE.sub("sudo -S", command, count=1)
+    logger.info(f"Executing: {log_cmd} (timeout={timeout}s)")
 
-    env = os.environ.copy()
+    # Filter sensitive environment variables before passing to subprocess
+    env = {k: v for k, v in os.environ.items() if k not in _SENSITIVE_ENV_VARS}
     env["LC_ALL"] = "C"  # Consistent output for parsing
 
     try:
@@ -129,9 +157,9 @@ async def execute_shell(
 
         # If we have a cached sudo password and the command uses sudo,
         # add -S so sudo reads the password from stdin.
-        if _sudo_password and _SUDO_RE.search(command):
-            command = _SUDO_RE.sub("sudo -S", command)
-            run_kwargs["input"] = _sudo_password + "\n"
+        if sudo_pw and _SUDO_RE.search(command):
+            command = _SUDO_RE.sub("sudo -S", command, count=1)
+            run_kwargs["input"] = sudo_pw + "\n"
         else:
             run_kwargs["stdin"] = subprocess.DEVNULL
 
@@ -146,7 +174,7 @@ async def execute_shell(
         stderr, stderr_truncated = _truncate_output(result.stderr)
 
         # sudo -S echoes a password prompt to stderr — strip it
-        if _sudo_password:
+        if sudo_pw:
             stderr = "\n".join(
                 line for line in stderr.splitlines()
                 if not line.startswith("[sudo] password for")
