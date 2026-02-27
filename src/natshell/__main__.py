@@ -101,6 +101,15 @@ def main() -> None:
     if not remote_model:
         remote_model = "qwen3:4b"
 
+    # Apply persisted engine preference (CLI flags override)
+    cli_forced_remote = bool(args.remote)
+    cli_forced_local = bool(args.model)
+    if not cli_forced_remote and not cli_forced_local:
+        if config.engine.preferred == "local":
+            use_remote = False
+        elif config.engine.preferred == "remote":
+            pass  # keep use_remote as-is (try remote if URL exists)
+
     # Build the inference engine
     if use_remote:
         from natshell.inference.ollama import ping_server

@@ -56,6 +56,11 @@ class UIConfig:
 
 
 @dataclass
+class EngineConfig:
+    preferred: str = "auto"  # "auto", "local", or "remote"
+
+
+@dataclass
 class NatShellConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
@@ -63,6 +68,7 @@ class NatShellConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    engine: EngineConfig = field(default_factory=EngineConfig)
 
 
 def load_config(config_path: str | Path | None = None) -> NatShellConfig:
@@ -143,6 +149,11 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
         for key, value in data["ui"].items():
             if hasattr(config.ui, key):
                 setattr(config.ui, key, value)
+
+    if "engine" in data:
+        for key, value in data["engine"].items():
+            if hasattr(config.engine, key):
+                setattr(config.engine, key, value)
 
 
 def save_ollama_default(model_name: str, url: str | None = None) -> Path:
@@ -274,6 +285,57 @@ def save_model_config(hf_repo: str, hf_file: str) -> Path:
         lines.append("\n[model]\n")
         lines.append(repo_line)
         lines.append(file_line)
+
+    config_path.write_text("".join(lines))
+    return config_path
+
+
+def save_engine_preference(preferred: str) -> Path:
+    """Persist the engine preference ("local", "remote", or "auto") to user config.
+
+    Uses simple line-based TOML editing to avoid a tomli_w dependency.
+    Returns the path to the config file.
+    """
+    config_dir = Path.home() / ".config" / "natshell"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "config.toml"
+
+    if config_path.exists():
+        lines = config_path.read_text().splitlines(keepends=True)
+    else:
+        lines = []
+
+    # Find [engine] section and locate existing key
+    engine_idx = None
+    next_section_idx = None
+    preferred_idx = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "[engine]":
+            engine_idx = i
+        elif engine_idx is not None and next_section_idx is None:
+            if re.match(r"^\[.+\]", stripped):
+                next_section_idx = i
+            elif stripped.startswith("preferred") or stripped.startswith("# preferred"):
+                preferred_idx = i
+
+    pref_line = f'preferred = "{preferred}"\n'
+
+    if engine_idx is not None:
+        # Section exists — update or insert key
+        insert_at = next_section_idx if next_section_idx is not None else len(lines)
+
+        if preferred_idx is not None:
+            lines[preferred_idx] = pref_line
+        else:
+            lines.insert(insert_at, pref_line)
+    else:
+        # No [engine] section — add one at the end
+        if lines and not lines[-1].endswith("\n"):
+            lines.append("\n")
+        lines.append("\n[engine]\n")
+        lines.append(pref_line)
 
     config_path.write_text("".join(lines))
     return config_path

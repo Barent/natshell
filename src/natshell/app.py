@@ -15,7 +15,7 @@ from textual.events import MouseUp
 from textual.widgets import Button, Footer, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
-from natshell.config import NatShellConfig, save_model_config, save_ollama_default
+from natshell.config import NatShellConfig, save_engine_preference, save_model_config, save_ollama_default
 from natshell.inference.engine import ToolCall
 from natshell.inference.ollama import list_models, normalize_base_url, ping_server
 from natshell.safety.classifier import Risk
@@ -486,6 +486,8 @@ class NatShellApp(App):
         api_url = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
         new_engine = RemoteEngine(base_url=api_url, model=model_name)
         await self.agent.swap_engine(new_engine)
+        save_engine_preference("remote")
+        save_ollama_default(model_name, url=base_url)
         conversation.mount(SystemMessage(
             f"Switched to [bold]{model_name}[/] on {base_url}\n"
             "[dim]Conversation history cleared.[/]"
@@ -525,6 +527,7 @@ class NatShellApp(App):
                 main_gpu=mc.main_gpu,
             )
             await self.agent.swap_engine(engine)
+            save_engine_preference("local")
             conversation.mount(SystemMessage(
                 f"Switched to local model: [bold]{Path(model_path).name}[/]\n"
                 "[dim]Conversation history cleared.[/]"
@@ -601,6 +604,7 @@ class NatShellApp(App):
             hf_file = name
             hf_repo = mc.hf_repo
             save_model_config(hf_repo, hf_file)
+            save_engine_preference("local")
             mc.hf_file = hf_file
 
             conversation.mount(SystemMessage(
