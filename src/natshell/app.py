@@ -93,11 +93,13 @@ class NatShellApp(App):
         Binding("ctrl+y", "copy_selection", "Copy", show=False),
     ]
 
-    def __init__(self, agent: AgentLoop, config: NatShellConfig | None = None, **kwargs: Any) -> None:
+    def __init__(self, agent: AgentLoop, config: NatShellConfig | None = None,
+                 skip_permissions: bool = False, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.agent = agent
         self._config = config or NatShellConfig()
         self._busy = False
+        self._skip_permissions = skip_permissions
 
     def compose(self) -> ComposeResult:
         yield LogoBanner()
@@ -115,6 +117,12 @@ class NatShellApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#user-input", Input).focus()
+        if self._skip_permissions:
+            conversation = self.query_one("#conversation", ScrollableContainer)
+            conversation.mount(
+                Static("[bold yellow]WARNING: --dangerously-skip-permissions is active. "
+                       "All confirmations will be skipped.[/]\n")
+            )
 
     @on(Input.Changed, "#user-input")
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -178,10 +186,12 @@ class NatShellApp(App):
             command = tool_call.arguments.get("command", "")
             return await self.push_screen_wait(SudoPasswordScreen(command))
 
+        confirm_cb = None if self._skip_permissions else confirm_callback
+
         try:
             async for event in self.agent.handle_user_message(
                 user_text,
-                confirm_callback=confirm_callback,
+                confirm_callback=confirm_cb,
                 password_callback=password_callback,
             ):
                 # Remove thinking indicator when we get a real event
@@ -295,7 +305,7 @@ class NatShellApp(App):
             conversation.mount(BlockedMessage(command))
             return
 
-        if risk == Risk.CONFIRM:
+        if risk == Risk.CONFIRM and not self._skip_permissions:
             synthetic_call = ToolCall(id="slash-cmd", name="execute_shell", arguments={"command": command})
             confirmed = await self.push_screen_wait(ConfirmScreen(synthetic_call))
             if not confirmed:

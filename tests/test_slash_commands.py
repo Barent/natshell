@@ -217,3 +217,38 @@ class TestAutocomplete:
         text = "/cmd ls"
         should_show = text.startswith("/") and " " not in text
         assert not should_show
+
+
+# ─── --dangerously-skip-permissions flag ─────────────────────────────────────
+
+
+class TestSkipPermissionsFlag:
+    """Test that the --dangerously-skip-permissions flag is wired correctly."""
+
+    def test_app_accepts_skip_permissions_false(self):
+        """NatShellApp defaults to skip_permissions=False."""
+        from natshell.app import NatShellApp
+        agent = _make_agent()
+        app = NatShellApp(agent=agent)
+        assert app._skip_permissions is False
+
+    def test_app_accepts_skip_permissions_true(self):
+        """NatShellApp stores skip_permissions=True when passed."""
+        from natshell.app import NatShellApp
+        agent = _make_agent()
+        app = NatShellApp(agent=agent, skip_permissions=True)
+        assert app._skip_permissions is True
+
+    def test_blocked_still_blocked_with_skip_permissions(self):
+        """BLOCKED commands are unaffected by skip_permissions — they are
+        checked on a separate code path in the agent loop."""
+        agent = _make_agent()
+        risk = agent.safety.classify_command("rm -rf /")
+        assert risk == Risk.BLOCKED
+
+    def test_confirm_command_still_classifies(self):
+        """The safety classifier still returns CONFIRM for risky commands;
+        skip_permissions only affects whether the callback is invoked."""
+        agent = _make_agent()
+        risk = agent.safety.classify_command("sudo reboot")
+        assert risk == Risk.CONFIRM
