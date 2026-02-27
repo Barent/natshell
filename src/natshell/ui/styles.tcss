@@ -196,6 +196,19 @@ ConfirmScreen {
     background: #1a1a2e;
 }
 
+#confirm-command {
+    max-height: 16;
+    min-height: 3;
+    height: auto;
+    background: #0d0d1a;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#confirm-command Static {
+    width: 1fr;
+}
+
 #confirm-buttons {
     margin-top: 2;
     align: center middle;

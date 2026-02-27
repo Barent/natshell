@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
@@ -340,8 +340,10 @@ class ConfirmScreen(ModalScreen[bool]):
         with Vertical(id="confirm-dialog"):
             yield Label(f"[bold yellow]⚠ Confirmation Required[/]\n")
             yield Label(f"Tool: [bold]{self.tool_call.name}[/]")
-            yield Label(f"Command: [bold]{command}[/]\n")
-            yield Label("Do you want to execute this command?")
+            yield Label("Command:")
+            with ScrollableContainer(id="confirm-command"):
+                yield Static(_escape(command))
+            yield Label("\nDo you want to execute this command?")
             with Vertical(id="confirm-buttons"):
                 yield Button("Yes, execute", variant="warning", id="btn-yes")
                 yield Button("No, skip", variant="default", id="btn-no")
