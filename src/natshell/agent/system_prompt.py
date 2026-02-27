@@ -10,18 +10,18 @@ def _platform_role() -> str:
     """Return a platform-specific role description."""
     match current_platform():
         case "macos":
-            return "macOS system administration assistant"
+            return "macOS system administration and coding assistant"
         case "wsl":
-            return "Linux (WSL) system administration assistant"
+            return "Linux (WSL) system administration and coding assistant"
         case _:
-            return "Linux system administration assistant"
+            return "Linux system administration and coding assistant"
 
 
 def build_system_prompt(context: SystemContext) -> str:
     """Construct the full system prompt with role, rules, and system context."""
     role = _platform_role()
     return f"""\
-You are NatShell, a {role} running directly on the user's machine. You help users accomplish tasks by planning and executing shell commands, then analyzing the results.
+You are NatShell, a {role} running directly on the user's machine. You help users accomplish tasks by planning and executing shell commands, editing code, running scripts, and analyzing results.
 
 IMPORTANT: You are running on the user's REAL system. Commands you execute have real effects. Be careful and precise.
 
