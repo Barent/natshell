@@ -41,6 +41,46 @@ def _infer_context_size(model_path: str) -> int:
     return 4096
 
 
+def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
+    """Format tool schemas as plain text for injection into the system prompt.
+
+    This is used instead of llama-cpp-python's built-in tool handling because
+    Qwen3 models don't follow the chatml-function-calling response format.
+    """
+    lines = [
+        "# Available Tools",
+        "",
+        "You MUST use tools to perform actions. To call a tool, output:",
+        "",
+        "<tool_call>",
+        '{"name": "tool_name", "arguments": {"param": "value"}}',
+        "</tool_call>",
+        "",
+    ]
+
+    for tool in tools:
+        func = tool.get("function", {})
+        name = func.get("name", "")
+        desc = func.get("description", "")
+        params = func.get("parameters", {})
+
+        lines.append(f"## {name}")
+        lines.append(desc)
+
+        props = params.get("properties", {})
+        required = params.get("required", [])
+        if props:
+            lines.append("Parameters:")
+            for pname, pdef in props.items():
+                req = " (required)" if pname in required else ""
+                pdesc = pdef.get("description", "")
+                ptype = pdef.get("type", "")
+                lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 class LocalEngine:
     """LLM inference via bundled llama.cpp (llama-cpp-python)."""
 
@@ -76,7 +116,6 @@ class LocalEngine:
             "n_ctx": n_ctx,
             "n_threads": n_threads or os.cpu_count() or 4,
             "n_gpu_layers": n_gpu_layers,
-            "chat_format": "chatml-function-calling",
             "verbose": False,
         }
         if resolved_gpu > 0 and gpu_backend_available():
@@ -109,21 +148,40 @@ class LocalEngine:
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> CompletionResult:
-        """Run chat completion via llama.cpp. Runs in thread to avoid blocking."""
+        """Run chat completion via llama.cpp. Runs in thread to avoid blocking.
+
+        Tool definitions are injected as plain text into the system prompt
+        rather than relying on llama-cpp-python's tool handling, which doesn't
+        work correctly with Qwen3 models.
+        """
+        if tools:
+            messages = self._inject_tools(messages, tools)
+
         kwargs: dict[str, Any] = {
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
 
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-
         # llama-cpp-python's create_chat_completion is synchronous
         response = await asyncio.to_thread(self.llm.create_chat_completion, **kwargs)
 
         return self._parse_response(response)
+
+    def _inject_tools(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Inject tool definitions into the system message as plain text."""
+        tool_text = _format_tools_for_prompt(tools)
+
+        # Shallow-copy the list and deep-copy only the system message
+        messages = list(messages)
+        for i, msg in enumerate(messages):
+            if msg["role"] == "system":
+                messages[i] = {**msg, "content": msg["content"] + "\n\n" + tool_text}
+                break
+
+        return messages
 
     def _parse_response(self, response: dict) -> CompletionResult:
         """Parse llama-cpp-python response into our CompletionResult.
