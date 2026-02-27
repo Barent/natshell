@@ -11,7 +11,9 @@ DEFINITION = ToolDefinition(
     name="list_directory",
     description=(
         "List the contents of a directory with file sizes and types. "
-        "More structured than raw ls output. Shows file type, size, and name."
+        "More structured than raw ls output. Shows file type, size, and name. "
+        "Runs as the current user — if the directory requires elevated privileges, "
+        "use execute_shell with sudo instead."
     ),
     parameters={
         "type": "object",
@@ -76,4 +78,11 @@ async def list_directory(
 
         return ToolResult(output="\n".join(lines))
     except PermissionError:
-        return ToolResult(error=f"Permission denied: {target}", exit_code=1)
+        return ToolResult(
+            error=(
+                f"Permission denied: {target}. "
+                "This tool runs as the current user. To access this directory, "
+                "use execute_shell with sudo (e.g. sudo ls)."
+            ),
+            exit_code=1,
+        )
