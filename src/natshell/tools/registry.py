@@ -90,6 +90,32 @@ class ToolRegistry:
 
         try:
             return await handler(**arguments)
+        except TypeError:
+            # LLM may hallucinate wrong argument names (e.g. "param" instead
+            # of "topic").  Attempt to remap values to the schema's expected
+            # parameter names by position before giving up.
+            remapped = self._remap_arguments(name, arguments)
+            if remapped is not None:
+                logger.warning(
+                    "Tool %s: remapped bad arg names %s → %s",
+                    name, list(arguments.keys()), list(remapped.keys()),
+                )
+                try:
+                    return await handler(**remapped)
+                except Exception as e:
+                    logger.exception(f"Tool {name} raised an exception after remap")
+                    return ToolResult(
+                        output="",
+                        error=f"Tool error: {type(e).__name__}: {e}",
+                        exit_code=1,
+                    )
+            # Remap not possible — report the original TypeError
+            return ToolResult(
+                output="",
+                error=f"Tool error: wrong arguments for {name}. "
+                       f"Got: {list(arguments.keys())}",
+                exit_code=1,
+            )
         except Exception as e:
             logger.exception(f"Tool {name} raised an exception")
             return ToolResult(
@@ -97,6 +123,22 @@ class ToolRegistry:
                 error=f"Tool error: {type(e).__name__}: {e}",
                 exit_code=1,
             )
+
+    def _remap_arguments(
+        self, name: str, arguments: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Try to map LLM-provided argument values to the schema's expected
+        parameter names by position.  Returns None if remapping isn't possible
+        (e.g. argument count mismatch)."""
+        defn = self._definitions.get(name)
+        if defn is None:
+            return None
+        props = defn.parameters.get("properties", {})
+        expected_keys = list(props.keys())
+        provided_values = list(arguments.values())
+        if len(provided_values) != len(expected_keys):
+            return None
+        return dict(zip(expected_keys, provided_values))
 
     @property
     def tool_names(self) -> list[str]:

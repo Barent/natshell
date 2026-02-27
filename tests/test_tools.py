@@ -245,3 +245,20 @@ class TestRegistry:
         result = await registry.execute("execute_shell", {"command": "echo registry_test"})
         assert result.exit_code == 0
         assert "registry_test" in result.output
+
+    async def test_remap_wrong_arg_name(self):
+        """LLM sends wrong arg name (e.g. 'param' instead of 'topic')."""
+        registry = create_default_registry()
+        # natshell_help expects {"topic": "..."}, but send {"param": "..."}
+        result = await registry.execute("natshell_help", {"param": "commands"})
+        assert result.exit_code == 0
+        assert "slash commands" in result.output.lower() or "/help" in result.output
+
+    async def test_remap_wrong_arg_name_multiple_params(self):
+        """Remap works when value count matches schema property count."""
+        registry = create_default_registry()
+        # search_files expects {"path": ..., "pattern": ..., ...}
+        # Send wrong names but right count won't match (more required), so it
+        # should fail gracefully
+        result = await registry.execute("search_files", {"wrong": "value"})
+        assert result.exit_code == 1
