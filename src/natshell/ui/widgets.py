@@ -16,38 +16,50 @@ from natshell.inference.engine import ToolCall
 # gold star, green sparkle dots, with a neon sign box for the title.
 
 _LOGO_STATIC = (
-    "  [#00ff88]·[/]   [bold #ffcc00]★[/]\n"
-    "     [bold #00ffff]███[/]      [#008877]╭─────────────────╮[/]\n"
-    "    [#00ccaa]█████[/]     [#008877]│[/]    [bold #00ffff]NatShell[/]     [#008877]│[/]\n"
-    "   [#00aa88]███████[/]    [#008877]╰─────────────────╯[/]\n"
-    "     [#30304a]██[/]  [#00ff88]·[/]    [dim #00ccaa]Natural Language Shell[/]"
+    "  [#00ff88]✧[/]     [bold #ffcc00]★[/]\n"
+    "       [bold #00ffff]███[/]       [#008877]╭────────────────────────╮[/]\n"
+    "      [bold #00ffff]█████[/]      [#008877]│[/]        [bold #00ffff]NatShell[/]        [#008877]│[/]\n"
+    "       [#00ccaa]███[/]       [#008877]│[/] [dim #00ccaa]Natural Language Shell[/] [#008877]│[/]\n"
+    "     [#00ccaa]███████[/]     [#008877]╰────────────────────────╯[/]\n"
+    "      [#00aa88]█████[/]\n"
+    "    [#00aa88]█████████[/]\n"
+    "       [#30304a]██[/]  [#00ff88]·[/]"
 )
 
 _LOGO_FRAMES = [
     _LOGO_STATIC,
     # Frame 1: sparkle upper-right, colors rotated
     (
-        "      [bold #ffcc00]★[/]  [#66ffff]✧[/]\n"
-        " [#00ff88]·[/]   [#00ccaa]███[/]      [#009988]╭─────────────────╮[/]\n"
-        "    [#00aa88]█████[/]     [#009988]│[/]    [bold #00ffff]NatShell[/]     [#009988]│[/]\n"
-        "   [bold #00ffff]███████[/]    [#009988]╰─────────────────╯[/]\n"
-        "     [#30304a]██[/]       [dim #00ccaa]Natural Language Shell[/]"
+        "        [bold #ffcc00]★[/]  [#66ffff]✧[/]\n"
+        " [#00ff88]·[/]     [#00ccaa]███[/]       [#009988]╭────────────────────────╮[/]\n"
+        "      [#00ccaa]█████[/]      [#009988]│[/]        [bold #00ffff]NatShell[/]        [#009988]│[/]\n"
+        "       [#00aa88]███[/]       [#009988]│[/] [dim #00ccaa]Natural Language Shell[/] [#009988]│[/]\n"
+        "     [#00aa88]███████[/]     [#009988]╰────────────────────────╯[/]\n"
+        "      [bold #00ffff]█████[/]\n"
+        "    [bold #00ffff]█████████[/]\n"
+        "       [#30304a]██[/]"
     ),
     # Frame 2: sparkle upper-left, sparkle mid-right
     (
-        "  [#66ffff]✧[/]   [bold #ffcc00]★[/]\n"
-        "     [#00aa88]███[/]      [#00aa99]╭─────────────────╮[/]\n"
-        "    [bold #00ffff]█████[/]     [#00aa99]│[/]    [bold #00ffff]NatShell[/]     [#00aa99]│[/]\n"
-        "   [#00ccaa]███████[/]  [#00ff88]·[/] [#00aa99]╰─────────────────╯[/]\n"
-        "     [#30304a]██[/]       [dim #00ccaa]Natural Language Shell[/]"
+        "  [#66ffff]✧[/]     [bold #ffcc00]★[/]\n"
+        "       [#00aa88]███[/]       [#00aa99]╭────────────────────────╮[/]\n"
+        "      [#00aa88]█████[/]      [#00aa99]│[/]        [bold #00ffff]NatShell[/]        [#00aa99]│[/]\n"
+        "       [bold #00ffff]███[/]       [#00aa99]│[/] [dim #00ccaa]Natural Language Shell[/] [#00aa99]│[/]\n"
+        "     [bold #00ffff]███████[/]     [#00aa99]╰────────────────────────╯[/]\n"
+        "      [#00ccaa]█████[/]  [#00ff88]·[/]\n"
+        "    [#00ccaa]█████████[/]\n"
+        "       [#30304a]██[/]"
     ),
     # Frame 3: sparkle between tree and box, sparkle lower-left
     (
-        "      [bold #ffcc00]★[/]\n"
-        "     [bold #00ffff]███[/]   [#00ff88]·[/]  [#009988]╭─────────────────╮[/]\n"
-        "    [#00ccaa]█████[/]     [#009988]│[/]    [bold #00ffff]NatShell[/]     [#009988]│[/]\n"
-        "   [#00aa88]███████[/]    [#009988]╰─────────────────╯[/]\n"
-        "  [#00ff88]·[/]  [#30304a]██[/]       [dim #00ccaa]Natural Language Shell[/]"
+        "        [bold #ffcc00]★[/]\n"
+        "       [bold #00ffff]███[/]   [#00ff88]·[/]   [#009988]╭────────────────────────╮[/]\n"
+        "      [bold #00ffff]█████[/]      [#009988]│[/]        [bold #00ffff]NatShell[/]        [#009988]│[/]\n"
+        "       [#00ccaa]███[/]       [#009988]│[/] [dim #00ccaa]Natural Language Shell[/] [#009988]│[/]\n"
+        "     [#00ccaa]███████[/]     [#009988]╰────────────────────────╯[/]\n"
+        "      [#00aa88]█████[/]\n"
+        "    [#00aa88]█████████[/]\n"
+        "  [#00ff88]·[/]    [#30304a]██[/]"
     ),
 ]
 
