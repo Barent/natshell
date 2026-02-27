@@ -108,6 +108,21 @@ class SafetyClassifier:
         if tool_name == "write_file":
             return Risk.CONFIRM
 
+        if tool_name == "edit_file":
+            # Always confirm edits; also check sensitive paths
+            path = arguments.get("path", "")
+            for pattern in _SENSITIVE_PATH_PATTERNS:
+                if pattern in path:
+                    return Risk.CONFIRM
+            if self.mode == "yolo":
+                return Risk.SAFE
+            return Risk.CONFIRM
+
+        if tool_name == "run_code":
+            if self.mode == "yolo":
+                return Risk.SAFE
+            return Risk.CONFIRM
+
         if tool_name == "read_file":
             path = arguments.get("path", "")
             for pattern in _SENSITIVE_PATH_PATTERNS:

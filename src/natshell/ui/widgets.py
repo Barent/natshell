@@ -328,6 +328,42 @@ class ThinkingIndicator(Static):
         self.update(_THINKING_FRAMES[self._frame])
 
 
+def _format_tool_summary(tc: ToolCall) -> str:
+    """One-line summary label above the scrollable detail."""
+    match tc.name:
+        case "execute_shell":
+            return "Command:"
+        case "edit_file":
+            return f"Edit: [bold]{_escape(tc.arguments.get('path', ''))}[/]"
+        case "run_code":
+            return f"Run: [bold]{_escape(tc.arguments.get('language', ''))}[/]"
+        case "write_file":
+            path = tc.arguments.get("path", "")
+            mode = tc.arguments.get("mode", "overwrite")
+            return f"{'Append' if mode == 'append' else 'Write'}: [bold]{_escape(path)}[/]"
+        case _:
+            return f"{tc.name}:"
+
+
+def _format_tool_detail(tc: ToolCall) -> str:
+    """Detailed content for the scrollable area."""
+    match tc.name:
+        case "execute_shell":
+            return _escape(tc.arguments.get("command", str(tc.arguments)))
+        case "edit_file":
+            old = tc.arguments.get("old_text", "")
+            new = tc.arguments.get("new_text", "")
+            return _escape(f"--- old\n{old}\n+++ new\n{new}")
+        case "run_code":
+            return _escape(tc.arguments.get("code", str(tc.arguments)))
+        case "write_file":
+            content = tc.arguments.get("content", "")
+            preview = content[:2000] + ("..." if len(content) > 2000 else "")
+            return _escape(preview)
+        case _:
+            return _escape(str(tc.arguments))
+
+
 class ConfirmScreen(ModalScreen[bool]):
     """Modal confirmation dialog for dangerous commands."""
 
@@ -336,13 +372,12 @@ class ConfirmScreen(ModalScreen[bool]):
         self.tool_call = tool_call
 
     def compose(self) -> ComposeResult:
-        command = self.tool_call.arguments.get("command", str(self.tool_call.arguments))
         with Vertical(id="confirm-dialog"):
-            yield Label(f"[bold yellow]⚠ Confirmation Required[/]\n")
+            yield Label("[bold yellow]⚠ Confirmation Required[/]\n")
             yield Label(f"Tool: [bold]{self.tool_call.name}[/]")
-            yield Label("Command:")
+            yield Label(_format_tool_summary(self.tool_call))
             with ScrollableContainer(id="confirm-command"):
-                yield Static(_escape(command))
+                yield Static(_format_tool_detail(self.tool_call))
             yield Label("\nDo you want to execute this command?")
             with Vertical(id="confirm-buttons"):
                 yield Button("Yes, execute", variant="warning", id="btn-yes")

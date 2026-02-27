@@ -40,7 +40,24 @@ from natshell.ui.widgets import (
     ThinkingIndicator,
     UserMessage,
     _escape,
+    _format_tool_summary,
 )
+
+
+def _tool_display_text(tool_call: ToolCall) -> str:
+    """Human-readable command text for the EXECUTING display block."""
+    match tool_call.name:
+        case "execute_shell":
+            return tool_call.arguments.get("command", str(tool_call.arguments))
+        case "edit_file":
+            return f"edit_file \u2192 {tool_call.arguments.get('path', '?')}"
+        case "run_code":
+            lang = tool_call.arguments.get("language", "?")
+            return f"run_code \u2192 {lang}"
+        case "write_file":
+            return f"write_file \u2192 {tool_call.arguments.get('path', '?')}"
+        case _:
+            return f"{tool_call.name}({tool_call.arguments})"
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +201,7 @@ class NatShellApp(App):
                         conversation.mount(PlanningMessage(event.data))
 
                     case EventType.EXECUTING:
-                        cmd = event.tool_call.arguments.get(
-                            "command", str(event.tool_call.arguments)
-                        )
+                        cmd = _tool_display_text(event.tool_call)
                         # Mount a command block with just the command, no output yet
                         block = CommandBlock(cmd)
                         block.id = f"cmd-{event.tool_call.id}"
