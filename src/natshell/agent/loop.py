@@ -134,15 +134,6 @@ class AgentLoop:
                         "without producing a complete response. Try a simpler request.",
                     )
                     return
-                # Model wrote planning text but ran out of tokens before
-                # the tool call.  Append the partial response and continue
-                # so the model can follow through on the next iteration.
-                self.messages.append({
-                    "role": "assistant",
-                    "content": raw,
-                })
-                yield AgentEvent(type=EventType.PLANNING, data=stripped)
-                continue
 
             # Case 1: Model wants to call tools
             if result.tool_calls:
