@@ -506,14 +506,20 @@ ok "Launcher script created: $SYMLINK"
 
 # Ensure ~/.local/bin is in PATH
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    # Detect the right shell profile
-    if [[ "$IS_MACOS" == true ]]; then
-        SHELL_RC="$HOME/.zshrc"
-        [[ "$(basename "${SHELL:-/bin/zsh}")" == "bash" ]] && SHELL_RC="$HOME/.bash_profile"
-    else
-        SHELL_RC="$HOME/.bashrc"
-        [[ "$(basename "${SHELL:-/bin/bash}")" == "zsh" ]] && SHELL_RC="$HOME/.zshrc"
-    fi
+    # Detect the right shell profile based on the user's login shell.
+    # macOS bash uses ~/.bash_profile (login shell); Linux bash uses ~/.bashrc.
+    USER_SHELL="$(basename "${SHELL:-/bin/bash}")"
+    case "$USER_SHELL" in
+        zsh)  SHELL_RC="$HOME/.zshrc" ;;
+        bash)
+            if [[ "$IS_MACOS" == true ]]; then
+                SHELL_RC="$HOME/.bash_profile"
+            else
+                SHELL_RC="$HOME/.bashrc"
+            fi
+            ;;
+        *)    SHELL_RC="$HOME/.profile" ;;
+    esac
 
     PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
 
