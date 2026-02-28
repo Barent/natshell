@@ -109,11 +109,14 @@ class ToolRegistry:
                         error=f"Tool error: {type(e).__name__}: {e}",
                         exit_code=1,
                     )
-            # Remap not possible — report the original TypeError
+            # Remap not possible — report the original TypeError with expected params
+            defn = self._definitions.get(name)
+            expected = list(defn.parameters.get("properties", {}).keys()) if defn else []
             return ToolResult(
                 output="",
                 error=f"Tool error: wrong arguments for {name}. "
-                       f"Got: {list(arguments.keys())}",
+                       f"Got: {list(arguments.keys())}. "
+                       f"Expected: {expected}",
                 exit_code=1,
             )
         except Exception as e:
