@@ -40,12 +40,13 @@ Footer {
 
 /* Input row (input + paste button) */
 #input-row {
-    height: auto;
+    height: 3;
     margin: 0 1 1 1;
 }
 
 /* User input */
 #user-input {
+    width: 1fr;
     margin: 0;
     background: #0f3460;
     color: #e2e2e2;
@@ -63,8 +64,9 @@ Footer {
     height: 3;
     background: #16213e;
     color: #a0a0a0;
-    border: tall #30304a;
+    border: none;
     margin: 0;
+    content-align: center middle;
 }
 
 #paste-btn:hover {
