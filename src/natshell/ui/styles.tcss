@@ -247,3 +247,27 @@ SudoPasswordScreen {
 #sudo-buttons Button {
     margin: 0 2;
 }
+
+/* Model select picker */
+ModelSelectScreen {
+    align: center middle;
+}
+
+#model-select-dialog {
+    width: 70;
+    max-width: 90%;
+    height: auto;
+    max-height: 80%;
+    padding: 2 4;
+    border: thick #5390d9;
+    background: #1a1a2e;
+}
+
+#model-options {
+    max-height: 16;
+    height: auto;
+    background: #0d0d1a;
+    scrollbar-size: 1 1;
+    scrollbar-color: #30304a;
+    scrollbar-color-hover: #4a4a6a;
+}
