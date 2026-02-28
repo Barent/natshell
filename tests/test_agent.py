@@ -11,7 +11,7 @@ import pytest
 from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop, EventType
 from natshell.config import AgentConfig, SafetyConfig
-from natshell.inference.engine import CompletionResult, ToolCall
+from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 from natshell.inference.local import _THINK_RE, _TOOL_CALL_RE, LocalEngine
 from natshell.safety.classifier import SafetyClassifier
 from natshell.tools.registry import create_default_registry
@@ -347,3 +347,65 @@ class TestQwen3Parsing:
         assert len(matches) == 1
         parsed = json.loads(matches[0])
         assert parsed["name"] == "execute_shell"
+
+
+# ─── max_tokens auto-scaling ────────────────────────────────────────────────
+
+
+def _make_agent_with_ctx(
+    n_ctx: int,
+    max_tokens: int = 2048,
+) -> AgentLoop:
+    """Create an agent whose mock engine reports the given n_ctx."""
+    engine = AsyncMock()
+    engine.chat_completion = AsyncMock(
+        return_value=CompletionResult(content="ok"),
+    )
+    engine.engine_info = lambda: EngineInfo(engine_type="mock", n_ctx=n_ctx)
+
+    tools = create_default_registry()
+    safety = SafetyClassifier(SafetyConfig(mode="confirm", always_confirm=[], blocked=[]))
+    agent_config = AgentConfig(max_steps=15, temperature=0.3, max_tokens=max_tokens)
+
+    agent = AgentLoop(engine=engine, tools=tools, safety=safety, config=agent_config)
+    agent.initialize(SystemContext(
+        hostname="testhost", distro="Test", kernel="6.0", username="tester",
+    ))
+    return agent
+
+
+class TestMaxTokensScaling:
+    def test_small_context_uses_config_floor(self):
+        """4096-token context: max(2048, min(1024, 16384)) = 2048 (unchanged)."""
+        agent = _make_agent_with_ctx(n_ctx=4096)
+        assert agent._max_tokens == 2048
+
+    def test_large_context_scales_up(self):
+        """40960-token context: max(2048, min(10240, 16384)) = 10240."""
+        agent = _make_agent_with_ctx(n_ctx=40960)
+        assert agent._max_tokens == 10240
+
+    def test_very_large_context_capped(self):
+        """131072-token context: max(2048, min(32768, 16384)) = 16384 (cap)."""
+        agent = _make_agent_with_ctx(n_ctx=131072)
+        assert agent._max_tokens == 16384
+
+    def test_user_high_floor_respected(self):
+        """User sets max_tokens=8192 — should be respected as floor."""
+        agent = _make_agent_with_ctx(n_ctx=4096, max_tokens=8192)
+        # max(8192, min(1024, 16384)) = 8192
+        assert agent._max_tokens == 8192
+
+    async def test_engine_swap_recalculates(self):
+        """Swapping to an engine with a larger context should update _max_tokens."""
+        agent = _make_agent_with_ctx(n_ctx=4096)
+        assert agent._max_tokens == 2048
+
+        # Swap to a bigger engine
+        new_engine = AsyncMock()
+        new_engine.engine_info = lambda: EngineInfo(engine_type="mock", n_ctx=40960)
+        new_engine.chat_completion = AsyncMock(
+            return_value=CompletionResult(content="ok"),
+        )
+        await agent.swap_engine(new_engine)
+        assert agent._max_tokens == 10240

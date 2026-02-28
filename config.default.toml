@@ -38,7 +38,8 @@ main_gpu = -1
 max_steps = 30
 # Temperature for generation — lower = more deterministic
 temperature = 0.3
-# Max tokens per model generation
+# Max tokens per model generation (minimum floor).
+# Auto-scales to 25% of the context window (capped at 16384) when larger.
 max_tokens = 2048
 # Extra context tokens to reserve beyond max_tokens (0 = auto ~400 tokens).
 # Increase if you add many custom safety patterns or use verbose tool outputs.

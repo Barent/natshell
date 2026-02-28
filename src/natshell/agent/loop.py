@@ -77,6 +77,7 @@ class AgentLoop:
         self._system_context: SystemContext | None = None
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
+        self._max_tokens: int = config.max_tokens
 
     def initialize(self, system_context: SystemContext) -> None:
         """Build the system prompt and initialize conversation."""
@@ -95,6 +96,15 @@ class AgentLoop:
         if hasattr(old_engine, "close"):
             await old_engine.close()
 
+    def _effective_max_tokens(self, n_ctx: int) -> int:
+        """Scale max_tokens based on context window size.
+
+        Uses 25% of the context window (capped at 16384), with the configured
+        value as a minimum floor.  This gives small local models their current
+        behaviour while providing remote/large models proper output headroom.
+        """
+        return max(self.config.max_tokens, min(n_ctx // 4, 16384))
+
     def _setup_context_manager(self) -> None:
         """Create a ContextManager sized to the current engine's context window."""
         try:
@@ -104,7 +114,14 @@ class AgentLoop:
             # Gracefully handle mock engines or engines without engine_info
             n_ctx = 4096
 
-        response_reserve = self.config.max_tokens
+        self._max_tokens = self._effective_max_tokens(n_ctx)
+        if self._max_tokens != self.config.max_tokens:
+            logger.info(
+                "Scaled max_tokens %d → %d for %d-token context window",
+                self.config.max_tokens, self._max_tokens, n_ctx,
+            )
+
+        response_reserve = self._max_tokens
         tool_reserve = self.config.context_reserve or 400
         budget = n_ctx - response_reserve - tool_reserve
         budget = max(budget, 1024)  # minimum viable budget
@@ -155,7 +172,7 @@ class AgentLoop:
                     messages=self.messages,
                     tools=self.tools.get_tool_schemas(),
                     temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
+                    max_tokens=self._max_tokens,
                 )
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
             except Exception as e:
