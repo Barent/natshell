@@ -37,6 +37,7 @@ class TestEditFile:
             result = await edit_file(path, "nonexistent text", "replacement")
             assert result.exit_code == 1
             assert "not found" in result.error
+            assert "hello world" in result.error  # file content included
         finally:
             os.unlink(path)
 

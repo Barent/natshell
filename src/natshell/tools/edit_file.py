@@ -57,7 +57,15 @@ async def edit_file(path: str, old_text: str, new_text: str) -> ToolResult:
 
     count = content.count(old_text)
     if count == 0:
-        return ToolResult(error="old_text not found in file", exit_code=1)
+        # Include file content so the model can see what's actually there
+        preview_lines = content.splitlines()[:50]
+        preview = "\n".join(preview_lines)
+        if len(content.splitlines()) > 50:
+            preview += f"\n... [{len(content.splitlines()) - 50} more lines]"
+        return ToolResult(
+            error=f"old_text not found in file. Current contents of {target}:\n{preview}",
+            exit_code=1,
+        )
     if count > 1:
         return ToolResult(
             error=f"old_text matches {count} locations (must be unique)",
