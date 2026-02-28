@@ -43,25 +43,9 @@ if [[ $EUID -eq 0 ]]; then
     fi
 fi
 
-# Check Python version
-PYTHON="python3"
-if ! command -v "$PYTHON" &>/dev/null; then
-    die "python3 not found. Install Python 3.11+ first."
-fi
+# ─── Package manager detection & install helper ──────────────────────────────
+# Moved above Python check so install_pkg is available for auto-installing Python.
 
-PY_VERSION=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
-PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
-
-if [[ "$PY_MAJOR" -lt 3 ]] || { [[ "$PY_MAJOR" -eq 3 ]] && [[ "$PY_MINOR" -lt 11 ]]; }; then
-    die "Python 3.11+ required (found $PY_VERSION)"
-fi
-
-info "Python $PY_VERSION — OK"
-
-# ─── System dependency checks ─────────────────────────────────────────────────
-
-# Detect package manager
 PKG_MGR=""
 if [[ "$IS_MACOS" == true ]]; then
     if command -v brew &>/dev/null; then
@@ -133,6 +117,88 @@ install_pkg() {
   Arch:           sudo pacman -S $pacman_pkg"
     fi
 }
+
+# ─── Find or install Python 3.11+ ────────────────────────────────────────────
+
+# Search for a suitable python3 binary, including Homebrew paths that may not
+# be in PATH yet (Apple Silicon: /opt/homebrew/bin, Intel: /usr/local/bin).
+find_python() {
+    for cmd in python3.13 python3.12 python3.11 python3; do
+        if command -v "$cmd" &>/dev/null; then
+            echo "$cmd"
+            return 0
+        fi
+    done
+    # Check Homebrew prefixes directly (macOS installs may not be in PATH)
+    if [[ "$IS_MACOS" == true ]]; then
+        for prefix in /opt/homebrew/bin /usr/local/bin; do
+            for cmd in python3.13 python3.12 python3.11 python3; do
+                if [[ -x "$prefix/$cmd" ]]; then
+                    echo "$prefix/$cmd"
+                    return 0
+                fi
+            done
+        done
+    fi
+    return 1
+}
+
+PYTHON=""
+PYTHON=$(find_python) || true
+
+if [[ -z "$PYTHON" ]]; then
+    warn "Python 3.11+ not found."
+    if [[ "$IS_MACOS" == true ]]; then
+        if command -v brew &>/dev/null; then
+            read -rp "  Install Python via Homebrew? [Y/n]: " py_answer
+            if [[ -z "$py_answer" ]] || is_yes "$py_answer"; then
+                brew install python@3.13
+                # Ensure Homebrew's bin is in PATH for the rest of this script
+                eval "$(brew shellenv 2>/dev/null)" || true
+                hash -r 2>/dev/null
+            fi
+        else
+            die "Python 3.11+ is required. Install Homebrew (https://brew.sh) then re-run, or:
+  Download from https://www.python.org/downloads/"
+        fi
+    else
+        install_pkg "python3" "python3" "python" ""
+    fi
+
+    # Re-search after install
+    hash -r 2>/dev/null
+    PYTHON=$(find_python) || true
+
+    if [[ -z "$PYTHON" ]]; then
+        die "Python 3.11+ still not found after install attempt."
+    fi
+
+    # If we found it via a direct path (not in PATH), warn and fix for this session
+    if ! command -v "$PYTHON" &>/dev/null; then
+        BREW_PREFIX="$(dirname "$PYTHON")"
+        warn "Python installed at $PYTHON but not in PATH."
+        if [[ "$IS_MACOS" == true ]]; then
+            SHELL_RC="$HOME/.zshrc"
+            [[ "$(basename "$SHELL")" == "bash" ]] && SHELL_RC="$HOME/.bash_profile"
+            warn "  Add this to $SHELL_RC:"
+            warn "    eval \"\\\$($(dirname "$BREW_PREFIX")/bin/brew shellenv)\""
+        fi
+        # Add to PATH for the remainder of this script
+        export PATH="$BREW_PREFIX:$PATH"
+    fi
+fi
+
+PY_VERSION=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
+PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
+
+if [[ "$PY_MAJOR" -lt 3 ]] || { [[ "$PY_MAJOR" -eq 3 ]] && [[ "$PY_MINOR" -lt 11 ]]; }; then
+    die "Python 3.11+ required (found $PY_VERSION). Update your Python installation."
+fi
+
+info "Python $PY_VERSION — OK"
+
+# ─── System dependency checks ─────────────────────────────────────────────────
 
 # Verify python3-venv is available (separate package on Debian/Ubuntu; bundled on macOS)
 if [[ "$IS_MACOS" != true ]]; then
