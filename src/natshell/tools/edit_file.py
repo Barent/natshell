@@ -23,8 +23,9 @@ DEFINITION = ToolDefinition(
             "old_text": {
                 "type": "string",
                 "description": (
-                    "Exact text to find in the file. Must match exactly one "
-                    "location. Include enough surrounding context to be unique."
+                    "Exact text to find and replace. Can and should span multiple lines "
+                    "when changing a block of code. Must match exactly one location in "
+                    "the file. Include enough surrounding context to be unique."
                 ),
             },
             "new_text": {
