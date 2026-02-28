@@ -24,7 +24,11 @@ class RemoteEngine:
         self.model = model
         self.api_key = api_key
         self.n_ctx = n_ctx
-        self.client = httpx.AsyncClient(timeout=300.0)
+        # Use a short connect timeout but generous read timeout;
+        # per-request read timeout is scaled in chat_completion() based on max_tokens.
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0),
+        )
         logger.info(f"Remote engine: {base_url} model={model}")
 
         # Warn if sending API key over plaintext HTTP to a non-localhost host
@@ -60,8 +64,14 @@ class RemoteEngine:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        # Scale read timeout for large generations: assume ≥10 tok/s + 60s overhead
+        read_timeout = max(300.0, max_tokens / 10.0 + 60.0)
+
         url = f"{self.base_url}/chat/completions"
-        response = await self.client.post(url, json=payload, headers=headers)
+        response = await self.client.post(
+            url, json=payload, headers=headers,
+            timeout=httpx.Timeout(connect=30.0, read=read_timeout, write=30.0, pool=30.0),
+        )
         response.raise_for_status()
 
         data = response.json()
