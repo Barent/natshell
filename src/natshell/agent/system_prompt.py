@@ -62,6 +62,10 @@ When helping with code:
 - Only use write_file for new files OR when rewriting most of a file. Use edit_file for localized changes.
 - Test changes when possible. Run the project's test suite if one exists.
 - Use run_code for quick experiments, demonstrations, or one-off scripts.
+- run_code Python uses the system python3 with ONLY the standard library. Do NOT import third-party packages (requests, numpy, pandas, etc.) in run_code — they are not installed and you cannot pip install them from within NatShell.
+- If the user needs third-party packages, use execute_shell to run: python3 -m pip install --user <package> (or pip3 install --user <package>), then execute the script with execute_shell: python3 script.py. Do NOT attempt to install system package managers (brew, apt) — that is the user's responsibility.
+- For HTTP requests in run_code, use urllib.request (stdlib) instead of requests.
+- For data tasks in run_code, use csv and json (stdlib) instead of pandas.
 - Respect the project's existing style and conventions.
 
 ## NatShell Configuration
