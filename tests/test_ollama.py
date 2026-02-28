@@ -9,6 +9,7 @@ import pytest
 
 from natshell.inference.ollama import (
     OllamaModel,
+    get_model_context_length,
     list_models,
     normalize_base_url,
     ping_server,
@@ -160,3 +161,105 @@ class TestListModels:
 
             models = await list_models("http://badhost:11434")
             assert models == []
+
+
+# ─── get_model_context_length ────────────────────────────────────────────────
+
+
+class TestGetModelContextLength:
+    async def test_returns_context_length_from_model_info(self):
+        """Successful query returns context length from architecture-prefixed key."""
+        show_response = httpx.Response(200, json={
+            "model_info": {
+                "general.architecture": "qwen2",
+                "qwen2.context_length": 32768,
+                "qwen2.embedding_length": 3584,
+            }
+        })
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.post = AsyncMock(return_value=show_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await get_model_context_length("http://localhost:11434", "qwen3:32b")
+            assert result == 32768
+
+    async def test_returns_llama_context_length(self):
+        """Works with llama architecture prefix."""
+        show_response = httpx.Response(200, json={
+            "model_info": {
+                "general.architecture": "llama",
+                "llama.context_length": 8192,
+            }
+        })
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.post = AsyncMock(return_value=show_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await get_model_context_length("http://localhost:11434", "llama3:8b")
+            assert result == 8192
+
+    async def test_non_ollama_server_returns_zero(self):
+        """Non-Ollama server (404 on /api/show) returns 0."""
+        show_response = httpx.Response(404, text="Not Found")
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.post = AsyncMock(return_value=show_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await get_model_context_length("http://localhost:8080", "gpt-4")
+            assert result == 0
+
+    async def test_connection_failure_returns_zero(self):
+        """Connection failure returns 0."""
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("refused"))
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await get_model_context_length("http://badhost:11434", "qwen3:4b")
+            assert result == 0
+
+    async def test_missing_model_info_returns_zero(self):
+        """Response without model_info key returns 0."""
+        show_response = httpx.Response(200, json={
+            "license": "apache-2.0",
+            "modelfile": "FROM qwen3:4b",
+        })
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.post = AsyncMock(return_value=show_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await get_model_context_length("http://localhost:11434", "qwen3:4b")
+            assert result == 0
+
+    async def test_strips_v1_from_url(self):
+        """URL with /v1 suffix is normalized before querying /api/show."""
+        show_response = httpx.Response(200, json={
+            "model_info": {"qwen2.context_length": 4096}
+        })
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.post = AsyncMock(return_value=show_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await get_model_context_length("http://localhost:11434/v1", "qwen3:4b")
+            assert result == 4096
+            # Should have posted to the normalized URL
+            instance.post.assert_called_with(
+                "http://localhost:11434/api/show",
+                json={"model": "qwen3:4b"},
+            )

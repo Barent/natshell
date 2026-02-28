@@ -111,3 +111,29 @@ def _parse_openai_models(data: dict) -> list[OllamaModel]:
             name=m.get("id", ""),
         ))
     return models
+
+
+async def get_model_context_length(base_url: str, model: str) -> int:
+    """Query Ollama /api/show for the model's context window size.
+
+    Returns the context length in tokens, or 0 if unavailable.
+    """
+    base_url = normalize_base_url(base_url)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{base_url}/api/show",
+                json={"model": model},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                model_info = data.get("model_info", {})
+                # Context length key varies by architecture: llama.context_length,
+                # qwen2.context_length, etc. Search for any key ending in .context_length
+                for key, value in model_info.items():
+                    if key.endswith(".context_length") and isinstance(value, int):
+                        return value
+    except (httpx.HTTPError, httpx.ConnectError, httpx.ConnectTimeout,
+            OSError, ValueError, KeyError):
+        pass
+    return 0

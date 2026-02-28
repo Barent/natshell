@@ -124,11 +124,14 @@ def main() -> None:
         reachable = asyncio.run(ping_server(remote_url))
 
         if reachable:
+            from natshell.inference.ollama import get_model_context_length
             from natshell.inference.remote import RemoteEngine
+            n_ctx = asyncio.run(get_model_context_length(remote_url, remote_model))
             engine = RemoteEngine(
                 base_url=remote_url,
                 model=remote_model,
                 api_key=remote_api_key,
+                n_ctx=n_ctx,
             )
             fallback_config = config.model
             print(f"Using remote model: {remote_model} at {remote_url}")

@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
 class RemoteEngine:
     """LLM inference via a remote OpenAI-compatible API."""
 
-    def __init__(self, base_url: str, model: str, api_key: str = "") -> None:
+    def __init__(self, base_url: str, model: str, api_key: str = "", n_ctx: int = 0) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
+        self.n_ctx = n_ctx
         self.client = httpx.AsyncClient(timeout=120.0)
         logger.info(f"Remote engine: {base_url} model={model}")
 
@@ -104,6 +105,7 @@ class RemoteEngine:
             engine_type="remote",
             model_name=self.model,
             base_url=self.base_url,
+            n_ctx=self.n_ctx,
         )
 
     async def close(self) -> None:

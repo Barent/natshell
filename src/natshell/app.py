@@ -17,7 +17,7 @@ from textual.widgets import Button, Footer, Input, Static
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
 from natshell.config import NatShellConfig, save_engine_preference, save_model_config, save_ollama_default
 from natshell.inference.engine import ToolCall
-from natshell.inference.ollama import list_models, normalize_base_url, ping_server
+from natshell.inference.ollama import get_model_context_length, list_models, normalize_base_url, ping_server
 from natshell.safety.classifier import Risk
 from natshell.tools.execute_shell import (
     execute_shell,
@@ -515,7 +515,8 @@ class NatShellApp(App):
 
         # Ensure URL has /v1 for the OpenAI-compatible endpoint
         api_url = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
-        new_engine = RemoteEngine(base_url=api_url, model=model_name)
+        n_ctx = await get_model_context_length(base_url, model_name)
+        new_engine = RemoteEngine(base_url=api_url, model=model_name, n_ctx=n_ctx)
         await self.agent.swap_engine(new_engine)
         save_engine_preference("remote")
         save_ollama_default(model_name, url=base_url)
