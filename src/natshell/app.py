@@ -67,15 +67,45 @@ def _tool_display_text(tool_call: ToolCall) -> str:
 logger = logging.getLogger(__name__)
 
 
+def _shallow_tree(directory: Path, max_depth: int = 2) -> str:
+    """Build a compact directory tree string (2 levels deep, no hidden files)."""
+    lines: list[str] = [f"{directory}/"]
+
+    def _walk(path: Path, prefix: str, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except OSError:
+            return
+        entries = [e for e in entries if not e.name.startswith(".")]
+        for i, entry in enumerate(entries):
+            connector = "\u2514\u2500 " if i == len(entries) - 1 else "\u251c\u2500 "
+            extension = "   " if i == len(entries) - 1 else "\u2502  "
+            if entry.is_dir():
+                lines.append(f"{prefix}{connector}{entry.name}/")
+                _walk(entry, prefix + extension, depth + 1)
+            else:
+                lines.append(f"{prefix}{connector}{entry.name}")
+
+    _walk(directory, "  ", 1)
+    return "\n".join(lines)
+
+
 def _build_step_prompt(
     step: PlanStep, plan: Plan, completed_summaries: list[str]
 ) -> str:
     """Build a focused prompt for a single plan step.
 
-    Includes the step body, one-line summaries of completed steps, and
-    a directive to not read plan files.
+    Includes the step body, one-line summaries of completed steps,
+    project directory tree, and a directive to not read plan files.
     """
     parts = [f"Execute this task (step {step.number} of {len(plan.steps)}):"]
+
+    # Include project directory structure so the model doesn't waste steps discovering it
+    if plan.source_dir and plan.source_dir.is_dir():
+        tree = _shallow_tree(plan.source_dir)
+        parts.append(f"\nProject layout:\n{tree}")
 
     if completed_summaries:
         parts.append("\nPreviously completed:")

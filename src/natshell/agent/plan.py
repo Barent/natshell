@@ -23,6 +23,7 @@ class Plan:
     title: str  # From # heading
     preamble: str  # Text before first step
     steps: list[PlanStep] = field(default_factory=list)
+    source_dir: Path | None = None  # Directory containing the plan file
 
 
 # Matches ## headings, optionally prefixed with "Step N:" or "N."
@@ -50,7 +51,9 @@ def parse_plan_file(path: str | Path) -> Plan:
         raise FileNotFoundError(f"Plan file not found: {path}")
 
     text = path.read_text()
-    return parse_plan_text(text)
+    plan = parse_plan_text(text)
+    plan.source_dir = path.parent
+    return plan
 
 
 def parse_plan_text(text: str) -> Plan:
