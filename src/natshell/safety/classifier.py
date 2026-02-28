@@ -17,12 +17,15 @@ class Risk(Enum):
     BLOCKED = "blocked"
 
 
-_CMD_SEPARATORS = re.compile(r'\s*(?:&&|\|\||[;&|])\s*')
+_CMD_SEPARATORS = re.compile(r"\s*(?:&&|\|\||[;&|])\s*")
 
 # Paths that should require user confirmation before read_file accesses them
 _SENSITIVE_PATH_PATTERNS = [
-    "/.ssh/", "/id_rsa", "/id_ed25519",
-    "/etc/shadow", "/etc/sudoers",
+    "/.ssh/",
+    "/id_rsa",
+    "/id_ed25519",
+    "/etc/shadow",
+    "/etc/sudoers",
     "/proc/self/environ",
     ".env",
 ]
@@ -56,7 +59,7 @@ class SafetyClassifier:
                 return Risk.CONFIRM
 
         # Flag commands using subshells or backtick expansion
-        if re.search(r'`[^`]+`|\$\([^)]+\)', command):
+        if re.search(r"`[^`]+`|\$\([^)]+\)", command):
             return Risk.CONFIRM
 
         sub_commands = _CMD_SEPARATORS.split(command)

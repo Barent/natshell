@@ -184,10 +184,15 @@ def _verify_copy(backend: str) -> bool:
         return True  # can't verify, assume success
     try:
         result = subprocess.run(
-            read_cmd, capture_output=True, text=True, timeout=2,
+            read_cmd,
+            capture_output=True,
+            text=True,
+            timeout=2,
         )
         if result.returncode != 0 or not result.stdout:
-            logger.warning("Clipboard verify failed: backend %s wrote OK but read-back empty", backend)
+            logger.warning(
+                "Clipboard verify failed: backend %s wrote OK but read-back empty", backend
+            )
             return False
         return True
     except Exception:

@@ -16,9 +16,7 @@ from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 logger = logging.getLogger(__name__)
 
 # Regex to match <tool_call>{"name": ..., "arguments": ...}</tool_call> blocks
-_TOOL_CALL_RE = re.compile(
-    r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL
-)
+_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 # Regex to match <think>...</think> blocks (including empty ones)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 # Regex to match unclosed <think> blocks (truncated responses)
@@ -134,11 +132,18 @@ class LocalEngine:
         if n_gpu_layers != 0:
             try:
                 from llama_cpp import llama_supports_gpu_offload
+
                 if not llama_supports_gpu_offload():
-                    logger.warning("GPU layers requested but llama-cpp-python has no GPU support — running on CPU")
+                    logger.warning(
+                        "GPU layers requested but llama-cpp-python"
+                        " has no GPU support — running on CPU"
+                    )
             except ImportError:
                 pass
-        logger.info(f"Loaded model: {model_path} (ctx={n_ctx}, threads={n_threads}, main_gpu={resolved_gpu})")
+        logger.info(
+            "Loaded model: %s (ctx=%d, threads=%d, main_gpu=%d)",
+            model_path, n_ctx, n_threads, resolved_gpu,
+        )
 
     def count_tokens(self, text: str) -> int:
         """Count tokens in text using the model's tokenizer."""
@@ -218,11 +223,13 @@ class LocalEngine:
                 except json.JSONDecodeError:
                     args = {}
 
-                tool_calls.append(ToolCall(
-                    id=tc.get("id", str(uuid.uuid4())[:8]),
-                    name=func.get("name", ""),
-                    arguments=args,
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.get("id", str(uuid.uuid4())[:8]),
+                        name=func.get("name", ""),
+                        arguments=args,
+                    )
+                )
 
         # Parse <tool_call> XML tags from content (Qwen3 style)
         if not tool_calls:
@@ -233,11 +240,13 @@ class LocalEngine:
                     arguments = parsed.get("arguments", {})
                     if isinstance(arguments, str):
                         arguments = json.loads(arguments)
-                    tool_calls.append(ToolCall(
-                        id=str(uuid.uuid4())[:8],
-                        name=name,
-                        arguments=arguments,
-                    ))
+                    tool_calls.append(
+                        ToolCall(
+                            id=str(uuid.uuid4())[:8],
+                            name=name,
+                            arguments=arguments,
+                        )
+                    )
                 except (json.JSONDecodeError, KeyError):
                     logger.warning("Failed to parse tool_call from content: %s", match.group(0))
 

@@ -5,15 +5,12 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from natshell.config import (
     NatShellConfig,
     OllamaConfig,
     load_config,
     save_ollama_default,
 )
-
 
 # ─── OllamaConfig defaults ─────────────────────────────────────────────────
 
@@ -35,11 +32,13 @@ class TestOllamaConfigDefaults:
 class TestOllamaConfigLoading:
     def test_loads_ollama_section(self, tmp_path: Path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [ollama]
             url = "http://myhost:11434"
             default_model = "llama3:8b"
-        """))
+        """)
+        )
 
         cfg = load_config(str(config_file))
         assert cfg.ollama.url == "http://myhost:11434"
@@ -47,7 +46,7 @@ class TestOllamaConfigLoading:
 
     def test_missing_ollama_section_uses_defaults(self, tmp_path: Path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text("[ui]\ntheme = \"light\"\n")
+        config_file.write_text('[ui]\ntheme = "light"\n')
 
         cfg = load_config(str(config_file))
         assert cfg.ollama.url == ""
@@ -55,10 +54,12 @@ class TestOllamaConfigLoading:
 
     def test_partial_ollama_section(self, tmp_path: Path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [ollama]
             url = "http://gpu-box:11434"
-        """))
+        """)
+        )
 
         cfg = load_config(str(config_file))
         assert cfg.ollama.url == "http://gpu-box:11434"
@@ -83,14 +84,16 @@ class TestSaveOllamaDefault:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [ollama]
             url = "http://localhost:11434"
             default_model = "old-model"
 
             [ui]
             theme = "dark"
-        """))
+        """)
+        )
 
         save_ollama_default("new-model")
         content = config_file.read_text()
@@ -98,14 +101,14 @@ class TestSaveOllamaDefault:
         assert "old-model" not in content
         # Other sections should be preserved
         assert "[ui]" in content
-        assert '[ollama]' in content
+        assert "[ollama]" in content
 
     def test_adds_section_to_existing_file(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text("[ui]\ntheme = \"dark\"\n")
+        config_file.write_text('[ui]\ntheme = "dark"\n')
 
         save_ollama_default("llama3:8b")
         content = config_file.read_text()
@@ -119,11 +122,13 @@ class TestSaveOllamaDefault:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [ollama]
             url = "http://localhost:11434"
             # default_model = "qwen3:4b"
-        """))
+        """)
+        )
 
         save_ollama_default("mistral:7b")
         content = config_file.read_text()
@@ -144,11 +149,13 @@ class TestSaveOllamaDefault:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [ollama]
             url = "http://old-host:11434"
             default_model = "old-model"
-        """))
+        """)
+        )
 
         save_ollama_default("new-model", url="http://new-host:11434")
         content = config_file.read_text()
@@ -162,11 +169,13 @@ class TestSaveOllamaDefault:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [ollama]
             url = "http://keep-this:11434"
             default_model = "old-model"
-        """))
+        """)
+        )
 
         save_ollama_default("new-model")
         content = config_file.read_text()

@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import time
+
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ _sudo_password: str | None = None
 _sudo_password_time: float = 0.0
 _SUDO_PW_TIMEOUT = 300  # 5 minutes
 
-_SUDO_RE = re.compile(r'\bsudo\b')
+_SUDO_RE = re.compile(r"\bsudo\b")
 
 # stderr patterns that mean "sudo wanted a password but couldn't get one"
 _SUDO_NEEDS_PW = [
@@ -34,10 +35,16 @@ _SUDO_NEEDS_PW = [
 
 # Environment variables that should not be exposed to LLM-executed commands
 _SENSITIVE_ENV_VARS = {
-    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-    "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
-    "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
-    "DATABASE_URL", "DB_PASSWORD",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITLAB_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "DATABASE_URL",
+    "DB_PASSWORD",
     "NATSHELL_API_KEY",
 }
 
@@ -118,11 +125,7 @@ def _truncate_output(text: str) -> tuple[str, bool]:
     tail_lines = tail.count("\n")
     omitted = len(lines) - head_lines - tail_lines
 
-    truncated = (
-        f"{head}\n"
-        f"... [{omitted} lines truncated] ...\n"
-        f"{tail}"
-    )
+    truncated = f"{head}\n... [{omitted} lines truncated] ...\n{tail}"
     return truncated, True
 
 
@@ -180,8 +183,7 @@ async def execute_shell(
         # sudo -S echoes a password prompt to stderr — strip it
         if sudo_pw:
             stderr = "\n".join(
-                line for line in stderr.splitlines()
-                if not line.startswith("[sudo] password for")
+                line for line in stderr.splitlines() if not line.startswith("[sudo] password for")
             ).strip()
 
         return ToolResult(

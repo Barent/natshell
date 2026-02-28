@@ -6,15 +6,12 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from natshell.tools.execute_shell import execute_shell, _truncate_output
-from natshell.tools.read_file import read_file
-from natshell.tools.write_file import write_file
+from natshell.tools.execute_shell import _truncate_output, execute_shell
 from natshell.tools.list_directory import list_directory
-from natshell.tools.search_files import search_files
+from natshell.tools.read_file import read_file
 from natshell.tools.registry import create_default_registry
-
+from natshell.tools.search_files import search_files
+from natshell.tools.write_file import write_file
 
 # ─── execute_shell ───────────────────────────────────────────────────────────
 

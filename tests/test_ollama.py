@@ -5,16 +5,13 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import httpx
-import pytest
 
 from natshell.inference.ollama import (
-    OllamaModel,
     get_model_context_length,
     list_models,
     normalize_base_url,
     ping_server,
 )
-
 
 # ─── normalize_base_url ─────────────────────────────────────────────────────
 
@@ -99,20 +96,23 @@ class TestPingServer:
 class TestListModels:
     async def test_ollama_api_tags(self):
         """list_models parses Ollama /api/tags response."""
-        ollama_response = httpx.Response(200, json={
-            "models": [
-                {
-                    "name": "qwen3:4b",
-                    "size": 2684354560,
-                    "details": {"parameter_size": "4B", "family": "qwen3"},
-                },
-                {
-                    "name": "llama3:8b",
-                    "size": 5368709120,
-                    "details": {"parameter_size": "8B", "family": "llama"},
-                },
-            ]
-        })
+        ollama_response = httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "qwen3:4b",
+                        "size": 2684354560,
+                        "details": {"parameter_size": "4B", "family": "qwen3"},
+                    },
+                    {
+                        "name": "llama3:8b",
+                        "size": 5368709120,
+                        "details": {"parameter_size": "8B", "family": "llama"},
+                    },
+                ]
+            },
+        )
 
         with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
@@ -132,12 +132,15 @@ class TestListModels:
     async def test_openai_v1_models_fallback(self):
         """list_models falls back to /v1/models when /api/tags fails."""
         tags_404 = httpx.Response(404, text="Not Found")
-        openai_response = httpx.Response(200, json={
-            "data": [
-                {"id": "gpt-4"},
-                {"id": "gpt-3.5-turbo"},
-            ]
-        })
+        openai_response = httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "gpt-4"},
+                    {"id": "gpt-3.5-turbo"},
+                ]
+            },
+        )
 
         with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
@@ -169,13 +172,16 @@ class TestListModels:
 class TestGetModelContextLength:
     async def test_returns_context_length_from_model_info(self):
         """Successful query returns context length from architecture-prefixed key."""
-        show_response = httpx.Response(200, json={
-            "model_info": {
-                "general.architecture": "qwen2",
-                "qwen2.context_length": 32768,
-                "qwen2.embedding_length": 3584,
-            }
-        })
+        show_response = httpx.Response(
+            200,
+            json={
+                "model_info": {
+                    "general.architecture": "qwen2",
+                    "qwen2.context_length": 32768,
+                    "qwen2.embedding_length": 3584,
+                }
+            },
+        )
         with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
@@ -188,12 +194,15 @@ class TestGetModelContextLength:
 
     async def test_returns_llama_context_length(self):
         """Works with llama architecture prefix."""
-        show_response = httpx.Response(200, json={
-            "model_info": {
-                "general.architecture": "llama",
-                "llama.context_length": 8192,
-            }
-        })
+        show_response = httpx.Response(
+            200,
+            json={
+                "model_info": {
+                    "general.architecture": "llama",
+                    "llama.context_length": 8192,
+                }
+            },
+        )
         with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
@@ -230,10 +239,13 @@ class TestGetModelContextLength:
 
     async def test_missing_model_info_returns_zero(self):
         """Response without model_info key returns 0."""
-        show_response = httpx.Response(200, json={
-            "license": "apache-2.0",
-            "modelfile": "FROM qwen3:4b",
-        })
+        show_response = httpx.Response(
+            200,
+            json={
+                "license": "apache-2.0",
+                "modelfile": "FROM qwen3:4b",
+            },
+        )
         with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
@@ -246,9 +258,7 @@ class TestGetModelContextLength:
 
     async def test_strips_v1_from_url(self):
         """URL with /v1 suffix is normalized before querying /api/show."""
-        show_response = httpx.Response(200, json={
-            "model_info": {"qwen2.context_length": 4096}
-        })
+        show_response = httpx.Response(200, json={"model_info": {"qwen2.context_length": 4096}})
         with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)

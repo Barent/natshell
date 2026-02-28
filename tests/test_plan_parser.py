@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from natshell.agent.plan import Plan, PlanStep, parse_plan_file, parse_plan_text
-
+from natshell.agent.plan import parse_plan_file, parse_plan_text
 
 # ─── parse_plan_text ─────────────────────────────────────────────────────────
 
@@ -190,12 +189,12 @@ class TestParsePlanText:
     def test_many_steps(self):
         lines = ["# Big Plan"]
         for i in range(10):
-            lines.append(f"\n## Step {i+1}: Task {i+1}\n\nBody for step {i+1}.")
+            lines.append(f"\n## Step {i + 1}: Task {i + 1}\n\nBody for step {i + 1}.")
         text = "\n".join(lines)
         plan = parse_plan_text(text)
         assert len(plan.steps) == 10
         assert plan.steps[9].number == 10
-        assert plan.steps[9].title == f"Task 10"
+        assert plan.steps[9].title == "Task 10"
 
 
 # ─── parse_plan_file ─────────────────────────────────────────────────────────
@@ -210,7 +209,8 @@ class TestParsePlanFile:
 
     def test_reads_file(self, tmp_path: Path):
         plan_file = tmp_path / "plan.md"
-        plan_file.write_text(textwrap.dedent("""\
+        plan_file.write_text(
+            textwrap.dedent("""\
             # Test Plan
 
             ## Step 1: Do something
@@ -220,7 +220,8 @@ class TestParsePlanFile:
             ## Step 2: Verify
 
             Check it.
-        """))
+        """)
+        )
         plan = parse_plan_file(str(plan_file))
         assert plan.title == "Test Plan"
         assert len(plan.steps) == 2

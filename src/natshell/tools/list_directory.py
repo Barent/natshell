@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import stat
 from pathlib import Path
+
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 DEFINITION = ToolDefinition(
@@ -63,8 +62,7 @@ async def list_directory(
             if not show_hidden and entry.name.startswith("."):
                 continue
             if count >= max_entries:
-                remaining = sum(1 for _ in entries) - count
-                lines.append(f"... and more entries")
+                lines.append("... and more entries")
                 break
 
             try:

@@ -18,17 +18,19 @@ def main() -> None:
         description="NatShell — Natural language shell interface for Linux",
     )
     parser.add_argument(
-        "--config", "-c",
+        "--config",
+        "-c",
         help="Path to config.toml file",
     )
     parser.add_argument(
-        "--model", "-m",
+        "--model",
+        "-m",
         help="Path to a GGUF model file (overrides config)",
     )
     parser.add_argument(
         "--remote",
         help="URL of an OpenAI-compatible API to use instead of local model "
-             "(e.g., http://localhost:11434/v1)",
+        "(e.g., http://localhost:11434/v1)",
     )
     parser.add_argument(
         "--remote-model",
@@ -50,7 +52,8 @@ def main() -> None:
         help="Pull latest code and reinstall (git installs only)",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging",
     )
@@ -58,7 +61,7 @@ def main() -> None:
         "--danger-fast",
         action="store_true",
         help="Skip all confirmation dialogs. BLOCKED commands are still blocked. "
-             "Only use this on VMs or test environments.",
+        "Only use this on VMs or test environments.",
     )
 
     args = parser.parse_args()
@@ -109,6 +112,7 @@ def main() -> None:
 
     if not remote_url and config.ollama.url:
         from natshell.inference.ollama import normalize_base_url
+
         base = normalize_base_url(config.ollama.url)
         remote_url = f"{base}/v1"
         remote_model = remote_model or config.ollama.default_model or "qwen3:4b"
@@ -140,6 +144,7 @@ def main() -> None:
         if reachable:
             from natshell.inference.ollama import get_model_context_length
             from natshell.inference.remote import RemoteEngine
+
             n_ctx = asyncio.run(get_model_context_length(remote_url, remote_model))
             engine = RemoteEngine(
                 base_url=remote_url,
@@ -155,6 +160,7 @@ def main() -> None:
 
     if not use_remote:
         from natshell.inference.local import LocalEngine
+
         print(f"Loading model: {config.model.path}...")
         engine = LocalEngine(
             model_path=config.model.path,
@@ -165,6 +171,7 @@ def main() -> None:
         )
         try:
             from llama_cpp import llama_supports_gpu_offload
+
             if config.model.n_gpu_layers != 0 and not llama_supports_gpu_offload():
                 from natshell.gpu import detect_gpus
                 from natshell.platform import is_macos
@@ -175,13 +182,20 @@ def main() -> None:
                 else:
                     gpu_flag = "-DGGML_VULKAN=on"
 
-                print("WARNING: GPU offloading requested but llama-cpp-python was built without GPU support.")
+                print(
+                    "WARNING: GPU offloading requested but llama-cpp-python"
+                    " was built without GPU support."
+                )
                 if gpus:
                     gpu = gpus[0]
                     vram = f" ({gpu.vram_mb} MB VRAM)" if gpu.vram_mb else ""
                     print(f"  Detected GPU: {gpu.name}{vram}")
 
-                print(f'  Reinstall with: CMAKE_ARGS="{gpu_flag}" pip install llama-cpp-python --no-binary llama-cpp-python --force-reinstall')
+                print(
+                    f"  Reinstall with: CMAKE_ARGS=\"{gpu_flag}\""
+                    " pip install llama-cpp-python"
+                    " --no-binary llama-cpp-python --force-reinstall"
+                )
 
                 if not is_macos():
                     _print_vulkan_dep_hint()
@@ -191,18 +205,22 @@ def main() -> None:
 
     # Build the tool registry
     from natshell.tools.registry import create_default_registry
+
     tools = create_default_registry()
 
     # Build the safety classifier
     from natshell.safety.classifier import SafetyClassifier
+
     safety = SafetyClassifier(config.safety)
 
     # Inject safety config into the natshell_help tool
     from natshell.tools.natshell_help import set_safety_config
+
     set_safety_config(config.safety)
 
     # Build the agent
     from natshell.agent.loop import AgentLoop
+
     agent = AgentLoop(
         engine=engine,
         tools=tools,
@@ -213,12 +231,14 @@ def main() -> None:
 
     # Gather system context and initialize agent
     from natshell.agent.context import gather_system_context
+
     print("Gathering system information...")
     context = asyncio.run(gather_system_context())
     agent.initialize(context)
 
     # Launch the TUI
     from natshell.app import NatShellApp
+
     if args.danger_fast:
         print("WARNING: --danger-fast is active. All confirmations will be skipped.")
     app = NatShellApp(agent=agent, config=config, skip_permissions=args.danger_fast)
@@ -286,9 +306,9 @@ def _ensure_model(config) -> str:
         return str(target)
 
     # Prompt user
-    print(f"\nNo local model found.")
+    print("\nNo local model found.")
     print(f"Download {config.model.hf_file} from {config.model.hf_repo}?")
-    print(f"This is approximately 2.5 GB.\n")
+    print("This is approximately 2.5 GB.\n")
 
     response = input("Download now? [Y/n]: ").strip().lower()
     if response and response != "y":
@@ -298,7 +318,7 @@ def _ensure_model(config) -> str:
     try:
         from huggingface_hub import hf_hub_download
 
-        print(f"Downloading from HuggingFace...")
+        print("Downloading from HuggingFace...")
         path = hf_hub_download(
             repo_id=config.model.hf_repo,
             filename=config.model.hf_file,

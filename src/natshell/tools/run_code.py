@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from natshell.tools.execute_shell import _truncate_output, _SENSITIVE_ENV_VARS
+from natshell.tools.execute_shell import _SENSITIVE_ENV_VARS, _truncate_output
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -58,9 +58,7 @@ DEFINITION = ToolDefinition(
             },
             "timeout": {
                 "type": "integer",
-                "description": (
-                    "Maximum seconds to wait for execution. Default 30. Max 300."
-                ),
+                "description": ("Maximum seconds to wait for execution. Default 30. Max 300."),
             },
         },
         "required": ["language", "code"],
@@ -76,9 +74,7 @@ def _filtered_env() -> dict[str, str]:
     return env
 
 
-async def run_code(
-    language: str, code: str, timeout: int = 30
-) -> ToolResult:
+async def run_code(language: str, code: str, timeout: int = 30) -> ToolResult:
     """Execute a code snippet and return structured results."""
     language = language.lower().strip()
     timeout = max(1, min(timeout, 300))
@@ -89,9 +85,7 @@ async def run_code(
     is_go = language == "go"
 
     if not (is_interpreted or is_compiled or is_go):
-        supported = sorted(
-            list(_INTERPRETERS.keys()) + list(_COMPILERS.keys()) + ["go"]
-        )
+        supported = sorted(list(_INTERPRETERS.keys()) + list(_COMPILERS.keys()) + ["go"])
         return ToolResult(
             error=f"Unsupported language: {language}. Supported: {', '.join(supported)}",
             exit_code=1,

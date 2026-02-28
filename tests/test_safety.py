@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from natshell.config import SafetyConfig
 from natshell.safety.classifier import Risk, SafetyClassifier
 
@@ -16,7 +14,8 @@ def _make_classifier(
     """Create a classifier with the default config patterns."""
     config = SafetyConfig(
         mode=mode,
-        always_confirm=always_confirm or [
+        always_confirm=always_confirm
+        or [
             r"^rm\s",
             r"^sudo\s",
             r"^dd\s",
@@ -41,7 +40,8 @@ def _make_classifier(
             r"^ufw",
             r"^crontab",
         ],
-        blocked=blocked or [
+        blocked=blocked
+        or [
             r":(){ :|:& };:",
             r"^rm\s+-[rR]f\s+/\s*$",
             r"^rm\s+-[rR]f\s+/\*",
@@ -213,19 +213,32 @@ class TestSafeCommands:
 class TestToolCallClassification:
     def test_write_file_always_confirm(self):
         c = _make_classifier()
-        assert c.classify_tool_call("write_file", {"path": "/tmp/x", "content": "hi"}) == Risk.CONFIRM
+        assert (
+            c.classify_tool_call("write_file", {"path": "/tmp/x", "content": "hi"}) == Risk.CONFIRM
+        )
 
     def test_edit_file_always_confirm(self):
         c = _make_classifier()
-        assert c.classify_tool_call("edit_file", {"path": "/tmp/x", "old_text": "a", "new_text": "b"}) == Risk.CONFIRM
+        assert (
+            c.classify_tool_call("edit_file", {"path": "/tmp/x", "old_text": "a", "new_text": "b"})
+            == Risk.CONFIRM
+        )
 
     def test_edit_file_sensitive_path(self):
         c = _make_classifier()
-        assert c.classify_tool_call("edit_file", {"path": "/home/user/.ssh/config", "old_text": "a", "new_text": "b"}) == Risk.CONFIRM
+        assert (
+            c.classify_tool_call(
+                "edit_file", {"path": "/home/user/.ssh/config", "old_text": "a", "new_text": "b"}
+            )
+            == Risk.CONFIRM
+        )
 
     def test_run_code_always_confirm(self):
         c = _make_classifier()
-        assert c.classify_tool_call("run_code", {"language": "python", "code": "print(1)"}) == Risk.CONFIRM
+        assert (
+            c.classify_tool_call("run_code", {"language": "python", "code": "print(1)"})
+            == Risk.CONFIRM
+        )
 
     def test_read_file_always_safe(self):
         c = _make_classifier()
@@ -260,13 +273,24 @@ class TestYoloMode:
 
     def test_yolo_downgrades_edit_file(self):
         c = _make_classifier(mode="yolo")
-        assert c.classify_tool_call("edit_file", {"path": "/tmp/x", "old_text": "a", "new_text": "b"}) == Risk.SAFE
+        assert (
+            c.classify_tool_call("edit_file", {"path": "/tmp/x", "old_text": "a", "new_text": "b"})
+            == Risk.SAFE
+        )
 
     def test_yolo_downgrades_run_code(self):
         c = _make_classifier(mode="yolo")
-        assert c.classify_tool_call("run_code", {"language": "python", "code": "print(1)"}) == Risk.SAFE
+        assert (
+            c.classify_tool_call("run_code", {"language": "python", "code": "print(1)"})
+            == Risk.SAFE
+        )
 
     def test_yolo_edit_file_sensitive_path_still_confirm(self):
         """Even in yolo mode, sensitive paths on edit_file stay CONFIRM."""
         c = _make_classifier(mode="yolo")
-        assert c.classify_tool_call("edit_file", {"path": "/home/user/.env", "old_text": "a", "new_text": "b"}) == Risk.CONFIRM
+        assert (
+            c.classify_tool_call(
+                "edit_file", {"path": "/home/user/.env", "old_text": "a", "new_text": "b"}
+            )
+            == Risk.CONFIRM
+        )

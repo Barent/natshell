@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,12 +16,13 @@ from natshell.tools.natshell_help import (
 )
 from natshell.tools.registry import create_default_registry
 
-
 # ─── static topics ────────────────────────────────────────────────────────
 
 
 class TestStaticTopics:
-    @pytest.mark.parametrize("topic", ["overview", "commands", "tools", "models", "troubleshooting"])
+    @pytest.mark.parametrize(
+        "topic", ["overview", "commands", "tools", "models", "troubleshooting"]
+    )
     async def test_static_topic_returns_content(self, topic: str):
         result = await natshell_help(topic)
         assert result.exit_code == 0
@@ -67,7 +67,7 @@ class TestConfigTopic:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text('[agent]\nmax_steps = 10\n')
+        config_file.write_text("[agent]\nmax_steps = 10\n")
 
         with patch("natshell.tools.natshell_help.Path.home", return_value=tmp_path):
             result = await natshell_help("config")
@@ -93,6 +93,7 @@ class TestSafetyTopic:
     async def test_safety_without_injection(self):
         # Reset global state
         import natshell.tools.natshell_help as mod
+
         original = mod._safety_config
         mod._safety_config = None
         try:
@@ -141,8 +142,16 @@ class TestDefinition:
         assert set(enum_values) == set(VALID_TOPICS)
 
     def test_valid_topics_complete(self):
-        expected = {"overview", "commands", "tools", "models", "troubleshooting",
-                    "config", "config_reference", "safety"}
+        expected = {
+            "overview",
+            "commands",
+            "tools",
+            "models",
+            "troubleshooting",
+            "config",
+            "config_reference",
+            "safety",
+        }
         assert set(VALID_TOPICS) == expected
 
     def test_registered_in_default_registry(self):

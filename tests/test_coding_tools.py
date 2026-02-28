@@ -6,11 +6,8 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from natshell.tools.edit_file import edit_file
 from natshell.tools.run_code import run_code
-
 
 # ─── edit_file ────────────────────────────────────────────────────────────────
 
@@ -129,6 +126,7 @@ class TestRunCode:
     async def test_temp_file_cleanup(self):
         """Temp files should not remain after execution."""
         import glob
+
         before = set(glob.glob("/tmp/natshell_*"))
         await run_code("python", "print('cleanup test')")
         after = set(glob.glob("/tmp/natshell_*"))
@@ -151,7 +149,8 @@ class TestRunCode:
 
     async def test_interpreter_mapping(self):
         """Verify key language mappings exist."""
-        from natshell.tools.run_code import _INTERPRETERS, _COMPILERS
+        from natshell.tools.run_code import _COMPILERS, _INTERPRETERS
+
         assert "python" in _INTERPRETERS
         assert "javascript" in _INTERPRETERS
         assert "bash" in _INTERPRETERS

@@ -81,7 +81,7 @@ _STATIC_TOPICS: dict[str, str] = {
         "Common issues:\n"
         "  'GPU offloading requested but not supported'\n"
         "    → Reinstall llama-cpp-python with GPU flags:\n"
-        "      CMAKE_ARGS=\"-DGGML_VULKAN=on\" pip install llama-cpp-python "
+        '      CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python '
         "--no-binary llama-cpp-python --no-cache-dir\n"
         "\n"
         "  'Remote server unreachable'\n"
@@ -145,7 +145,9 @@ def _topic_safety() -> str:
 
     lines = [f"Safety mode: {_safety_config.mode}\n"]
 
-    lines.append(f"Commands requiring confirmation ({len(_safety_config.always_confirm)} patterns):")
+    lines.append(
+        f"Commands requiring confirmation ({len(_safety_config.always_confirm)} patterns):"
+    )
     for pattern in _safety_config.always_confirm:
         lines.append(f"  {pattern}")
 
@@ -187,8 +189,7 @@ DEFINITION = ToolDefinition(
                 "type": "string",
                 "enum": VALID_TOPICS,
                 "description": (
-                    "The documentation topic to look up. "
-                    "Options: " + ", ".join(VALID_TOPICS)
+                    "The documentation topic to look up. Options: " + ", ".join(VALID_TOPICS)
                 ),
             },
         },
@@ -198,6 +199,7 @@ DEFINITION = ToolDefinition(
 
 
 # ── Handler ──────────────────────────────────────────────────────────────
+
 
 async def natshell_help(topic: str) -> ToolResult:
     """Return documentation for the requested topic."""

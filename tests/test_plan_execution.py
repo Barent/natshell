@@ -5,11 +5,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
-from natshell.agent.plan import Plan, PlanStep, parse_plan_file, parse_plan_text
+from natshell.agent.plan import Plan, parse_plan_file, parse_plan_text
 from natshell.app import _build_step_prompt, _shallow_tree
-
 
 # ─── _build_step_prompt ──────────────────────────────────────────────────────
 
@@ -18,7 +15,8 @@ class TestBuildStepPrompt:
     """Test the per-step prompt builder."""
 
     def _make_plan(self, source_dir: Path | None = None) -> Plan:
-        plan = parse_plan_text(textwrap.dedent("""\
+        plan = parse_plan_text(
+            textwrap.dedent("""\
             # Fix Tetris
 
             ## Fix piece shapes in theme.cpp
@@ -36,7 +34,8 @@ class TestBuildStepPrompt:
             ## Add scoring
 
             Implement the score counter.
-        """))
+        """)
+        )
         plan.source_dir = source_dir
         return plan
 
@@ -147,5 +146,6 @@ class TestShallowTree:
 class TestExeplanInSlashCommands:
     def test_exeplan_listed(self):
         from natshell.app import SLASH_COMMANDS
+
         commands = [cmd for cmd, _ in SLASH_COMMANDS]
         assert "/exeplan" in commands

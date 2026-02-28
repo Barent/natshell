@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 DEFINITION = ToolDefinition(
@@ -35,9 +36,7 @@ DEFINITION = ToolDefinition(
 )
 
 
-async def write_file(
-    path: str, content: str, mode: str = "overwrite"
-) -> ToolResult:
+async def write_file(path: str, content: str, mode: str = "overwrite") -> ToolResult:
     """Write content to a file."""
     target = Path(path).expanduser().resolve()
 

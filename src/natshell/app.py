@@ -16,9 +16,19 @@ from textual.widgets import Button, Footer, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
 from natshell.agent.plan import Plan, PlanStep, parse_plan_file
-from natshell.config import NatShellConfig, save_engine_preference, save_model_config, save_ollama_default
+from natshell.config import (
+    NatShellConfig,
+    save_engine_preference,
+    save_model_config,
+    save_ollama_default,
+)
 from natshell.inference.engine import ToolCall
-from natshell.inference.ollama import get_model_context_length, list_models, normalize_base_url, ping_server
+from natshell.inference.ollama import (
+    get_model_context_length,
+    list_models,
+    normalize_base_url,
+    ping_server,
+)
 from natshell.safety.classifier import Risk
 from natshell.tools.execute_shell import (
     execute_shell,
@@ -35,17 +45,16 @@ from natshell.ui.widgets import (
     HelpMessage,
     HistoryInput,
     LogoBanner,
+    PlanningMessage,
     PlanOverviewMessage,
     PlanStepDivider,
     PlanSummaryMessage,
-    PlanningMessage,
     RunStatsMessage,
     SudoPasswordScreen,
     SystemMessage,
     ThinkingIndicator,
     UserMessage,
     _escape,
-    _format_tool_summary,
 )
 
 
@@ -63,6 +72,7 @@ def _tool_display_text(tool_call: ToolCall) -> str:
             return f"write_file \u2192 {tool_call.arguments.get('path', '?')}"
         case _:
             return f"{tool_call.name}({tool_call.arguments})"
+
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +102,7 @@ def _shallow_tree(directory: Path, max_depth: int = 2) -> str:
     return "\n".join(lines)
 
 
-def _build_step_prompt(
-    step: PlanStep, plan: Plan, completed_summaries: list[str]
-) -> str:
+def _build_step_prompt(step: PlanStep, plan: Plan, completed_summaries: list[str]) -> str:
     """Build a focused prompt for a single plan step.
 
     Includes the step body, one-line summaries of completed steps,
@@ -115,8 +123,7 @@ def _build_step_prompt(
     parts.append(f"\n## {step.title}\n")
     parts.append(step.body)
     parts.append(
-        "\nExecute this step now. All instructions are above "
-        "\u2014 do not read any plan files."
+        "\nExecute this step now. All instructions are above \u2014 do not read any plan files."
     )
 
     return "\n".join(parts)
@@ -195,8 +202,13 @@ class NatShellApp(App):
         Binding("ctrl+y", "copy_selection", "Copy", show=False),
     ]
 
-    def __init__(self, agent: AgentLoop, config: NatShellConfig | None = None,
-                 skip_permissions: bool = False, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        agent: AgentLoop,
+        config: NatShellConfig | None = None,
+        skip_permissions: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.agent = agent
         self._config = config or NatShellConfig()
@@ -206,7 +218,10 @@ class NatShellApp(App):
     def compose(self) -> ComposeResult:
         yield LogoBanner()
         yield ScrollableContainer(
-            Static("[dim]Welcome to NatShell. Type a request to get started. Use /help for commands.[/]\n"),
+            Static(
+                "[dim]Welcome to NatShell. Type a request to get started."
+                " Use /help for commands.[/]\n"
+            ),
             id="conversation",
         )
         with Vertical(id="input-area"):
@@ -224,8 +239,10 @@ class NatShellApp(App):
         if self._skip_permissions:
             conversation = self.query_one("#conversation", ScrollableContainer)
             conversation.mount(
-                Static("[bold yellow]WARNING: --danger-fast is active. "
-                       "All confirmations will be skipped.[/]\n")
+                Static(
+                    "[bold yellow]WARNING: --danger-fast is active. "
+                    "All confirmations will be skipped.[/]\n"
+                )
             )
 
     @on(Input.Changed, "#user-input")
@@ -235,15 +252,9 @@ class NatShellApp(App):
         suggestions = self.query_one("#slash-suggestions", Static)
 
         if text.startswith("/") and " " not in text:
-            matches = [
-                (cmd, desc) for cmd, desc in SLASH_COMMANDS
-                if cmd.startswith(text.lower())
-            ]
+            matches = [(cmd, desc) for cmd, desc in SLASH_COMMANDS if cmd.startswith(text.lower())]
             if matches:
-                lines = [
-                    f"  [bold cyan]{cmd}[/]  [dim]{desc}[/]"
-                    for cmd, desc in matches
-                ]
+                lines = [f"  [bold cyan]{cmd}[/]  [dim]{desc}[/]" for cmd, desc in matches]
                 suggestions.update("\n".join(lines))
                 suggestions.display = True
                 return
@@ -336,9 +347,7 @@ class NatShellApp(App):
                     )
 
             case EventType.BLOCKED:
-                cmd = event.tool_call.arguments.get(
-                    "command", str(event.tool_call.arguments)
-                )
+                cmd = event.tool_call.arguments.get("command", str(event.tool_call.arguments))
                 conversation.mount(BlockedMessage(cmd))
 
             case EventType.RESPONSE:
@@ -349,9 +358,7 @@ class NatShellApp(App):
                     conversation.mount(RunStatsMessage(event.metrics))
 
             case EventType.ERROR:
-                conversation.mount(
-                    Static(f"[bold red]Error:[/] {_escape(event.data)}")
-                )
+                conversation.mount(Static(f"[bold red]Error:[/] {_escape(event.data)}"))
 
         conversation.scroll_end()
 
@@ -443,7 +450,9 @@ class NatShellApp(App):
             return
 
         if risk == Risk.CONFIRM and not self._skip_permissions:
-            synthetic_call = ToolCall(id="slash-cmd", name="execute_shell", arguments={"command": command})
+            synthetic_call = ToolCall(
+                id="slash-cmd", name="execute_shell", arguments={"command": command}
+            )
             confirmed = await self.push_screen_wait(ConfirmScreen(synthetic_call))
             if not confirmed:
                 conversation.mount(SystemMessage("Command cancelled."))
@@ -464,14 +473,16 @@ class NatShellApp(App):
             conversation.mount(CommandBlock(command, output, result.exit_code))
 
             # Inject into agent context so the model knows what the user ran
-            self.agent.messages.append({
-                "role": "user",
-                "content": (
-                    f"[The user directly ran a shell command: `{command}`]\n"
-                    f"Exit code: {result.exit_code}\n"
-                    f"Output:\n{output}"
-                ),
-            })
+            self.agent.messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"[The user directly ran a shell command: `{command}`]\n"
+                        f"Exit code: {result.exit_code}\n"
+                        f"Output:\n{output}"
+                    ),
+                }
+            )
         finally:
             self._busy = False
             self.query_one("#user-input", Input).focus()
@@ -479,13 +490,13 @@ class NatShellApp(App):
 
     # ─── /plan ────────────────────────────────────────────────────────────
 
-    def _handle_plan_command(
-        self, description: str, conversation: ScrollableContainer
-    ) -> None:
+    def _handle_plan_command(self, description: str, conversation: ScrollableContainer) -> None:
         """Generate a PLAN.md file from a natural language description."""
         conversation.mount(UserMessage(f"/plan {description}"))
         conversation.mount(
-            SystemMessage("Generating plan\u2026 the model will examine your project and create PLAN.md.")
+            SystemMessage(
+                "Generating plan\u2026 the model will examine your project and create PLAN.md."
+            )
         )
         self.run_plan_generation(description)
 
@@ -519,9 +530,7 @@ class NatShellApp(App):
                 self._render_agent_event(event, conversation, thinking_ref)
 
         except Exception as e:
-            conversation.mount(
-                Static(f"[bold red]Plan generation error:[/] {_escape(str(e))}")
-            )
+            conversation.mount(Static(f"[bold red]Plan generation error:[/] {_escape(str(e))}"))
 
         finally:
             if thinking_ref[0]:
@@ -535,9 +544,7 @@ class NatShellApp(App):
         if plan_path.exists():
             try:
                 plan = parse_plan_file(str(plan_path))
-                conversation.mount(
-                    PlanOverviewMessage(plan.title, [s.title for s in plan.steps])
-                )
+                conversation.mount(PlanOverviewMessage(plan.title, [s.title for s in plan.steps]))
             except (ValueError, FileNotFoundError):
                 conversation.mount(
                     SystemMessage(
@@ -551,9 +558,7 @@ class NatShellApp(App):
 
     # ─── /exeplan ──────────────────────────────────────────────────────────
 
-    def _handle_exeplan_command(
-        self, args: str, conversation: ScrollableContainer
-    ) -> None:
+    def _handle_exeplan_command(self, args: str, conversation: ScrollableContainer) -> None:
         """Dispatch /exeplan subcommands."""
         parts = args.strip().split(maxsplit=1)
 
@@ -596,9 +601,7 @@ class NatShellApp(App):
             file_path = args.strip()
             self._show_plan_preview(file_path, conversation)
 
-    def _show_plan_preview(
-        self, file_path: str, conversation: ScrollableContainer
-    ) -> None:
+    def _show_plan_preview(self, file_path: str, conversation: ScrollableContainer) -> None:
         """Parse and display a plan preview (dry-run)."""
         try:
             plan = parse_plan_file(file_path)
@@ -609,9 +612,7 @@ class NatShellApp(App):
             conversation.mount(SystemMessage(f"[red]Parse error: {e}[/]"))
             return
 
-        conversation.mount(
-            PlanOverviewMessage(plan.title, [s.title for s in plan.steps])
-        )
+        conversation.mount(PlanOverviewMessage(plan.title, [s.title for s in plan.steps]))
 
     @work(exclusive=True, thread=False)
     async def run_plan(self, plan: Plan) -> None:
@@ -625,8 +626,7 @@ class NatShellApp(App):
         # Show plan overview header
         conversation.mount(
             SystemMessage(
-                f"[bold]Executing plan:[/] {_escape(plan.title)} "
-                f"({len(plan.steps)} steps)"
+                f"[bold]Executing plan:[/] {_escape(plan.title)} ({len(plan.steps)} steps)"
             )
         )
         conversation.scroll_end()
@@ -648,9 +648,7 @@ class NatShellApp(App):
         try:
             for step in plan.steps:
                 # Mount step divider
-                divider = PlanStepDivider(
-                    step.number, len(plan.steps), step.title
-                )
+                divider = PlanStepDivider(step.number, len(plan.steps), step.title)
                 divider.id = f"plan-step-{step.number}"
                 conversation.mount(divider)
                 conversation.scroll_end()
@@ -674,15 +672,15 @@ class NatShellApp(App):
                         self._render_agent_event(event, conversation, thinking_ref)
 
                         # Detect max-steps warning
-                        if (event.type == EventType.RESPONSE
-                                and event.data
-                                and "maximum number of steps" in event.data):
+                        if (
+                            event.type == EventType.RESPONSE
+                            and event.data
+                            and "maximum number of steps" in event.data
+                        ):
                             hit_max_steps = True
 
                 except Exception as e:
-                    conversation.mount(
-                        Static(f"[bold red]Step error:[/] {_escape(str(e))}")
-                    )
+                    conversation.mount(Static(f"[bold red]Step error:[/] {_escape(str(e))}"))
                     divider.mark_failed(str(e))
                     failed_count += 1
                     completed_summaries.append(f"{step.number}. {step.title} \u2717")
@@ -697,22 +695,16 @@ class NatShellApp(App):
                 if hit_max_steps:
                     divider.mark_partial()
                     failed_count += 1
-                    completed_summaries.append(
-                        f"{step.number}. {step.title} \u26a0 (partial)"
-                    )
+                    completed_summaries.append(f"{step.number}. {step.title} \u26a0 (partial)")
                 else:
                     divider.mark_done()
                     completed_count += 1
-                    completed_summaries.append(
-                        f"{step.number}. {step.title} \u2713"
-                    )
+                    completed_summaries.append(f"{step.number}. {step.title} \u2713")
 
                 conversation.scroll_end()
 
         except Exception as e:
-            conversation.mount(
-                Static(f"[bold red]Plan aborted:[/] {_escape(str(e))}")
-            )
+            conversation.mount(Static(f"[bold red]Plan aborted:[/] {_escape(str(e))}"))
         finally:
             # Calculate remaining skipped steps
             executed = completed_count + failed_count
@@ -746,7 +738,8 @@ class NatShellApp(App):
             "  [bold cyan]/history[/]               Show conversation context size\n\n"
             "[bold]Copy & Paste[/]\n\n"
             "  Click [bold cyan]\U0001f4cb[/] on any message to copy it.\n"
-            "  Click [bold cyan]\U0001f4cb Copy Chat[/] or press [bold cyan]Ctrl+E[/] to copy entire chat.\n"
+            "  Click [bold cyan]\U0001f4cb Copy Chat[/] or press"
+            " [bold cyan]Ctrl+E[/] to copy entire chat.\n"
             "  [bold cyan]Shift+drag[/] to select text, then use terminal copy.\n"
             "  [bold cyan]Right-click[/] or [bold cyan]Ctrl+Y[/] to copy Textual selection.\n"
             "  [bold cyan]Ctrl+Shift+V[/] or terminal paste to paste.\n"
@@ -783,15 +776,17 @@ class NatShellApp(App):
                 else:
                     self._model_set_default(subargs.strip(), conversation)
             case _:
-                conversation.mount(SystemMessage(
-                    "Unknown subcommand. Usage:\n"
-                    "  /model          — show current info\n"
-                    "  /model list     — list remote models\n"
-                    "  /model use <n>  — switch to remote model\n"
-                    "  /model switch   — switch local model\n"
-                    "  /model local    — switch to local model\n"
-                    "  /model default <n> — set default model"
-                ))
+                conversation.mount(
+                    SystemMessage(
+                        "Unknown subcommand. Usage:\n"
+                        "  /model          — show current info\n"
+                        "  /model list     — list remote models\n"
+                        "  /model use <n>  — switch to remote model\n"
+                        "  /model switch   — switch local model\n"
+                        "  /model local    — switch to local model\n"
+                        "  /model default <n> — set default model"
+                    )
+                )
 
     def _get_remote_base_url(self) -> str | None:
         """Find the remote base URL from config or current engine."""
@@ -820,6 +815,7 @@ class NatShellApp(App):
         if info.engine_type == "local":
             try:
                 from llama_cpp import llama_supports_gpu_offload
+
                 gpu_ok = llama_supports_gpu_offload()
             except ImportError:
                 gpu_ok = False
@@ -828,6 +824,7 @@ class NatShellApp(App):
 
             # Show detected GPU hardware
             from natshell.gpu import detect_gpus
+
             gpus = detect_gpus()
             if gpus:
                 if info.main_gpu is not None and info.main_gpu >= 0:
@@ -842,18 +839,20 @@ class NatShellApp(App):
 
         remote_url = self._get_remote_base_url()
         if remote_url:
-            parts.append(f"\n[dim]Tip: /model list — see available remote models[/]")
+            parts.append("\n[dim]Tip: /model list — see available remote models[/]")
         conversation.mount(SystemMessage("\n".join(parts)))
 
     async def _model_list(self, conversation: ScrollableContainer) -> None:
         """Ping server and list available models."""
         base_url = self._get_remote_base_url()
         if not base_url:
-            conversation.mount(SystemMessage(
-                "No remote server configured.\n"
-                "Set [ollama] url in ~/.config/natshell/config.toml\n"
-                "or use --remote <url> at startup."
-            ))
+            conversation.mount(
+                SystemMessage(
+                    "No remote server configured.\n"
+                    "Set [ollama] url in ~/.config/natshell/config.toml\n"
+                    "or use --remote <url> at startup."
+                )
+            )
             return
 
         conversation.mount(SystemMessage(f"Checking {base_url}..."))
@@ -878,16 +877,16 @@ class NatShellApp(App):
             if m.parameter_size:
                 detail += f" [{m.parameter_size}]"
             lines.append(f"  {m.name}{detail}{marker}")
-        lines.append(f"\n[dim]Use /model use <name> to switch[/]")
+        lines.append("\n[dim]Use /model use <name> to switch[/]")
         conversation.mount(SystemMessage("\n".join(lines)))
 
     async def _model_use(self, model_name: str, conversation: ScrollableContainer) -> None:
         """Switch to a remote model."""
         base_url = self._get_remote_base_url()
         if not base_url:
-            conversation.mount(SystemMessage(
-                "No remote server configured. Set [ollama] url in config."
-            ))
+            conversation.mount(
+                SystemMessage("No remote server configured. Set [ollama] url in config.")
+            )
             return
 
         reachable = await ping_server(base_url)
@@ -904,10 +903,12 @@ class NatShellApp(App):
         await self.agent.swap_engine(new_engine)
         save_engine_preference("remote")
         save_ollama_default(model_name, url=base_url)
-        conversation.mount(SystemMessage(
-            f"Switched to [bold]{model_name}[/] on {base_url}\n"
-            "[dim]Conversation history cleared.[/]"
-        ))
+        conversation.mount(
+            SystemMessage(
+                f"Switched to [bold]{model_name}[/] on {base_url}\n"
+                "[dim]Conversation history cleared.[/]"
+            )
+        )
 
     async def _model_switch_local(self, conversation: ScrollableContainer) -> None:
         """Switch back to the local model."""
@@ -923,10 +924,12 @@ class NatShellApp(App):
             model_path = str(model_dir / mc.hf_file)
 
         if not Path(model_path).exists():
-            conversation.mount(SystemMessage(
-                f"[red]Local model not found at {model_path}[/]\n"
-                "Run natshell --download to fetch it."
-            ))
+            conversation.mount(
+                SystemMessage(
+                    f"[red]Local model not found at {model_path}[/]\n"
+                    "Run natshell --download to fetch it."
+                )
+            )
             return
 
         conversation.mount(SystemMessage("Loading local model..."))
@@ -944,27 +947,31 @@ class NatShellApp(App):
             )
             await self.agent.swap_engine(engine)
             save_engine_preference("local")
-            conversation.mount(SystemMessage(
-                f"Switched to local model: [bold]{Path(model_path).name}[/]\n"
-                "[dim]Conversation history cleared.[/]"
-            ))
+            conversation.mount(
+                SystemMessage(
+                    f"Switched to local model: [bold]{Path(model_path).name}[/]\n"
+                    "[dim]Conversation history cleared.[/]"
+                )
+            )
         except Exception as e:
             conversation.mount(SystemMessage(f"[red]Failed to load local model: {e}[/]"))
 
     async def _model_switch_command(self, args: str, conversation: ScrollableContainer) -> None:
         """Handle /model switch [filename]."""
         if not MODELS_DIR.is_dir():
-            conversation.mount(SystemMessage(
-                f"No models directory found at {MODELS_DIR}\n"
-                "Run natshell --download to fetch a model."
-            ))
+            conversation.mount(
+                SystemMessage(
+                    f"No models directory found at {MODELS_DIR}\n"
+                    "Run natshell --download to fetch a model."
+                )
+            )
             return
 
         available = sorted(MODELS_DIR.glob("*.gguf"))
         if not available:
-            conversation.mount(SystemMessage(
-                "No .gguf models found. Run natshell --download to fetch one."
-            ))
+            conversation.mount(
+                SystemMessage("No .gguf models found. Run natshell --download to fetch one.")
+            )
             return
 
         if not args:
@@ -986,10 +993,11 @@ class NatShellApp(App):
                 break
 
         if not target:
-            conversation.mount(SystemMessage(
-                f"Model not found: {args}\n"
-                "Use /model switch to list available models."
-            ))
+            conversation.mount(
+                SystemMessage(
+                    f"Model not found: {args}\nUse /model switch to list available models."
+                )
+            )
             return
 
         await self.switch_local_model(str(target))
@@ -1023,10 +1031,9 @@ class NatShellApp(App):
             save_engine_preference("local")
             mc.hf_file = hf_file
 
-            conversation.mount(SystemMessage(
-                f"Switched to [bold]{name}[/]\n"
-                "[dim]Conversation history cleared.[/]"
-            ))
+            conversation.mount(
+                SystemMessage(f"Switched to [bold]{name}[/]\n[dim]Conversation history cleared.[/]")
+            )
         except Exception as e:
             conversation.mount(SystemMessage(f"[red]Failed to load {name}: {e}[/]"))
 
@@ -1045,10 +1052,7 @@ class NatShellApp(App):
     def _show_history_info(self, conversation: ScrollableContainer) -> None:
         """Show conversation context size and context window usage."""
         msg_count = len(self.agent.messages)
-        char_count = sum(
-            len(str(m.get("content", "")))
-            for m in self.agent.messages
-        )
+        char_count = sum(len(str(m.get("content", ""))) for m in self.agent.messages)
 
         parts = [f"Conversation: {msg_count} messages, ~{char_count} chars"]
 
@@ -1083,7 +1087,9 @@ class NatShellApp(App):
                 if clipboard.copy(selected, self):
                     self.notify("Copied to clipboard", timeout=2)
                 else:
-                    self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
+                    self.notify(
+                        "Copy failed — no clipboard tool found", severity="error", timeout=3
+                    )
 
     def action_copy_selection(self) -> None:
         """Copy selected text to clipboard (Ctrl+Y)."""
@@ -1118,7 +1124,9 @@ class NatShellApp(App):
     def on_paste_btn(self) -> None:
         content = clipboard.read()
         if content is None:
-            self.notify("Cannot read clipboard — no paste tool available", severity="error", timeout=3)
+            self.notify(
+                "Cannot read clipboard — no paste tool available", severity="error", timeout=3
+            )
             return
         if not content.strip():
             self.notify("Clipboard is empty", timeout=2)
@@ -1131,8 +1139,6 @@ class NatShellApp(App):
         """Clear the conversation and agent history."""
         conversation = self.query_one("#conversation", ScrollableContainer)
         conversation.remove_children()
-        conversation.mount(
-            Static("[dim]Chat cleared. Type a new request.[/]\n")
-        )
+        conversation.mount(Static("[dim]Chat cleared. Type a new request.[/]\n"))
         self.agent.clear_history()
         self.query_one("#user-input", HistoryInput).clear_history()

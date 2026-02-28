@@ -50,8 +50,13 @@ async def ping_server(base_url: str) -> bool:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{base_url}/")
             return resp.status_code == 200
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout,
-            httpx.UnsupportedProtocol, OSError):
+    except (
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+        httpx.UnsupportedProtocol,
+        OSError,
+    ):
         return False
 
 
@@ -94,12 +99,14 @@ def _parse_ollama_models(data: dict) -> list[OllamaModel]:
     for m in data.get("models", []):
         details = m.get("details", {})
         size_bytes = m.get("size", 0)
-        models.append(OllamaModel(
-            name=m.get("name", ""),
-            size_gb=round(size_bytes / (1024**3), 1) if size_bytes else 0.0,
-            parameter_size=details.get("parameter_size", ""),
-            family=details.get("family", ""),
-        ))
+        models.append(
+            OllamaModel(
+                name=m.get("name", ""),
+                size_gb=round(size_bytes / (1024**3), 1) if size_bytes else 0.0,
+                parameter_size=details.get("parameter_size", ""),
+                family=details.get("family", ""),
+            )
+        )
     return models
 
 
@@ -107,9 +114,11 @@ def _parse_openai_models(data: dict) -> list[OllamaModel]:
     """Parse OpenAI /v1/models response."""
     models = []
     for m in data.get("data", []):
-        models.append(OllamaModel(
-            name=m.get("id", ""),
-        ))
+        models.append(
+            OllamaModel(
+                name=m.get("id", ""),
+            )
+        )
     return models
 
 
@@ -133,7 +142,13 @@ async def get_model_context_length(base_url: str, model: str) -> int:
                 for key, value in model_info.items():
                     if key.endswith(".context_length") and isinstance(value, int):
                         return value
-    except (httpx.HTTPError, httpx.ConnectError, httpx.ConnectTimeout,
-            OSError, ValueError, KeyError):
+    except (
+        httpx.HTTPError,
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        OSError,
+        ValueError,
+        KeyError,
+    ):
         pass
     return 0

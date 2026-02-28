@@ -34,11 +34,11 @@ class RemoteEngine:
         # Warn if sending API key over plaintext HTTP to a non-localhost host
         if api_key:
             parsed = urlparse(self.base_url)
-            if (parsed.scheme == "http"
-                    and parsed.hostname not in ("localhost", "127.0.0.1", "::1")):
+            if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
                 logger.warning(
                     "API key configured over HTTP (not HTTPS) to %s — "
-                    "credentials will be sent in plaintext.", base_url
+                    "credentials will be sent in plaintext.",
+                    base_url,
                 )
 
     async def chat_completion(
@@ -69,7 +69,9 @@ class RemoteEngine:
 
         url = f"{self.base_url}/chat/completions"
         response = await self.client.post(
-            url, json=payload, headers=headers,
+            url,
+            json=payload,
+            headers=headers,
             timeout=httpx.Timeout(connect=30.0, read=read_timeout, write=30.0, pool=30.0),
         )
         response.raise_for_status()
@@ -94,11 +96,13 @@ class RemoteEngine:
                 except json.JSONDecodeError:
                     args = {}
 
-                tool_calls.append(ToolCall(
-                    id=tc.get("id", str(uuid.uuid4())[:8]),
-                    name=func.get("name", ""),
-                    arguments=args,
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.get("id", str(uuid.uuid4())[:8]),
+                        name=func.get("name", ""),
+                        arguments=args,
+                    )
+                )
 
         # Strip <think> tags from content (Qwen3 models produce these)
         if content:

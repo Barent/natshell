@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock
 
 from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop
-from natshell.config import AgentConfig, SafetyConfig
-from natshell.inference.engine import ToolCall
-from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.app import SLASH_COMMANDS
+from natshell.config import AgentConfig, SafetyConfig
+from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.tools.execute_shell import execute_shell
-from natshell.tools.registry import ToolResult, create_default_registry
+from natshell.tools.registry import create_default_registry
 
 
 def _make_agent(safety_mode: str = "confirm") -> AgentLoop:
@@ -29,9 +25,14 @@ def _make_agent(safety_mode: str = "confirm") -> AgentLoop:
     safety = SafetyClassifier(safety_config)
     agent_config = AgentConfig(max_steps=15, temperature=0.3, max_tokens=2048)
     agent = AgentLoop(engine=engine, tools=tools, safety=safety, config=agent_config)
-    agent.initialize(SystemContext(
-        hostname="testhost", distro="Debian 13", kernel="6.12.0", username="testuser",
-    ))
+    agent.initialize(
+        SystemContext(
+            hostname="testhost",
+            distro="Debian 13",
+            kernel="6.12.0",
+            username="testuser",
+        )
+    )
     return agent
 
 
@@ -69,7 +70,15 @@ class TestSlashDispatch:
 
     def test_unknown_command(self):
         parts = "/foo".split(maxsplit=1)
-        assert parts[0].lower() not in {"/help", "/clear", "/cmd", "/exeplan", "/plan", "/model", "/history"}
+        assert parts[0].lower() not in {
+            "/help",
+            "/clear",
+            "/cmd",
+            "/exeplan",
+            "/plan",
+            "/model",
+            "/history",
+        }
 
 
 # ─── /cmd execution ─────────────────────────────────────────────────────────
@@ -129,14 +138,16 @@ class TestHistoryInjection:
 
         # Simulate what _handle_cmd does
         output = result.output or result.error
-        agent.messages.append({
-            "role": "user",
-            "content": (
-                f"[The user directly ran a shell command: `echo injected`]\n"
-                f"Exit code: {result.exit_code}\n"
-                f"Output:\n{output}"
-            ),
-        })
+        agent.messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[The user directly ran a shell command: `echo injected`]\n"
+                    f"Exit code: {result.exit_code}\n"
+                    f"Output:\n{output}"
+                ),
+            }
+        )
 
         assert len(agent.messages) == initial_count + 1
         injected = agent.messages[-1]
@@ -147,14 +158,16 @@ class TestHistoryInjection:
     async def test_injection_preserves_exit_code(self):
         agent = _make_agent()
         result = await execute_shell("false")
-        agent.messages.append({
-            "role": "user",
-            "content": (
-                f"[The user directly ran a shell command: `false`]\n"
-                f"Exit code: {result.exit_code}\n"
-                f"Output:\n{result.output or result.error}"
-            ),
-        })
+        agent.messages.append(
+            {
+                "role": "user",
+                "content": (
+                    f"[The user directly ran a shell command: `false`]\n"
+                    f"Exit code: {result.exit_code}\n"
+                    f"Output:\n{result.output or result.error}"
+                ),
+            }
+        )
         injected = agent.messages[-1]
         assert f"Exit code: {result.exit_code}" in injected["content"]
 
@@ -178,10 +191,7 @@ class TestAutocomplete:
 
     def _filter(self, text: str) -> list[str]:
         """Replicate the filtering logic from on_input_changed."""
-        return [
-            cmd for cmd, desc in SLASH_COMMANDS
-            if cmd.startswith(text.lower())
-        ]
+        return [cmd for cmd, desc in SLASH_COMMANDS if cmd.startswith(text.lower())]
 
     def test_slash_alone_matches_all(self):
         matches = self._filter("/")
@@ -228,6 +238,7 @@ class TestSkipPermissionsFlag:
     def test_app_accepts_skip_permissions_false(self):
         """NatShellApp defaults to skip_permissions=False."""
         from natshell.app import NatShellApp
+
         agent = _make_agent()
         app = NatShellApp(agent=agent)
         assert app._skip_permissions is False
@@ -235,6 +246,7 @@ class TestSkipPermissionsFlag:
     def test_app_accepts_skip_permissions_true(self):
         """NatShellApp stores skip_permissions=True when passed."""
         from natshell.app import NatShellApp
+
         agent = _make_agent()
         app = NatShellApp(agent=agent, skip_permissions=True)
         assert app._skip_permissions is True
@@ -271,22 +283,26 @@ class TestPlanDispatch:
 class TestPlanPrompt:
     def test_prompt_contains_description(self):
         from natshell.app import _build_plan_prompt
+
         prompt = _build_plan_prompt("build a REST API", "project/\n  src/")
         assert "build a REST API" in prompt
 
     def test_prompt_contains_directory_tree(self):
         from natshell.app import _build_plan_prompt
+
         prompt = _build_plan_prompt("test", "mydir/\n  file.py")
         assert "mydir/" in prompt
         assert "file.py" in prompt
 
     def test_prompt_contains_format_rules(self):
         from natshell.app import _build_plan_prompt
+
         prompt = _build_plan_prompt("anything", "dir/")
         assert "## Step" in prompt
         assert "PLAN.md" in prompt
 
     def test_prompt_mentions_preamble(self):
         from natshell.app import _build_plan_prompt
+
         prompt = _build_plan_prompt("anything", "dir/")
         assert "preamble" in prompt.lower()

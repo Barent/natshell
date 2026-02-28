@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 DEFINITION = ToolDefinition(
@@ -78,7 +79,7 @@ async def read_file(
 
         # Apply offset (convert 1-based to 0-based)
         start = offset - 1
-        lines = all_lines[start:start + max_lines]
+        lines = all_lines[start : start + max_lines]
         truncated = (start + max_lines) < total
 
         content = "\n".join(lines)

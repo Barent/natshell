@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
-from natshell.agent.context_manager import ContextManager, _MIN_RECENT
-
+from natshell.agent.context_manager import _MIN_RECENT, ContextManager
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sys(content: str = "You are a helpful assistant.") -> dict:
     return {"role": "system", "content": content}
@@ -29,14 +27,16 @@ def _tool_call_msg(name: str, arguments: dict, tc_id: str = "tc1") -> dict:
     return {
         "role": "assistant",
         "content": "",
-        "tool_calls": [{
-            "id": tc_id,
-            "type": "function",
-            "function": {
-                "name": name,
-                "arguments": json.dumps(arguments),
-            },
-        }],
+        "tool_calls": [
+            {
+                "id": tc_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(arguments),
+                },
+            }
+        ],
     }
 
 
@@ -47,6 +47,7 @@ def _tool_result(content: str, tc_id: str = "tc1") -> dict:
 # ---------------------------------------------------------------------------
 # Token estimation
 # ---------------------------------------------------------------------------
+
 
 class TestTokenEstimation:
     def test_approximate_estimation(self):
@@ -64,6 +65,7 @@ class TestTokenEstimation:
 
     def test_tokenizer_fallback_on_error(self):
         """If the tokenizer raises, fall back to approximate."""
+
         def bad_tokenizer(text):
             raise RuntimeError("boom")
 
@@ -82,6 +84,7 @@ class TestTokenEstimation:
 # ---------------------------------------------------------------------------
 # No trimming needed
 # ---------------------------------------------------------------------------
+
 
 class TestNoTrimming:
     def test_within_budget(self):
@@ -106,6 +109,7 @@ class TestNoTrimming:
 # ---------------------------------------------------------------------------
 # Basic trimming
 # ---------------------------------------------------------------------------
+
 
 class TestTrimming:
     def test_system_prompt_preserved(self):
@@ -164,6 +168,7 @@ class TestTrimming:
 # Tool pair integrity
 # ---------------------------------------------------------------------------
 
+
 class TestToolPairIntegrity:
     def test_tool_pairs_not_split(self):
         """When trimming, tool call + result pairs are dropped together."""
@@ -191,13 +196,15 @@ class TestToolPairIntegrity:
             if msg.get("role") == "tool" and j > 0:
                 # Previous message should be a tool call (or system summary is OK)
                 prev = result[j - 1]
-                assert prev.get("tool_calls") or prev.get("role") == "system", \
+                assert prev.get("tool_calls") or prev.get("role") == "system", (
                     "Orphan tool result without preceding tool call"
+                )
 
 
 # ---------------------------------------------------------------------------
 # Summary generation
 # ---------------------------------------------------------------------------
+
 
 class TestSummary:
     def test_summary_captures_user_messages(self):
@@ -238,13 +245,14 @@ class TestSummary:
         cm = ContextManager(context_budget=10000)
         dropped = [_user(f"question {i}") for i in range(30)]
         summary = cm._build_summary(dropped)
-        lines = [l for l in summary.split("\n") if l.startswith("- ")]
+        lines = [line for line in summary.split("\n") if line.startswith("- ")]
         assert len(lines) <= 15
 
 
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     def test_only_system_and_recent(self):

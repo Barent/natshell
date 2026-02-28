@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +63,16 @@ class ToolRegistry:
         """Generate OpenAI-compatible tool schemas for the LLM."""
         schemas = []
         for defn in self._definitions.values():
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": defn.name,
-                    "description": defn.description,
-                    "parameters": defn.parameters,
-                },
-            })
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": defn.name,
+                        "description": defn.description,
+                        "parameters": defn.parameters,
+                    },
+                }
+            )
         return schemas
 
     def get_definition(self, name: str) -> ToolDefinition | None:
@@ -98,7 +99,9 @@ class ToolRegistry:
             if remapped is not None:
                 logger.warning(
                     "Tool %s: remapped bad arg names %s → %s",
-                    name, list(arguments.keys()), list(remapped.keys()),
+                    name,
+                    list(arguments.keys()),
+                    list(remapped.keys()),
                 )
                 try:
                     return await handler(**remapped)
@@ -115,8 +118,8 @@ class ToolRegistry:
             return ToolResult(
                 output="",
                 error=f"Tool error: wrong arguments for {name}. "
-                       f"Got: {list(arguments.keys())}. "
-                       f"Expected: {expected}",
+                f"Got: {list(arguments.keys())}. "
+                f"Expected: {expected}",
                 exit_code=1,
             )
         except Exception as e:
@@ -128,7 +131,9 @@ class ToolRegistry:
             )
 
     def _remap_arguments(
-        self, name: str, arguments: dict[str, Any],
+        self,
+        name: str,
+        arguments: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Try to map LLM-provided argument values to the schema's expected
         parameter names by position.  Returns None if remapping isn't possible
@@ -150,14 +155,22 @@ class ToolRegistry:
 
 def create_default_registry() -> ToolRegistry:
     """Create a registry with all built-in tools registered."""
-    from natshell.tools.execute_shell import execute_shell, DEFINITION as EXEC_DEF
-    from natshell.tools.read_file import read_file, DEFINITION as READ_DEF
-    from natshell.tools.write_file import write_file, DEFINITION as WRITE_DEF
-    from natshell.tools.list_directory import list_directory, DEFINITION as LIST_DEF
-    from natshell.tools.search_files import search_files, DEFINITION as SEARCH_DEF
-    from natshell.tools.natshell_help import natshell_help, DEFINITION as HELP_DEF
-    from natshell.tools.edit_file import edit_file, DEFINITION as EDIT_DEF
-    from natshell.tools.run_code import run_code, DEFINITION as RUN_CODE_DEF
+    from natshell.tools.edit_file import DEFINITION as EDIT_DEF
+    from natshell.tools.edit_file import edit_file
+    from natshell.tools.execute_shell import DEFINITION as EXEC_DEF
+    from natshell.tools.execute_shell import execute_shell
+    from natshell.tools.list_directory import DEFINITION as LIST_DEF
+    from natshell.tools.list_directory import list_directory
+    from natshell.tools.natshell_help import DEFINITION as HELP_DEF
+    from natshell.tools.natshell_help import natshell_help
+    from natshell.tools.read_file import DEFINITION as READ_DEF
+    from natshell.tools.read_file import read_file
+    from natshell.tools.run_code import DEFINITION as RUN_CODE_DEF
+    from natshell.tools.run_code import run_code
+    from natshell.tools.search_files import DEFINITION as SEARCH_DEF
+    from natshell.tools.search_files import search_files
+    from natshell.tools.write_file import DEFINITION as WRITE_DEF
+    from natshell.tools.write_file import write_file
 
     registry = ToolRegistry()
     registry.register(EXEC_DEF, execute_shell)

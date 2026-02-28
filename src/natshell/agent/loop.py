@@ -26,15 +26,15 @@ logger = logging.getLogger(__name__)
 
 class EventType(Enum):
     THINKING = "thinking"
-    PLANNING = "planning"       # Model's text before tool calls
-    EXECUTING = "executing"     # About to run a tool
-    TOOL_RESULT = "tool_result" # Result from a tool
+    PLANNING = "planning"  # Model's text before tool calls
+    EXECUTING = "executing"  # About to run a tool
+    TOOL_RESULT = "tool_result"  # Result from a tool
     CONFIRM_NEEDED = "confirm_needed"  # Awaiting user confirmation
-    BLOCKED = "blocked"         # Command was blocked
-    RESPONSE = "response"       # Final text response from model
-    ERROR = "error"             # Something went wrong
-    RUN_STATS = "run_stats"     # Cumulative stats for the full agent run
-    PLAN_STEP = "plan_step"     # Plan step divider (start/update)
+    BLOCKED = "blocked"  # Command was blocked
+    RESPONSE = "response"  # Final text response from model
+    ERROR = "error"  # Something went wrong
+    RUN_STATS = "run_stats"  # Cumulative stats for the full agent run
+    PLAN_STEP = "plan_step"  # Plan step divider (start/update)
     PLAN_COMPLETE = "plan_complete"  # Entire plan finished
 
 
@@ -144,7 +144,9 @@ class AgentLoop:
         if self._max_tokens != self.config.max_tokens:
             logger.info(
                 "Scaled max_tokens %d → %d for %d-token context window",
-                self.config.max_tokens, self._max_tokens, n_ctx,
+                self.config.max_tokens,
+                self._max_tokens,
+                n_ctx,
             )
 
         response_reserve = self._max_tokens
@@ -219,7 +221,8 @@ class AgentLoop:
                     if fell_back:
                         yield AgentEvent(
                             type=EventType.ERROR,
-                            data="Remote server unreachable. Switched to local model. History cleared.",
+                            data="Remote server unreachable."
+                            " Switched to local model. History cleared.",
                         )
                         return
                 yield AgentEvent(type=EventType.ERROR, data=f"Inference error: {e}")
@@ -231,11 +234,17 @@ class AgentLoop:
                 # Check if content is only <think> residue or empty
                 # Strip both closed and unclosed <think> blocks
                 stripped = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
-                stripped = re.sub(r"<think>(?:(?!</think>).)*$", "", stripped, flags=re.DOTALL).strip()
+                stripped = re.sub(
+                    r"<think>(?:(?!</think>).)*$", "", stripped, flags=re.DOTALL
+                ).strip()
                 if stripped:
                     # Partial response — show it but warn the user
                     self.messages.append({"role": "assistant", "content": stripped})
-                    yield AgentEvent(type=EventType.RESPONSE, data=stripped, metrics=_build_metrics(result, elapsed_ms))
+                    yield AgentEvent(
+                        type=EventType.RESPONSE,
+                        data=stripped,
+                        metrics=_build_metrics(result, elapsed_ms),
+                    )
                     yield AgentEvent(
                         type=EventType.ERROR,
                         data="Response was truncated (hit token limit). "
@@ -243,14 +252,23 @@ class AgentLoop:
                     )
                     if steps_used > 1:
                         run_wall_ms = int((time.monotonic() - run_t0) * 1000)
-                        yield AgentEvent(type=EventType.RUN_STATS, metrics=_build_run_stats(
-                            steps_used, run_wall_ms, total_inference_ms, total_prompt_tokens, total_completion_tokens))
+                        yield AgentEvent(
+                            type=EventType.RUN_STATS,
+                            metrics=_build_run_stats(
+                                steps_used,
+                                run_wall_ms,
+                                total_inference_ms,
+                                total_prompt_tokens,
+                                total_completion_tokens,
+                            ),
+                        )
                     return
                 else:
                     yield AgentEvent(
                         type=EventType.ERROR,
-                        data="Response was truncated — the model used all available tokens "
-                        "without producing a complete response. Try a simpler request or /clear to reset.",
+                        data="Response was truncated — the model used all"
+                        " available tokens without producing a complete"
+                        " response. Try a simpler request or /clear to reset.",
                     )
                     return
 
@@ -262,14 +280,10 @@ class AgentLoop:
 
                 for tool_call in result.tool_calls:
                     # Safety classification
-                    risk = self.safety.classify_tool_call(
-                        tool_call.name, tool_call.arguments
-                    )
+                    risk = self.safety.classify_tool_call(tool_call.name, tool_call.arguments)
 
                     if risk == Risk.BLOCKED:
-                        yield AgentEvent(
-                            type=EventType.BLOCKED, tool_call=tool_call
-                        )
+                        yield AgentEvent(type=EventType.BLOCKED, tool_call=tool_call)
                         self._append_tool_exchange(
                             tool_call,
                             "BLOCKED: This command was blocked by the safety classifier. "
@@ -278,9 +292,7 @@ class AgentLoop:
                         continue
 
                     if risk == Risk.CONFIRM and confirm_callback:
-                        yield AgentEvent(
-                            type=EventType.CONFIRM_NEEDED, tool_call=tool_call
-                        )
+                        yield AgentEvent(type=EventType.CONFIRM_NEEDED, tool_call=tool_call)
                         confirmed = await confirm_callback(tool_call)
                         if not confirmed:
                             self._append_tool_exchange(
@@ -294,17 +306,18 @@ class AgentLoop:
                     # Execute the tool
                     yield AgentEvent(type=EventType.EXECUTING, tool_call=tool_call)
 
-                    tool_result = await self.tools.execute(
-                        tool_call.name, tool_call.arguments
-                    )
+                    tool_result = await self.tools.execute(tool_call.name, tool_call.arguments)
 
                     # If sudo needs a password, prompt the user and retry
-                    if (tool_call.name == "execute_shell"
-                            and password_callback
-                            and _needs_sudo_password(tool_result)):
+                    if (
+                        tool_call.name == "execute_shell"
+                        and password_callback
+                        and _needs_sudo_password(tool_result)
+                    ):
                         password = await password_callback(tool_call)
                         if password:
                             from natshell.tools.execute_shell import set_sudo_password
+
                             set_sudo_password(password)
                             yield AgentEvent(type=EventType.THINKING)
                             tool_result = await self.tools.execute(
@@ -318,24 +331,36 @@ class AgentLoop:
                     )
 
                     # Append exchange to conversation history
-                    self._append_tool_exchange(
-                        tool_call, tool_result.to_message_content()
-                    )
+                    self._append_tool_exchange(tool_call, tool_result.to_message_content())
 
                 # Continue the loop — model will see tool results and decide next step
                 continue
 
             # Case 2: Model responded with text only (task complete or needs info)
             if result.content:
-                self.messages.append({
-                    "role": "assistant",
-                    "content": result.content,
-                })
-                yield AgentEvent(type=EventType.RESPONSE, data=result.content, metrics=_build_metrics(result, elapsed_ms))
+                self.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": result.content,
+                    }
+                )
+                yield AgentEvent(
+                    type=EventType.RESPONSE,
+                    data=result.content,
+                    metrics=_build_metrics(result, elapsed_ms),
+                )
                 if steps_used > 1:
                     run_wall_ms = int((time.monotonic() - run_t0) * 1000)
-                    yield AgentEvent(type=EventType.RUN_STATS, metrics=_build_run_stats(
-                        steps_used, run_wall_ms, total_inference_ms, total_prompt_tokens, total_completion_tokens))
+                    yield AgentEvent(
+                        type=EventType.RUN_STATS,
+                        metrics=_build_run_stats(
+                            steps_used,
+                            run_wall_ms,
+                            total_inference_ms,
+                            total_prompt_tokens,
+                            total_completion_tokens,
+                        ),
+                    )
                 return
 
             # Case 3: Empty response (shouldn't happen, but handle gracefully)
@@ -352,12 +377,21 @@ class AgentLoop:
             data=f"I've reached the maximum number of steps ({self.config.max_steps}). "
             f"Here's what I've done so far. You can continue with a follow-up request.",
         )
-        yield AgentEvent(type=EventType.RUN_STATS, metrics=_build_run_stats(
-            steps_used, run_wall_ms, total_inference_ms, total_prompt_tokens, total_completion_tokens))
+        yield AgentEvent(
+            type=EventType.RUN_STATS,
+            metrics=_build_run_stats(
+                steps_used,
+                run_wall_ms,
+                total_inference_ms,
+                total_prompt_tokens,
+                total_completion_tokens,
+            ),
+        )
 
     def _can_fallback(self, error: Exception) -> bool:
         """Check if we should attempt fallback to local model."""
         import httpx
+
         from natshell.inference.remote import RemoteEngine
 
         if not isinstance(self.engine, RemoteEngine):
@@ -401,24 +435,30 @@ class AgentLoop:
         """Append a tool call + result pair to the message history."""
         # Assistant message with tool call
         # Use "" instead of None — llama-cpp-python may iterate content and choke on None
-        self.messages.append({
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{
-                "id": tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_call.name,
-                    "arguments": json.dumps(tool_call.arguments),
-                },
-            }],
-        })
+        self.messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.name,
+                            "arguments": json.dumps(tool_call.arguments),
+                        },
+                    }
+                ],
+            }
+        )
         # Tool result message
-        self.messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call.id,
-            "content": result_content,
-        })
+        self.messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": result_content,
+            }
+        )
 
     def clear_history(self) -> None:
         """Clear conversation history, keeping only the system prompt."""

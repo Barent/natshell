@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 DEFINITION = ToolDefinition(
@@ -18,7 +19,10 @@ DEFINITION = ToolDefinition(
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "Text pattern to search for within files (grep), or leave empty to just find files by name.",
+                "description": (
+                    "Text pattern to search for within files (grep),"
+                    " or leave empty to just find files by name."
+                ),
             },
             "path": {
                 "type": "string",
@@ -26,7 +30,12 @@ DEFINITION = ToolDefinition(
             },
             "file_pattern": {
                 "type": "string",
-                "description": "Glob pattern for file names to search, e.g. '*.py', '*.conf'. Comma-separated for multiple: '*.py,*.sh'. Default: all files.",
+                "description": (
+                    "Glob pattern for file names to search,"
+                    " e.g. '*.py', '*.conf'."
+                    " Comma-separated for multiple: '*.py,*.sh'."
+                    " Default: all files."
+                ),
             },
             "max_results": {
                 "type": "integer",
@@ -69,15 +78,20 @@ async def search_files(
             cmd = ["find", path, "-maxdepth", "5"] + name_args
 
         result = await asyncio.to_thread(
-            subprocess.run, cmd,
-            capture_output=True, text=True, timeout=30,
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
         output = result.stdout
         lines = output.splitlines()
         truncated = len(lines) > max_results
         if truncated:
-            output = "\n".join(lines[:max_results]) + f"\n... [{len(lines) - max_results} more results]"
+            output = (
+                "\n".join(lines[:max_results]) + f"\n... [{len(lines) - max_results} more results]"
+            )
 
         return ToolResult(
             output=output or "(no matches found)",

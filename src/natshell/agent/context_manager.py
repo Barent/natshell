@@ -116,7 +116,11 @@ class ContextManager:
         drop_groups: list[list[int]] = []  # groups of indices to drop together
         while i < len(droppable):
             msg = droppable[i]
-            if msg.get("tool_calls") and i + 1 < len(droppable) and droppable[i + 1].get("role") == "tool":
+            if (
+                msg.get("tool_calls")
+                and i + 1 < len(droppable)
+                and droppable[i + 1].get("role") == "tool"
+            ):
                 drop_groups.append([i, i + 1])
                 i += 2
             else:
@@ -158,7 +162,8 @@ class ContextManager:
         summary_msg: dict[str, Any] = {
             "role": "system",
             "content": (
-                f"[Context note: {n_dropped} earlier messages were trimmed to fit the context window.\n"
+                f"[Context note: {n_dropped} earlier messages were trimmed"
+                " to fit the context window.\n"
                 f"{summary_text}\n"
                 "Recent context follows.]"
             ),

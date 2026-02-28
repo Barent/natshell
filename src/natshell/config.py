@@ -108,7 +108,10 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
             if perms & 0o077:
                 logger.warning(
                     "Config file %s has permissive permissions (%04o) and contains an API key. "
-                    "Run: chmod 600 %s", user_path, perms, user_path
+                    "Run: chmod 600 %s",
+                    user_path,
+                    perms,
+                    user_path,
                 )
         except OSError:
             pass

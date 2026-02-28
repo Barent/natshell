@@ -53,9 +53,7 @@ class SystemContext:
         lines = []
 
         # Host info
-        lines.append(
-            f"Host: {self.hostname} | {self.distro} | {self.kernel} | {self.arch}"
-        )
+        lines.append(f"Host: {self.hostname} | {self.distro} | {self.kernel} | {self.arch}")
         lines.append(
             f"CPU: {self.cpu} | RAM: {self.ram_total_gb:.1f}GB total, "
             f"{self.ram_available_gb:.1f}GB available"
@@ -102,7 +100,9 @@ async def _run(cmd: str) -> str:
         result = await asyncio.to_thread(
             subprocess.run,
             ["bash", "-c", cmd],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.stdout.strip()
     except Exception:
@@ -115,10 +115,15 @@ def _parse_linux_df(df_output: str) -> list[DiskInfo]:
     for line in df_output.splitlines():
         parts = line.split()
         if len(parts) >= 5:
-            disks.append(DiskInfo(
-                mount=parts[0], total=parts[1], used=parts[2],
-                available=parts[3], use_percent=parts[4],
-            ))
+            disks.append(
+                DiskInfo(
+                    mount=parts[0],
+                    total=parts[1],
+                    used=parts[2],
+                    available=parts[3],
+                    use_percent=parts[4],
+                )
+            )
     return disks
 
 
@@ -130,10 +135,15 @@ def _parse_macos_df(df_output: str) -> list[DiskInfo]:
         # macOS df -h: Filesystem Size Used Avail Capacity ... Mounted on
         if len(parts) >= 9 and parts[4].endswith("%"):
             mount = " ".join(parts[8:])  # Mounted on may contain spaces
-            disks.append(DiskInfo(
-                mount=mount, total=parts[1], used=parts[2],
-                available=parts[3], use_percent=parts[4],
-            ))
+            disks.append(
+                DiskInfo(
+                    mount=mount,
+                    total=parts[1],
+                    used=parts[2],
+                    available=parts[3],
+                    use_percent=parts[4],
+                )
+            )
     return disks
 
 
@@ -187,9 +197,16 @@ async def _gather_linux(ctx: SystemContext) -> None:
         _run("free -b | grep Mem"),
         _run("sudo -n true 2>/dev/null && echo yes || echo no"),
         _run("ip -4 route show default | awk '{print $3}'"),
-        _run("df -h --output=target,size,used,avail,pcent -x tmpfs -x devtmpfs -x squashfs 2>/dev/null | tail -n +2"),
+        _run(
+            "df -h --output=target,size,used,avail,pcent"
+            " -x tmpfs -x devtmpfs -x squashfs 2>/dev/null | tail -n +2"
+        ),
         _run("ip -4 -o addr show | awk '{print $2, $4}'"),
-        _run("systemctl list-units --type=service --state=running --no-pager -q 2>/dev/null | awk '{print $1}' | sed 's/.service$//' | head -20"),
+        _run(
+            "systemctl list-units --type=service --state=running"
+            " --no-pager -q 2>/dev/null"
+            " | awk '{print $1}' | sed 's/.service$//' | head -20"
+        ),
         _run("docker ps --format '{{.Names}} ({{.Image}})' 2>/dev/null | head -10"),
     )
 
@@ -203,8 +220,8 @@ async def _gather_linux(ctx: SystemContext) -> None:
         parts = mem_line.split()
         if len(parts) >= 7:
             try:
-                ctx.ram_total_gb = int(parts[1]) / (1024 ** 3)
-                ctx.ram_available_gb = int(parts[6]) / (1024 ** 3)
+                ctx.ram_total_gb = int(parts[1]) / (1024**3)
+                ctx.ram_available_gb = int(parts[6]) / (1024**3)
             except (ValueError, IndexError):
                 pass
 
@@ -257,12 +274,12 @@ async def _gather_macos(ctx: SystemContext) -> None:
     # Parse memory
     if ram_total_raw:
         try:
-            ctx.ram_total_gb = int(ram_total_raw) / (1024 ** 3)
+            ctx.ram_total_gb = int(ram_total_raw) / (1024**3)
         except ValueError:
             pass
     if ram_avail_raw:
         try:
-            ctx.ram_available_gb = int(ram_avail_raw) / (1024 ** 3)
+            ctx.ram_available_gb = int(ram_avail_raw) / (1024**3)
         except ValueError:
             pass
 
@@ -303,18 +320,42 @@ async def gather_system_context() -> SystemContext:
 
     # Check common tools
     tools_to_check = [
-        "docker", "git", "nmap", "curl", "wget", "ssh", "python3",
-        "node", "go", "rsync", "tmux", "vim", "htop", "jq",
+        "docker",
+        "git",
+        "nmap",
+        "curl",
+        "wget",
+        "ssh",
+        "python3",
+        "node",
+        "go",
+        "rsync",
+        "tmux",
+        "vim",
+        "htop",
+        "jq",
         # Languages & compilers
-        "rustc", "gcc", "g++", "clang", "javac", "ruby", "php", "perl",
+        "rustc",
+        "gcc",
+        "g++",
+        "clang",
+        "javac",
+        "ruby",
+        "php",
+        "perl",
         # Package managers & build tools
-        "pip", "npm", "yarn", "cargo", "composer", "gem", "make", "cmake",
+        "pip",
+        "npm",
+        "yarn",
+        "cargo",
+        "composer",
+        "gem",
+        "make",
+        "cmake",
     ]
     tool_checks = await asyncio.gather(
         *[_run(f"which {tool} 2>/dev/null") for tool in tools_to_check]
     )
-    ctx.installed_tools = {
-        tool: bool(result) for tool, result in zip(tools_to_check, tool_checks)
-    }
+    ctx.installed_tools = {tool: bool(result) for tool, result in zip(tools_to_check, tool_checks)}
 
     return ctx

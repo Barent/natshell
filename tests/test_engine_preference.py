@@ -14,7 +14,6 @@ from natshell.config import (
     save_engine_preference,
 )
 
-
 # ─── EngineConfig defaults ────────────────────────────────────────────────
 
 
@@ -35,27 +34,31 @@ class TestEngineConfigDefaults:
 class TestEngineConfigLoading:
     def test_loads_engine_section(self, tmp_path: Path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [engine]
             preferred = "local"
-        """))
+        """)
+        )
 
         cfg = load_config(str(config_file))
         assert cfg.engine.preferred == "local"
 
     def test_missing_engine_section_uses_defaults(self, tmp_path: Path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text("[ui]\ntheme = \"light\"\n")
+        config_file.write_text('[ui]\ntheme = "light"\n')
 
         cfg = load_config(str(config_file))
         assert cfg.engine.preferred == "auto"
 
     def test_loads_remote_preference(self, tmp_path: Path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [engine]
             preferred = "remote"
-        """))
+        """)
+        )
 
         cfg = load_config(str(config_file))
         assert cfg.engine.preferred == "remote"
@@ -79,13 +82,15 @@ class TestSaveEnginePreference:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [engine]
             preferred = "local"
 
             [ui]
             theme = "dark"
-        """))
+        """)
+        )
 
         save_engine_preference("remote")
         content = config_file.read_text()
@@ -100,7 +105,7 @@ class TestSaveEnginePreference:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text("[ui]\ntheme = \"dark\"\n")
+        config_file.write_text('[ui]\ntheme = "dark"\n')
 
         save_engine_preference("local")
         content = config_file.read_text()
@@ -114,10 +119,12 @@ class TestSaveEnginePreference:
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [engine]
             # preferred = "auto"
-        """))
+        """)
+        )
 
         save_engine_preference("remote")
         content = config_file.read_text()
@@ -173,23 +180,17 @@ class TestStartupPreference:
 
     def test_preferred_local_skips_remote(self):
         """preferred=local forces local even when remote URL is configured."""
-        result = self._simulate_startup(
-            preferred="local", ollama_url="http://localhost:11434"
-        )
+        result = self._simulate_startup(preferred="local", ollama_url="http://localhost:11434")
         assert result is False
 
     def test_preferred_remote_uses_remote(self):
         """preferred=remote keeps remote when URL is configured."""
-        result = self._simulate_startup(
-            preferred="remote", ollama_url="http://localhost:11434"
-        )
+        result = self._simulate_startup(preferred="remote", ollama_url="http://localhost:11434")
         assert result is True
 
     def test_preferred_auto_is_default_behavior(self):
         """preferred=auto doesn't change anything — remote if URL exists."""
-        with_url = self._simulate_startup(
-            preferred="auto", ollama_url="http://localhost:11434"
-        )
+        with_url = self._simulate_startup(preferred="auto", ollama_url="http://localhost:11434")
         assert with_url is True
 
         without_url = self._simulate_startup(preferred="auto")
@@ -252,9 +253,10 @@ class TestStartupPreference:
 class TestLocalRemoteConflict:
     def test_cli_local_and_remote_conflict(self):
         """--local and --remote together should exit with an error."""
+        import sys
+
         from natshell.__main__ import main
 
-        import sys
         sys.argv = ["natshell", "--local", "--remote", "http://localhost:11434/v1"]
         with pytest.raises(SystemExit) as exc_info:
             main()

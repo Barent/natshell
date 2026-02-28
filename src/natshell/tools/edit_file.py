@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 DEFINITION = ToolDefinition(
@@ -30,9 +31,7 @@ DEFINITION = ToolDefinition(
             },
             "new_text": {
                 "type": "string",
-                "description": (
-                    "Replacement text. Use empty string to delete the matched text."
-                ),
+                "description": ("Replacement text. Use empty string to delete the matched text."),
             },
         },
         "required": ["path", "old_text", "new_text"],
@@ -74,7 +73,7 @@ async def edit_file(path: str, old_text: str, new_text: str) -> ToolResult:
         )
 
     # Find line number for reporting
-    line_num = content[:content.index(old_text)].count("\n") + 1
+    line_num = content[: content.index(old_text)].count("\n") + 1
 
     new_content = content.replace(old_text, new_text, 1)
 
@@ -86,5 +85,8 @@ async def edit_file(path: str, old_text: str, new_text: str) -> ToolResult:
     old_lines = old_text.count("\n") + 1
     new_lines = new_text.count("\n") + 1 if new_text else 0
     return ToolResult(
-        output=f"Edited {target} at line {line_num}: replaced {old_lines} lines with {new_lines} lines"
+        output=(
+            f"Edited {target} at line {line_num}:"
+            f" replaced {old_lines} lines with {new_lines} lines"
+        )
     )

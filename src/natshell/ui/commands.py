@@ -6,7 +6,6 @@ from pathlib import Path
 
 from textual.command import Hit, Hits, Provider
 
-
 MODELS_DIR = Path.home() / ".local" / "share" / "natshell" / "models"
 
 
@@ -41,6 +40,8 @@ class ModelSwitchProvider(Provider):
 
     def _make_callback(self, model_path: str):
         """Create a callback that switches to the given model."""
+
         async def callback() -> None:
             await self.app.switch_local_model(model_path)
+
         return callback

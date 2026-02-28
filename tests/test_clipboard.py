@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, mock_open, patch
 import subprocess
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -39,19 +39,23 @@ class TestDetectBackend:
     def test_xsel_found_no_xclip(self):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
             with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+
                 def which_side_effect(tool):
                     if tool == "xsel":
                         return "/usr/bin/xsel"
                     return None
+
                 mock_which.side_effect = which_side_effect
                 assert detect_backend() == "xsel"
 
     def test_wl_copy_found_no_xclip_xsel(self):
         with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+
             def which_side_effect(tool):
                 if tool == "wl-copy":
                     return "/usr/bin/wl-copy"
                 return None
+
             mock_which.side_effect = which_side_effect
             assert detect_backend() == "wl-copy"
 
@@ -118,7 +122,9 @@ class TestCopy:
     def test_copy_with_wl_copy_success(self):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
             with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-                mock_which.side_effect = lambda t: f"/usr/bin/{t}" if t in ("wl-copy", "wl-paste") else None
+                mock_which.side_effect = lambda t: (
+                    f"/usr/bin/{t}" if t in ("wl-copy", "wl-paste") else None
+                )
                 detect_backend()
 
             with patch("natshell.ui.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
@@ -140,8 +146,8 @@ class TestCopy:
             with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
                 # Write returns 0 but verify read-back returns empty
                 mock_run.side_effect = [
-                    MagicMock(returncode=0),           # write
-                    MagicMock(returncode=0, stdout=""), # verify: empty
+                    MagicMock(returncode=0),  # write
+                    MagicMock(returncode=0, stdout=""),  # verify: empty
                 ]
                 assert copy("hello") is False
 
@@ -157,8 +163,8 @@ class TestCopy:
             with patch("natshell.ui.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
                 with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
                     mock_run.side_effect = [
-                        MagicMock(returncode=0),           # xclip write
-                        MagicMock(returncode=0, stdout=""), # wl-paste verify: empty!
+                        MagicMock(returncode=0),  # xclip write
+                        MagicMock(returncode=0, stdout=""),  # wl-paste verify: empty!
                     ]
                     assert copy("hello") is False
                     verify_call = mock_run.call_args_list[1]
@@ -268,7 +274,9 @@ class TestWSLBackend:
             mock_sys.platform = "linux"
             with patch("builtins.open", mock_open(read_data="Linux Microsoft WSL2")):
                 with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-                    mock_which.side_effect = lambda t: "/mnt/c/Windows/system32/clip.exe" if t == "clip.exe" else None
+                    mock_which.side_effect = lambda t: (
+                        "/mnt/c/Windows/system32/clip.exe" if t == "clip.exe" else None
+                    )
                     assert detect_backend() == "clip.exe"
 
     def test_wsl_no_clip_exe_falls_through(self):
@@ -284,7 +292,10 @@ class TestWSLBackend:
 
     def test_build_read_command_clip_exe_with_powershell(self):
         with patch.dict("os.environ", {}, clear=True):
-            with patch("natshell.ui.clipboard.shutil.which", return_value="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"):
+            with patch(
+                "natshell.ui.clipboard.shutil.which",
+                return_value="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+            ):
                 cmd = _build_read_command("clip.exe")
                 assert cmd == ["powershell.exe", "-c", "Get-Clipboard"]
 
@@ -298,7 +309,9 @@ class TestWSLBackend:
             mock_sys.platform = "linux"
             with patch("builtins.open", mock_open(read_data="Linux Microsoft WSL2")):
                 with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-                    mock_which.side_effect = lambda t: "/mnt/c/clip.exe" if t == "clip.exe" else None
+                    mock_which.side_effect = lambda t: (
+                        "/mnt/c/clip.exe" if t == "clip.exe" else None
+                    )
                     detect_backend()
 
         # clip.exe without powershell — can't verify, assume success
@@ -326,7 +339,9 @@ class TestRead:
                     assert result == "hello world"
                     mock_run.assert_called_once_with(
                         ["xclip", "-selection", "clipboard", "-o"],
-                        capture_output=True, text=True, timeout=5,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
                     )
 
     def test_read_xsel(self):
@@ -341,7 +356,9 @@ class TestRead:
                     assert result == "pasted text"
                     mock_run.assert_called_once_with(
                         ["xsel", "--clipboard", "--output"],
-                        capture_output=True, text=True, timeout=5,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
                     )
 
     def test_read_pbpaste(self):
@@ -356,13 +373,17 @@ class TestRead:
                 assert result == "mac text"
                 mock_run.assert_called_once_with(
                     ["pbpaste"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
 
     def test_read_wl_paste(self):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
             with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-                mock_which.side_effect = lambda t: f"/usr/bin/{t}" if t in ("wl-copy", "wl-paste") else None
+                mock_which.side_effect = lambda t: (
+                    f"/usr/bin/{t}" if t in ("wl-copy", "wl-paste") else None
+                )
                 detect_backend()
 
         with patch("natshell.ui.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
@@ -372,7 +393,9 @@ class TestRead:
                 assert result == "wayland text"
                 mock_run.assert_called_once_with(
                     ["wl-paste", "--no-newline"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
 
     def test_read_powershell_wsl(self):
@@ -380,7 +403,9 @@ class TestRead:
             mock_sys.platform = "linux"
             with patch("builtins.open", mock_open(read_data="Linux Microsoft WSL2")):
                 with patch("natshell.ui.clipboard.shutil.which") as mock_which:
-                    mock_which.side_effect = lambda t: "/mnt/c/clip.exe" if t == "clip.exe" else None
+                    mock_which.side_effect = lambda t: (
+                        "/mnt/c/clip.exe" if t == "clip.exe" else None
+                    )
                     detect_backend()
 
         with patch.dict("os.environ", {}, clear=True):
@@ -391,7 +416,9 @@ class TestRead:
                     assert result == "wsl text"
                     mock_run.assert_called_once_with(
                         ["powershell.exe", "-c", "Get-Clipboard"],
-                        capture_output=True, text=True, timeout=5,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
                     )
 
     def test_read_osc52_returns_none(self):

@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import AsyncMock
-
-import pytest
 
 from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop, EventType
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
-from natshell.inference.local import _THINK_RE, _TOOL_CALL_RE, LocalEngine
+from natshell.inference.local import _THINK_RE, _TOOL_CALL_RE
 from natshell.safety.classifier import SafetyClassifier
 from natshell.tools.registry import create_default_registry
 
@@ -47,12 +44,14 @@ def _make_agent(
         safety=safety,
         config=agent_config,
     )
-    agent.initialize(SystemContext(
-        hostname="testhost",
-        distro="Debian 13",
-        kernel="6.12.0",
-        username="testuser",
-    ))
+    agent.initialize(
+        SystemContext(
+            hostname="testhost",
+            distro="Debian 13",
+            kernel="6.12.0",
+            username="testuser",
+        )
+    )
     return agent
 
 
@@ -69,9 +68,11 @@ async def _collect_events(agent: AgentLoop, message: str, confirm_callback=None)
 
 class TestBasicResponse:
     async def test_text_only_response(self):
-        agent = _make_agent([
-            CompletionResult(content="Hello! How can I help?"),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(content="Hello! How can I help?"),
+            ]
+        )
         events = await _collect_events(agent, "hi")
 
         types = [e.type for e in events]
@@ -80,9 +81,11 @@ class TestBasicResponse:
         assert events[-1].data == "Hello! How can I help?"
 
     async def test_empty_response_yields_error(self):
-        agent = _make_agent([
-            CompletionResult(content=None),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(content=None),
+            ]
+        )
         events = await _collect_events(agent, "hi")
         types = [e.type for e in events]
         assert EventType.ERROR in types
@@ -93,14 +96,18 @@ class TestBasicResponse:
 
 class TestSingleToolCall:
     async def test_tool_call_then_response(self):
-        agent = _make_agent([
-            # Step 1: model calls execute_shell
-            CompletionResult(
-                tool_calls=[ToolCall(id="1", name="execute_shell", arguments={"command": "echo hi"})],
-            ),
-            # Step 2: model sees the result and responds
-            CompletionResult(content="The command output 'hi'."),
-        ])
+        agent = _make_agent(
+            [
+                # Step 1: model calls execute_shell
+                CompletionResult(
+                    tool_calls=[
+                        ToolCall(id="1", name="execute_shell", arguments={"command": "echo hi"})
+                    ],
+                ),
+                # Step 2: model sees the result and responds
+                CompletionResult(content="The command output 'hi'."),
+            ]
+        )
 
         events = await _collect_events(agent, "run echo hi")
         types = [e.type for e in events]
@@ -119,16 +126,22 @@ class TestSingleToolCall:
 
 class TestMultiStep:
     async def test_two_tool_calls_then_response(self):
-        agent = _make_agent([
-            CompletionResult(
-                content="Let me check...",
-                tool_calls=[ToolCall(id="1", name="execute_shell", arguments={"command": "uname -r"})],
-            ),
-            CompletionResult(
-                tool_calls=[ToolCall(id="2", name="execute_shell", arguments={"command": "hostname"})],
-            ),
-            CompletionResult(content="You're running Linux."),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content="Let me check...",
+                    tool_calls=[
+                        ToolCall(id="1", name="execute_shell", arguments={"command": "uname -r"})
+                    ],
+                ),
+                CompletionResult(
+                    tool_calls=[
+                        ToolCall(id="2", name="execute_shell", arguments={"command": "hostname"})
+                    ],
+                ),
+                CompletionResult(content="You're running Linux."),
+            ]
+        )
 
         events = await _collect_events(agent, "what system am I on?")
         types = [e.type for e in events]
@@ -149,7 +162,9 @@ class TestMaxSteps:
         # Model always calls a tool, never gives a text response
         responses = [
             CompletionResult(
-                tool_calls=[ToolCall(id=str(i), name="execute_shell", arguments={"command": "echo loop"})],
+                tool_calls=[
+                    ToolCall(id=str(i), name="execute_shell", arguments={"command": "echo loop"})
+                ],
             )
             for i in range(20)
         ]
@@ -169,12 +184,16 @@ class TestMaxSteps:
 
 class TestBlocked:
     async def test_blocked_command(self):
-        agent = _make_agent([
-            CompletionResult(
-                tool_calls=[ToolCall(id="1", name="execute_shell", arguments={"command": "rm -rf /"})],
-            ),
-            CompletionResult(content="That command was blocked."),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    tool_calls=[
+                        ToolCall(id="1", name="execute_shell", arguments={"command": "rm -rf /"})
+                    ],
+                ),
+                CompletionResult(content="That command was blocked."),
+            ]
+        )
 
         events = await _collect_events(agent, "delete everything")
         types = [e.type for e in events]
@@ -186,12 +205,16 @@ class TestBlocked:
 
 class TestConfirmation:
     async def test_confirm_accepted(self):
-        agent = _make_agent([
-            CompletionResult(
-                tool_calls=[ToolCall(id="1", name="execute_shell", arguments={"command": "rm file.txt"})],
-            ),
-            CompletionResult(content="File removed."),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    tool_calls=[
+                        ToolCall(id="1", name="execute_shell", arguments={"command": "rm file.txt"})
+                    ],
+                ),
+                CompletionResult(content="File removed."),
+            ]
+        )
 
         async def confirm_yes(tool_call):
             return True
@@ -204,12 +227,16 @@ class TestConfirmation:
         assert EventType.TOOL_RESULT in types
 
     async def test_confirm_declined(self):
-        agent = _make_agent([
-            CompletionResult(
-                tool_calls=[ToolCall(id="1", name="execute_shell", arguments={"command": "rm file.txt"})],
-            ),
-            CompletionResult(content="OK, I won't do that."),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    tool_calls=[
+                        ToolCall(id="1", name="execute_shell", arguments={"command": "rm file.txt"})
+                    ],
+                ),
+                CompletionResult(content="OK, I won't do that."),
+            ]
+        )
 
         async def confirm_no(tool_call):
             return False
@@ -227,9 +254,11 @@ class TestConfirmation:
 
 class TestConversationHistory:
     async def test_messages_accumulated(self):
-        agent = _make_agent([
-            CompletionResult(content="Response 1"),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(content="Response 1"),
+            ]
+        )
         await _collect_events(agent, "first message")
 
         # System + user + assistant = 3 messages
@@ -239,9 +268,11 @@ class TestConversationHistory:
         assert agent.messages[2]["role"] == "assistant"
 
     async def test_clear_history(self):
-        agent = _make_agent([
-            CompletionResult(content="Response 1"),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(content="Response 1"),
+            ]
+        )
         await _collect_events(agent, "first message")
 
         agent.clear_history()
@@ -249,12 +280,16 @@ class TestConversationHistory:
         assert agent.messages[0]["role"] == "system"
 
     async def test_tool_exchange_in_history(self):
-        agent = _make_agent([
-            CompletionResult(
-                tool_calls=[ToolCall(id="t1", name="execute_shell", arguments={"command": "echo test"})],
-            ),
-            CompletionResult(content="Done."),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    tool_calls=[
+                        ToolCall(id="t1", name="execute_shell", arguments={"command": "echo test"})
+                    ],
+                ),
+                CompletionResult(content="Done."),
+            ]
+        )
         await _collect_events(agent, "run a test")
 
         # System + user + assistant(tool_call) + tool(result) + assistant(text) = 5
@@ -271,12 +306,14 @@ class TestConversationHistory:
 class TestTruncatedResponse:
     async def test_length_with_only_think_tags_yields_error(self):
         """When the model spends all tokens thinking, we should get an error."""
-        agent = _make_agent([
-            CompletionResult(
-                content="<think>I need to think about this really hard...</think>",
-                finish_reason="length",
-            ),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content="<think>I need to think about this really hard...</think>",
+                    finish_reason="length",
+                ),
+            ]
+        )
         events = await _collect_events(agent, "do something")
         types = [e.type for e in events]
         assert EventType.ERROR in types
@@ -285,24 +322,28 @@ class TestTruncatedResponse:
 
     async def test_length_with_empty_content_yields_error(self):
         """finish_reason=length with no content should yield an error."""
-        agent = _make_agent([
-            CompletionResult(
-                content=None,
-                finish_reason="length",
-            ),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content=None,
+                    finish_reason="length",
+                ),
+            ]
+        )
         events = await _collect_events(agent, "do something")
         types = [e.type for e in events]
         assert EventType.ERROR in types
 
     async def test_length_with_real_content_passes_through(self):
         """If there's actual content despite length truncation, show it."""
-        agent = _make_agent([
-            CompletionResult(
-                content="<think></think>Here is a partial answer that got cut off",
-                finish_reason="length",
-            ),
-        ])
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content="<think></think>Here is a partial answer that got cut off",
+                    finish_reason="length",
+                ),
+            ]
+        )
         events = await _collect_events(agent, "explain something")
         types = [e.type for e in events]
         # Should be treated as a normal response, not an error
@@ -368,9 +409,14 @@ def _make_agent_with_ctx(
     agent_config = AgentConfig(max_steps=15, temperature=0.3, max_tokens=max_tokens)
 
     agent = AgentLoop(engine=engine, tools=tools, safety=safety, config=agent_config)
-    agent.initialize(SystemContext(
-        hostname="testhost", distro="Test", kernel="6.0", username="tester",
-    ))
+    agent.initialize(
+        SystemContext(
+            hostname="testhost",
+            distro="Test",
+            kernel="6.0",
+            username="tester",
+        )
+    )
     return agent
 
 

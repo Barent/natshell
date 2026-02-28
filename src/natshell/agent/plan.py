@@ -82,15 +82,15 @@ def parse_plan_text(text: str) -> Plan:
         if m:
             # Flush previous step
             if current_title is not None:
-                steps.append(PlanStep(
-                    number=len(steps) + 1,
-                    title=current_title,
-                    body="\n".join(current_body_lines).strip(),
-                ))
+                steps.append(
+                    PlanStep(
+                        number=len(steps) + 1,
+                        title=current_title,
+                        body="\n".join(current_body_lines).strip(),
+                    )
+                )
             elif in_preamble:
-                preamble_lines_text = "\n".join(preamble_lines).strip()
-                # preamble is everything before the first ## heading
-                # (we'll assign it after the loop)
+                pass  # preamble ends when first ## heading is found
 
             in_preamble = False
             current_title = m.group(2).strip()
@@ -104,11 +104,13 @@ def parse_plan_text(text: str) -> Plan:
 
     # Flush last step
     if current_title is not None:
-        steps.append(PlanStep(
-            number=len(steps) + 1,
-            title=current_title,
-            body="\n".join(current_body_lines).strip(),
-        ))
+        steps.append(
+            PlanStep(
+                number=len(steps) + 1,
+                title=current_title,
+                body="\n".join(current_body_lines).strip(),
+            )
+        )
 
     if not steps:
         raise ValueError("No steps found — expected at least one ## heading")

@@ -31,7 +31,10 @@ def _run(cmd: list[str], timeout: int = 5) -> str | None:
     """Run *cmd* and return stdout, or ``None`` on any failure."""
     try:
         r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         if r.returncode == 0:
             return r.stdout
@@ -89,13 +92,15 @@ def _parse_vulkaninfo(output: str) -> list[GpuInfo]:
         is_discrete = "discrete" in device_type
         vendor = _classify_vendor(name)
         if name:
-            gpus.append(GpuInfo(
-                name=name,
-                vendor=vendor,
-                device_index=idx,
-                vram_mb=vram_mb,
-                is_discrete=is_discrete,
-            ))
+            gpus.append(
+                GpuInfo(
+                    name=name,
+                    vendor=vendor,
+                    device_index=idx,
+                    vram_mb=vram_mb,
+                    is_discrete=is_discrete,
+                )
+            )
 
     return gpus
 
@@ -114,13 +119,15 @@ def _parse_nvidia_smi(output: str) -> list[GpuInfo]:
             vram_mb = int(mem_str)
         except ValueError:
             pass
-        gpus.append(GpuInfo(
-            name=name,
-            vendor="nvidia",
-            device_index=idx,
-            vram_mb=vram_mb,
-            is_discrete=True,
-        ))
+        gpus.append(
+            GpuInfo(
+                name=name,
+                vendor="nvidia",
+                device_index=idx,
+                vram_mb=vram_mb,
+                is_discrete=True,
+            )
+        )
     return gpus
 
 
@@ -136,13 +143,15 @@ def _parse_lspci(output: str) -> list[GpuInfo]:
             vendor = _classify_vendor(name)
             # Heuristic: NVIDIA and AMD discrete GPUs typically have PCI bus > 00
             is_discrete = vendor in ("nvidia",) or ("Radeon RX" in name)
-            gpus.append(GpuInfo(
-                name=name,
-                vendor=vendor,
-                device_index=idx,
-                vram_mb=0,
-                is_discrete=is_discrete,
-            ))
+            gpus.append(
+                GpuInfo(
+                    name=name,
+                    vendor=vendor,
+                    device_index=idx,
+                    vram_mb=0,
+                    is_discrete=is_discrete,
+                )
+            )
             idx += 1
     return gpus
 
@@ -201,6 +210,7 @@ def gpu_backend_available() -> bool:
     """Check if llama-cpp-python was built with GPU offload support."""
     try:
         from llama_cpp import llama_supports_gpu_offload
+
         return llama_supports_gpu_offload()
     except ImportError:
         return False
