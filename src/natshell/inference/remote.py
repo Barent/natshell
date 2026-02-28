@@ -24,7 +24,7 @@ class RemoteEngine:
         self.model = model
         self.api_key = api_key
         self.n_ctx = n_ctx
-        self.client = httpx.AsyncClient(timeout=120.0)
+        self.client = httpx.AsyncClient(timeout=300.0)
         logger.info(f"Remote engine: {base_url} model={model}")
 
         # Warn if sending API key over plaintext HTTP to a non-localhost host
