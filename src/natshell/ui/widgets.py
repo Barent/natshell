@@ -9,8 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, OptionList, Static
-from textual.widgets.option_list import Option
+from textual.widgets import Button, Input, Label, Static
 
 from natshell.inference.engine import ToolCall
 
@@ -445,35 +444,4 @@ class SudoPasswordScreen(ModalScreen[str | None]):
 
     @on(Button.Pressed, "#btn-sudo-cancel")
     def on_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ModelSelectScreen(ModalScreen[str | None]):
-    """Modal picker for selecting a remote model."""
-
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancel", show=False),
-    ]
-
-    def __init__(self, models: list[tuple[str, str]]) -> None:
-        super().__init__()
-        self._models = models  # (name, display_label)
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="model-select-dialog"):
-            yield Label("[bold #5390d9]Select a Model[/]\n")
-            yield OptionList(
-                *[Option(label, id=name) for name, label in self._models],
-                id="model-options",
-            )
-            yield Label("[dim]↑↓ Navigate · Enter Select · Escape Cancel[/]")
-
-    def on_mount(self) -> None:
-        self.query_one("#model-options", OptionList).focus()
-
-    @on(OptionList.OptionSelected, "#model-options")
-    def on_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(str(event.option.id))
-
-    def action_cancel(self) -> None:
         self.dismiss(None)

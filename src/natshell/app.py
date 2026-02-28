@@ -25,7 +25,7 @@ from natshell.tools.execute_shell import (
     set_sudo_password,
 )
 from natshell.ui import clipboard
-from natshell.ui.commands import MODELS_DIR, ModelSwitchProvider, RemoteModelProvider
+from natshell.ui.commands import MODELS_DIR, ModelSwitchProvider
 from natshell.ui.widgets import (
     AssistantMessage,
     BlockedMessage,
@@ -34,7 +34,6 @@ from natshell.ui.widgets import (
     HelpMessage,
     HistoryInput,
     LogoBanner,
-    ModelSelectScreen,
     PlanningMessage,
     SudoPasswordScreen,
     SystemMessage,
@@ -69,7 +68,7 @@ SLASH_COMMANDS = [
     ("/cmd", "Execute a shell command directly"),
     ("/model", "Show current engine/model info"),
     ("/model list", "List models on the remote server"),
-    ("/model use", "Select a remote model (opens picker)"),
+    ("/model use", "Switch to a remote model"),
     ("/model switch", "Switch to a different local model"),
     ("/model local", "Switch back to local model"),
     ("/model default", "Set default remote model"),
@@ -83,7 +82,7 @@ class NatShellApp(App):
     TITLE = "NatShell"
     SUB_TITLE = "Natural Language Shell"
     CSS_PATH = Path("ui/styles.tcss")
-    COMMANDS = App.COMMANDS | {ModelSwitchProvider, RemoteModelProvider}
+    COMMANDS = App.COMMANDS | {ModelSwitchProvider}
 
     ALLOW_SELECT = True
 
@@ -356,7 +355,7 @@ class NatShellApp(App):
             "  [bold cyan]/cmd <command>[/]         Execute a shell command directly\n"
             "  [bold cyan]/model[/]                 Show current engine/model info\n"
             "  [bold cyan]/model list[/]            List models on remote server\n"
-            "  [bold cyan]/model use[/]             Select a remote model (picker)\n"
+            "  [bold cyan]/model use <name>[/]      Switch to a remote model\n"
             "  [bold cyan]/model switch[/]          Switch local model (or Ctrl+P)\n"
             "  [bold cyan]/model local[/]           Switch back to local model\n"
             "  [bold cyan]/model default <name>[/]  Save default remote model\n"
@@ -387,7 +386,7 @@ class NatShellApp(App):
                 await self._model_list(conversation)
             case "use":
                 if not subargs:
-                    self._model_use_interactive(conversation)
+                    conversation.mount(SystemMessage("Usage: /model use <model-name>"))
                 else:
                     await self._model_use(subargs.strip(), conversation)
             case "switch":
@@ -495,7 +494,7 @@ class NatShellApp(App):
             if m.parameter_size:
                 detail += f" [{m.parameter_size}]"
             lines.append(f"  {m.name}{detail}{marker}")
-        lines.append(f"\n[dim]Use /model use to select, or /model use <name>[/]")
+        lines.append(f"\n[dim]Use /model use <name> to switch[/]")
         conversation.mount(SystemMessage("\n".join(lines)))
 
     async def _model_use(self, model_name: str, conversation: ScrollableContainer) -> None:
@@ -525,50 +524,6 @@ class NatShellApp(App):
             f"Switched to [bold]{model_name}[/] on {base_url}\n"
             "[dim]Conversation history cleared.[/]"
         ))
-
-    @work(exclusive=True, thread=False)
-    async def _model_use_interactive(self, conversation: ScrollableContainer) -> None:
-        """Show an interactive model picker when /model use is typed without args."""
-        base_url = self._get_remote_base_url()
-        if not base_url:
-            conversation.mount(SystemMessage(
-                "No remote server configured.\n"
-                "Set [ollama] url in ~/.config/natshell/config.toml\n"
-                "or use --remote <url> at startup."
-            ))
-            return
-
-        conversation.mount(SystemMessage("Fetching models..."))
-        conversation.scroll_end()
-
-        reachable = await ping_server(base_url)
-        if not reachable:
-            conversation.mount(SystemMessage(f"[red]Cannot reach server at {base_url}[/]"))
-            return
-
-        models = await list_models(base_url)
-        if not models:
-            conversation.mount(SystemMessage("Server is running but returned no models."))
-            return
-
-        current_info = self.agent.engine.engine_info()
-        choices: list[tuple[str, str]] = []
-        for m in models:
-            label = m.name
-            if m.size_gb:
-                label += f"  ({m.size_gb} GB)"
-            if m.parameter_size:
-                label += f"  [{m.parameter_size}]"
-            if m.name == current_info.model_name:
-                label += "  ◀ active"
-            choices.append((m.name, label))
-
-        selected = await self.push_screen_wait(ModelSelectScreen(choices))
-        if selected and selected != current_info.model_name:
-            await self._model_use(selected, conversation)
-        elif selected == current_info.model_name:
-            conversation.mount(SystemMessage(f"Already using [bold]{selected}[/]."))
-        conversation.scroll_end()
 
     async def _model_switch_local(self, conversation: ScrollableContainer) -> None:
         """Switch back to the local model."""
