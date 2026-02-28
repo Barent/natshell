@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -217,11 +219,29 @@ class UserMessage(CopyableMessage):
         super().__init__(f"[bold cyan]You:[/] {text}", text)
 
 
+def _format_metrics(metrics: dict[str, Any]) -> str:
+    """Format inference metrics as a compact summary line."""
+    parts = []
+    if metrics.get("tokens_per_sec"):
+        parts.append(f"{metrics['tokens_per_sec']:.1f} tok/s")
+    if metrics.get("completion_tokens"):
+        parts.append(f"{metrics['completion_tokens']} tokens")
+    if metrics.get("response_time_ms"):
+        secs = metrics["response_time_ms"] / 1000
+        parts.append(f"{secs:.1f}s")
+    return " · ".join(parts) if parts else ""
+
+
 class AssistantMessage(CopyableMessage):
     """A text response from the assistant."""
 
-    def __init__(self, text: str) -> None:
-        super().__init__(f"[bold green]NatShell:[/] {_escape(text)}", text)
+    def __init__(self, text: str, metrics: dict[str, Any] | None = None) -> None:
+        formatted = f"[bold green]NatShell:[/] {_escape(text)}"
+        if metrics:
+            metrics_line = _format_metrics(metrics)
+            if metrics_line:
+                formatted += f"\n[dim]{metrics_line}[/]"
+        super().__init__(formatted, text)
 
 
 class PlanningMessage(CopyableMessage):

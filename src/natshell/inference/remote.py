@@ -94,10 +94,13 @@ class RemoteEngine:
         if content:
             content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip() or None
 
+        usage = data.get("usage", {})
         return CompletionResult(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
         )
 
     def engine_info(self) -> EngineInfo:

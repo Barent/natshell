@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -42,6 +43,19 @@ class AgentEvent:
     data: Any = None
     tool_call: ToolCall | None = None
     tool_result: ToolResult | None = None
+    metrics: dict[str, Any] | None = None
+
+
+def _build_metrics(result: CompletionResult, elapsed_ms: int) -> dict[str, Any]:
+    """Build a metrics dict from inference result and timing."""
+    metrics: dict[str, Any] = {"response_time_ms": elapsed_ms}
+    if result.completion_tokens:
+        metrics["completion_tokens"] = result.completion_tokens
+        if elapsed_ms > 0:
+            metrics["tokens_per_sec"] = result.completion_tokens / (elapsed_ms / 1000)
+    if result.prompt_tokens:
+        metrics["prompt_tokens"] = result.prompt_tokens
+    return metrics
 
 
 class AgentLoop:
@@ -136,12 +150,14 @@ class AgentLoop:
 
             # Get model response
             try:
+                t0 = time.monotonic()
                 result = await self.engine.chat_completion(
                     messages=self.messages,
                     tools=self.tools.get_tool_schemas(),
                     temperature=self.config.temperature,
                     max_tokens=self.config.max_tokens,
                 )
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
             except Exception as e:
                 logger.exception("Inference error")
                 if self._can_fallback(e):
@@ -165,7 +181,7 @@ class AgentLoop:
                 if stripped:
                     # Partial response — show it but warn the user
                     self.messages.append({"role": "assistant", "content": stripped})
-                    yield AgentEvent(type=EventType.RESPONSE, data=stripped)
+                    yield AgentEvent(type=EventType.RESPONSE, data=stripped, metrics=_build_metrics(result, elapsed_ms))
                     yield AgentEvent(
                         type=EventType.ERROR,
                         data="Response was truncated (hit token limit). "
@@ -257,7 +273,7 @@ class AgentLoop:
                     "role": "assistant",
                     "content": result.content,
                 })
-                yield AgentEvent(type=EventType.RESPONSE, data=result.content)
+                yield AgentEvent(type=EventType.RESPONSE, data=result.content, metrics=_build_metrics(result, elapsed_ms))
                 return
 
             # Case 3: Empty response (shouldn't happen, but handle gracefully)

@@ -247,8 +247,11 @@ class LocalEngine:
         content = _TOOL_CALL_RE.sub("", content)
         content = content.strip() or None
 
+        usage = response.get("usage", {})
         return CompletionResult(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
         )

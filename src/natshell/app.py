@@ -249,7 +249,7 @@ class NatShellApp(App):
                         conversation.mount(BlockedMessage(cmd))
 
                     case EventType.RESPONSE:
-                        conversation.mount(AssistantMessage(event.data))
+                        conversation.mount(AssistantMessage(event.data, metrics=event.metrics))
 
                     case EventType.ERROR:
                         conversation.mount(
