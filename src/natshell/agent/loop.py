@@ -34,6 +34,8 @@ class EventType(Enum):
     RESPONSE = "response"       # Final text response from model
     ERROR = "error"             # Something went wrong
     RUN_STATS = "run_stats"     # Cumulative stats for the full agent run
+    PLAN_STEP = "plan_step"     # Plan step divider (start/update)
+    PLAN_COMPLETE = "plan_complete"  # Entire plan finished
 
 
 @dataclass

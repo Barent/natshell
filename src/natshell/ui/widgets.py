@@ -431,6 +431,74 @@ class RunStatsMessage(Static):
         super().__init__(f"[dim]Run: {formatted}[/]")
 
 
+class PlanStepDivider(Static):
+    """Step divider shown during plan execution: >>> Step 2/6: Title."""
+
+    def __init__(self, step_number: int, total_steps: int, title: str) -> None:
+        self._step_number = step_number
+        self._total_steps = total_steps
+        self._title = title
+        formatted = f"[bold cyan]>>> Step {step_number}/{total_steps}: {_escape(title)}[/]"
+        super().__init__(formatted)
+
+    def mark_done(self) -> None:
+        self.update(
+            f"[bold green]\u2713 Step {self._step_number}/{self._total_steps}: "
+            f"{_escape(self._title)}[/]"
+        )
+
+    def mark_partial(self) -> None:
+        self.update(
+            f"[bold yellow]\u26a0 Step {self._step_number}/{self._total_steps}: "
+            f"{_escape(self._title)} (partial)[/]"
+        )
+
+    def mark_failed(self, reason: str = "") -> None:
+        suffix = f" \u2014 {_escape(reason)}" if reason else ""
+        self.update(
+            f"[bold red]\u2717 Step {self._step_number}/{self._total_steps}: "
+            f"{_escape(self._title)}{suffix}[/]"
+        )
+
+
+class PlanOverviewMessage(CopyableMessage):
+    """Plan title + numbered step list (dry-run output)."""
+
+    def __init__(self, title: str, step_titles: list[str]) -> None:
+        lines = [f"[bold]{_escape(title)}[/]\n"]
+        for i, st in enumerate(step_titles, 1):
+            lines.append(f"  {i}. {_escape(st)}")
+        lines.append(f"\n[dim]{len(step_titles)} steps. Use /exeplan run <file> to execute.[/]")
+        formatted = "\n".join(lines)
+        raw = f"{title}\n" + "\n".join(f"  {i}. {st}" for i, st in enumerate(step_titles, 1))
+        super().__init__(formatted, raw)
+
+
+class PlanSummaryMessage(CopyableMessage):
+    """Final plan summary: completed/failed/skipped counts + wall time."""
+
+    def __init__(self, completed: int, failed: int, skipped: int, wall_ms: int) -> None:
+        parts = []
+        if completed:
+            parts.append(f"[green]\u2713 {completed} completed[/]")
+        if failed:
+            parts.append(f"[red]\u2717 {failed} failed[/]")
+        if skipped:
+            parts.append(f"[dim]- {skipped} skipped[/]")
+
+        secs = wall_ms / 1000
+        if secs >= 60:
+            mins = int(secs // 60)
+            remainder = secs % 60
+            time_str = f"{mins}m {remainder:.0f}s"
+        else:
+            time_str = f"{secs:.1f}s"
+
+        summary = " | ".join([" ".join(parts), time_str])
+        raw = f"{completed} completed, {failed} failed, {skipped} skipped | {time_str}"
+        super().__init__(f"[bold]Plan complete:[/] {summary}", raw)
+
+
 class ThinkingIndicator(Static):
     """Animated thinking indicator with bouncing dots."""
 

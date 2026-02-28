@@ -46,18 +46,18 @@ async def read_file(
     limit: int | None = None,
 ) -> ToolResult:
     """Read a file and return its contents."""
-    # Coerce params to int (LLMs may send strings)
+    # Coerce params to int (LLMs may send strings like "63" or "63.0")
     try:
-        max_lines = int(max_lines)
+        max_lines = int(float(max_lines))
     except (TypeError, ValueError):
         max_lines = 200
     try:
-        offset = int(offset)
+        offset = int(float(offset))
     except (TypeError, ValueError):
         offset = 1
     if limit is not None:
         try:
-            max_lines = int(limit)
+            max_lines = int(float(limit))
         except (TypeError, ValueError):
             pass
 

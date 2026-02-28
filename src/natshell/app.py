@@ -15,6 +15,7 @@ from textual.events import MouseUp
 from textual.widgets import Button, Footer, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
+from natshell.agent.plan import Plan, PlanStep, parse_plan_file
 from natshell.config import NatShellConfig, save_engine_preference, save_model_config, save_ollama_default
 from natshell.inference.engine import ToolCall
 from natshell.inference.ollama import get_model_context_length, list_models, normalize_base_url, ping_server
@@ -34,6 +35,9 @@ from natshell.ui.widgets import (
     HelpMessage,
     HistoryInput,
     LogoBanner,
+    PlanOverviewMessage,
+    PlanStepDivider,
+    PlanSummaryMessage,
     PlanningMessage,
     RunStatsMessage,
     SudoPasswordScreen,
@@ -63,10 +67,36 @@ def _tool_display_text(tool_call: ToolCall) -> str:
 logger = logging.getLogger(__name__)
 
 
+def _build_step_prompt(
+    step: PlanStep, plan: Plan, completed_summaries: list[str]
+) -> str:
+    """Build a focused prompt for a single plan step.
+
+    Includes the step body, one-line summaries of completed steps, and
+    a directive to not read plan files.
+    """
+    parts = [f"Execute this task (step {step.number} of {len(plan.steps)}):"]
+
+    if completed_summaries:
+        parts.append("\nPreviously completed:")
+        for summary in completed_summaries:
+            parts.append(f"  {summary}")
+
+    parts.append(f"\n## {step.title}\n")
+    parts.append(step.body)
+    parts.append(
+        "\nExecute this step now. All instructions are above "
+        "\u2014 do not read any plan files."
+    )
+
+    return "\n".join(parts)
+
+
 SLASH_COMMANDS = [
     ("/help", "Show available commands"),
     ("/clear", "Clear chat and model context"),
     ("/cmd", "Execute a shell command directly"),
+    ("/exeplan", "Preview or execute a multi-step plan"),
     ("/model", "Show current engine/model info"),
     ("/model list", "List models on the remote server"),
     ("/model use", "Switch to a remote model"),
@@ -175,18 +205,95 @@ class NatShellApp(App):
         # Run the agent loop
         self.run_agent(user_text)
 
+    def _render_agent_event(
+        self,
+        event: AgentEvent,
+        conversation: ScrollableContainer,
+        thinking_ref: list[ThinkingIndicator | None],
+    ) -> None:
+        """Render a single agent event into the conversation. Shared by run_agent and run_plan.
+
+        thinking_ref is a single-element list holding the current ThinkingIndicator
+        (or None), used as a mutable reference so callers can track it.
+        """
+        thinking = thinking_ref[0]
+
+        # Remove thinking indicator when we get a real event
+        if thinking and event.type in (
+            EventType.PLANNING,
+            EventType.TOOL_RESULT,
+            EventType.RESPONSE,
+            EventType.BLOCKED,
+            EventType.ERROR,
+        ):
+            thinking.remove()
+            thinking_ref[0] = None
+            self.query_one(LogoBanner).stop_animation()
+
+        match event.type:
+            case EventType.THINKING:
+                if not thinking_ref[0]:
+                    indicator = ThinkingIndicator()
+                    conversation.mount(indicator)
+                    thinking_ref[0] = indicator
+                    self.query_one(LogoBanner).start_animation()
+
+            case EventType.PLANNING:
+                conversation.mount(PlanningMessage(event.data))
+
+            case EventType.EXECUTING:
+                cmd = _tool_display_text(event.tool_call)
+                block = CommandBlock(cmd)
+                block.id = f"cmd-{event.tool_call.id}"
+                conversation.mount(block)
+
+            case EventType.TOOL_RESULT:
+                block_id = f"cmd-{event.tool_call.id}"
+                try:
+                    block = self.query_one(f"#{block_id}", CommandBlock)
+                    block.set_result(
+                        event.tool_result.output or event.tool_result.error,
+                        event.tool_result.exit_code,
+                    )
+                except Exception:
+                    conversation.mount(
+                        CommandBlock(
+                            str(event.tool_call.arguments),
+                            event.tool_result.output or event.tool_result.error,
+                            event.tool_result.exit_code,
+                        )
+                    )
+
+            case EventType.BLOCKED:
+                cmd = event.tool_call.arguments.get(
+                    "command", str(event.tool_call.arguments)
+                )
+                conversation.mount(BlockedMessage(cmd))
+
+            case EventType.RESPONSE:
+                conversation.mount(AssistantMessage(event.data, metrics=event.metrics))
+
+            case EventType.RUN_STATS:
+                if event.metrics:
+                    conversation.mount(RunStatsMessage(event.metrics))
+
+            case EventType.ERROR:
+                conversation.mount(
+                    Static(f"[bold red]Error:[/] {_escape(event.data)}")
+                )
+
+        conversation.scroll_end()
+
     @work(exclusive=True, thread=False)
     async def run_agent(self, user_text: str) -> None:
         """Run the agent loop in a background worker."""
         conversation = self.query_one("#conversation", ScrollableContainer)
-        thinking = None
+        thinking_ref: list[ThinkingIndicator | None] = [None]
 
         async def confirm_callback(tool_call: ToolCall) -> bool:
-            """Show confirmation dialog and return user's choice."""
             return await self.push_screen_wait(ConfirmScreen(tool_call))
 
         async def password_callback(tool_call: ToolCall) -> str | None:
-            """Show sudo password dialog and return the password."""
             command = tool_call.arguments.get("command", "")
             return await self.push_screen_wait(SudoPasswordScreen(command))
 
@@ -198,81 +305,14 @@ class NatShellApp(App):
                 confirm_callback=confirm_cb,
                 password_callback=password_callback,
             ):
-                # Remove thinking indicator when we get a real event
-                if thinking and event.type in (
-                    EventType.PLANNING,
-                    EventType.TOOL_RESULT,
-                    EventType.RESPONSE,
-                    EventType.BLOCKED,
-                    EventType.ERROR,
-                ):
-                    thinking.remove()
-                    thinking = None
-                    self.query_one(LogoBanner).stop_animation()
-
-                match event.type:
-                    case EventType.THINKING:
-                        if not thinking:
-                            thinking = ThinkingIndicator()
-                            conversation.mount(thinking)
-                            self.query_one(LogoBanner).start_animation()
-
-                    case EventType.PLANNING:
-                        conversation.mount(PlanningMessage(event.data))
-
-                    case EventType.EXECUTING:
-                        cmd = _tool_display_text(event.tool_call)
-                        # Mount a command block with just the command, no output yet
-                        block = CommandBlock(cmd)
-                        block.id = f"cmd-{event.tool_call.id}"
-                        conversation.mount(block)
-
-                    case EventType.TOOL_RESULT:
-                        # Update the command block with output
-                        block_id = f"cmd-{event.tool_call.id}"
-                        try:
-                            block = self.query_one(f"#{block_id}", CommandBlock)
-                            block.set_result(
-                                event.tool_result.output or event.tool_result.error,
-                                event.tool_result.exit_code,
-                            )
-                        except Exception:
-                            # Fallback: just mount a new block
-                            conversation.mount(
-                                CommandBlock(
-                                    str(event.tool_call.arguments),
-                                    event.tool_result.output or event.tool_result.error,
-                                    event.tool_result.exit_code,
-                                )
-                            )
-
-                    case EventType.BLOCKED:
-                        cmd = event.tool_call.arguments.get(
-                            "command", str(event.tool_call.arguments)
-                        )
-                        conversation.mount(BlockedMessage(cmd))
-
-                    case EventType.RESPONSE:
-                        conversation.mount(AssistantMessage(event.data, metrics=event.metrics))
-
-                    case EventType.RUN_STATS:
-                        if event.metrics:
-                            conversation.mount(RunStatsMessage(event.metrics))
-
-                    case EventType.ERROR:
-                        conversation.mount(
-                            Static(f"[bold red]Error:[/] {_escape(event.data)}")
-                        )
-
-                # Auto-scroll to bottom
-                conversation.scroll_end()
+                self._render_agent_event(event, conversation, thinking_ref)
 
         except Exception as e:
             conversation.mount(Static(f"[bold red]Agent error:[/] {_escape(str(e))}"))
 
         finally:
-            if thinking:
-                thinking.remove()
+            if thinking_ref[0]:
+                thinking_ref[0].remove()
             self._busy = False
             self.query_one(LogoBanner).stop_animation()
             self.query_one("#user-input", Input).focus()
@@ -294,6 +334,8 @@ class NatShellApp(App):
                     conversation.mount(SystemMessage("Usage: /cmd <command>"))
                 else:
                     self.run_cmd(args)
+            case "/exeplan":
+                self._handle_exeplan_command(args, conversation)
             case "/model":
                 await self._handle_model_command(args, conversation)
             case "/history":
@@ -354,6 +396,184 @@ class NatShellApp(App):
             self.query_one("#user-input", Input).focus()
             conversation.scroll_end()
 
+    # ─── /exeplan ──────────────────────────────────────────────────────────
+
+    def _handle_exeplan_command(
+        self, args: str, conversation: ScrollableContainer
+    ) -> None:
+        """Dispatch /exeplan subcommands."""
+        parts = args.strip().split(maxsplit=1)
+
+        if not parts:
+            conversation.mount(
+                SystemMessage(
+                    "Usage: /exeplan <file>       \u2014 preview plan steps\n"
+                    "       /exeplan run <file>   \u2014 execute all steps\n"
+                    "       /exeplan show <file>  \u2014 same as bare /exeplan"
+                )
+            )
+            return
+
+        subcmd = parts[0].lower()
+
+        if subcmd == "run":
+            file_path = parts[1].strip() if len(parts) > 1 else ""
+            if not file_path:
+                conversation.mount(SystemMessage("Usage: /exeplan run <file>"))
+                return
+            try:
+                plan = parse_plan_file(file_path)
+            except FileNotFoundError as e:
+                conversation.mount(SystemMessage(f"[red]{e}[/]"))
+                return
+            except ValueError as e:
+                conversation.mount(SystemMessage(f"[red]Parse error: {e}[/]"))
+                return
+            self.run_plan(plan)
+
+        elif subcmd == "show":
+            file_path = parts[1].strip() if len(parts) > 1 else ""
+            if not file_path:
+                conversation.mount(SystemMessage("Usage: /exeplan show <file>"))
+                return
+            self._show_plan_preview(file_path, conversation)
+
+        else:
+            # Bare /exeplan <file> — treat as show
+            file_path = args.strip()
+            self._show_plan_preview(file_path, conversation)
+
+    def _show_plan_preview(
+        self, file_path: str, conversation: ScrollableContainer
+    ) -> None:
+        """Parse and display a plan preview (dry-run)."""
+        try:
+            plan = parse_plan_file(file_path)
+        except FileNotFoundError as e:
+            conversation.mount(SystemMessage(f"[red]{e}[/]"))
+            return
+        except ValueError as e:
+            conversation.mount(SystemMessage(f"[red]Parse error: {e}[/]"))
+            return
+
+        conversation.mount(
+            PlanOverviewMessage(plan.title, [s.title for s in plan.steps])
+        )
+
+    @work(exclusive=True, thread=False)
+    async def run_plan(self, plan: Plan) -> None:
+        """Execute a multi-step plan, one step at a time."""
+        import time
+
+        conversation = self.query_one("#conversation", ScrollableContainer)
+        self._busy = True
+        plan_t0 = time.monotonic()
+
+        # Show plan overview header
+        conversation.mount(
+            SystemMessage(
+                f"[bold]Executing plan:[/] {_escape(plan.title)} "
+                f"({len(plan.steps)} steps)"
+            )
+        )
+        conversation.scroll_end()
+
+        async def confirm_callback(tool_call: ToolCall) -> bool:
+            return await self.push_screen_wait(ConfirmScreen(tool_call))
+
+        async def password_callback(tool_call: ToolCall) -> str | None:
+            command = tool_call.arguments.get("command", "")
+            return await self.push_screen_wait(SudoPasswordScreen(command))
+
+        confirm_cb = None if self._skip_permissions else confirm_callback
+
+        completed_summaries: list[str] = []
+        completed_count = 0
+        failed_count = 0
+        skipped_count = 0
+
+        try:
+            for step in plan.steps:
+                # Mount step divider
+                divider = PlanStepDivider(
+                    step.number, len(plan.steps), step.title
+                )
+                divider.id = f"plan-step-{step.number}"
+                conversation.mount(divider)
+                conversation.scroll_end()
+
+                # Clear agent history (keep system prompt) for a fresh context
+                self.agent.clear_history()
+
+                # Build focused prompt for this step
+                prompt = _build_step_prompt(step, plan, completed_summaries)
+
+                # Run the agent loop for this step
+                thinking_ref: list[ThinkingIndicator | None] = [None]
+                hit_max_steps = False
+
+                try:
+                    async for event in self.agent.handle_user_message(
+                        prompt,
+                        confirm_callback=confirm_cb,
+                        password_callback=password_callback,
+                    ):
+                        self._render_agent_event(event, conversation, thinking_ref)
+
+                        # Detect max-steps warning
+                        if (event.type == EventType.RESPONSE
+                                and event.data
+                                and "maximum number of steps" in event.data):
+                            hit_max_steps = True
+
+                except Exception as e:
+                    conversation.mount(
+                        Static(f"[bold red]Step error:[/] {_escape(str(e))}")
+                    )
+                    divider.mark_failed(str(e))
+                    failed_count += 1
+                    completed_summaries.append(f"{step.number}. {step.title} \u2717")
+                    continue
+
+                finally:
+                    if thinking_ref[0]:
+                        thinking_ref[0].remove()
+                    self.query_one(LogoBanner).stop_animation()
+
+                # Update divider status
+                if hit_max_steps:
+                    divider.mark_partial()
+                    failed_count += 1
+                    completed_summaries.append(
+                        f"{step.number}. {step.title} \u26a0 (partial)"
+                    )
+                else:
+                    divider.mark_done()
+                    completed_count += 1
+                    completed_summaries.append(
+                        f"{step.number}. {step.title} \u2713"
+                    )
+
+                conversation.scroll_end()
+
+        except Exception as e:
+            conversation.mount(
+                Static(f"[bold red]Plan aborted:[/] {_escape(str(e))}")
+            )
+        finally:
+            # Calculate remaining skipped steps
+            executed = completed_count + failed_count
+            skipped_count = len(plan.steps) - executed
+
+            wall_ms = int((time.monotonic() - plan_t0) * 1000)
+            conversation.mount(
+                PlanSummaryMessage(completed_count, failed_count, skipped_count, wall_ms)
+            )
+            self._busy = False
+            self.query_one(LogoBanner).stop_animation()
+            self.query_one("#user-input", Input).focus()
+            conversation.scroll_end()
+
     def _show_help(self, conversation: ScrollableContainer) -> None:
         """Show available slash commands."""
         help_text = (
@@ -361,6 +581,8 @@ class NatShellApp(App):
             "  [bold cyan]/help[/]                  Show this help message\n"
             "  [bold cyan]/clear[/]                 Clear chat and model context\n"
             "  [bold cyan]/cmd <command>[/]         Execute a shell command directly\n"
+            "  [bold cyan]/exeplan <file>[/]        Preview a multi-step plan\n"
+            "  [bold cyan]/exeplan run <file>[/]    Execute all plan steps\n"
             "  [bold cyan]/model[/]                 Show current engine/model info\n"
             "  [bold cyan]/model list[/]            List models on remote server\n"
             "  [bold cyan]/model use <name>[/]      Switch to a remote model\n"

@@ -69,7 +69,7 @@ class TestSlashDispatch:
 
     def test_unknown_command(self):
         parts = "/foo".split(maxsplit=1)
-        assert parts[0].lower() not in {"/help", "/clear", "/cmd", "/model", "/history"}
+        assert parts[0].lower() not in {"/help", "/clear", "/cmd", "/exeplan", "/model", "/history"}
 
 
 # ─── /cmd execution ─────────────────────────────────────────────────────────
