@@ -1,10 +1,21 @@
 # NatShell
 
+[![PyPI version](https://img.shields.io/pypi/v/natshell)](https://pypi.org/project/natshell/)
+
 Natural language shell interface for Linux, macOS, and WSL — a local-first agentic TUI powered by a bundled LLM.
 
 Type requests in plain English and NatShell plans and executes shell commands to fulfill them, using a ReAct-style agent loop with a small local model (Qwen3-4B via llama.cpp). Supports optional remote inference via Ollama or any OpenAI-compatible API.
 
 ## Install
+
+### From PyPI
+
+```bash
+pip install natshell              # Remote/Ollama mode (no C++ compiler needed)
+pip install natshell[local]       # Includes llama-cpp-python for local inference
+```
+
+### From source (recommended for GPU acceleration)
 
 ```bash
 git clone https://github.com/Barent/natshell.git && cd natshell
@@ -55,12 +66,15 @@ NatShell uses a ReAct-style agent loop — the model reasons about your request,
 - Prints helpful reinstall instructions if GPU support is missing
 
 ### Tools
-The agent has access to 5 tools:
+The agent has access to 8 tools:
 - **execute_shell** — Run any shell command via bash
 - **read_file** — Read file contents
 - **write_file** — Write or append to files (always requires confirmation)
+- **edit_file** — Targeted search-and-replace edits (always requires confirmation)
+- **run_code** — Execute code snippets in 10 languages (Python, JS, Bash, Ruby, Perl, PHP, C, C++, Rust, Go)
 - **list_directory** — List directory contents with sizes and types
 - **search_files** — Search file contents (grep) or find files by name
+- **natshell_help** — Look up NatShell documentation by topic
 
 ### TUI Commands
 
@@ -75,6 +89,8 @@ The agent has access to 5 tools:
 | `/model switch` | Switch local GGUF model (opens command palette) |
 | `/model local` | Switch back to local model |
 | `/model default <name>` | Save default remote model to config |
+| `/plan <description>` | Generate a step-by-step plan (PLAN.md) from natural language |
+| `/exeplan run PLAN.md` | Execute a previously generated plan |
 | `/history` | Show conversation message count |
 
 ### Keyboard Shortcuts
@@ -108,7 +124,13 @@ Safety modes are configurable: `confirm` (default), `warn`, or `yolo`. All patte
 
 ## Configuration
 
-Copy `config.default.toml` to `~/.config/natshell/config.toml` to customize.
+Default configuration is bundled with the package. Copy it to `~/.config/natshell/config.toml` to customize:
+
+```bash
+python -c "from pathlib import Path; import natshell; p = Path(natshell.__file__).parent / 'config.default.toml'; print(p.read_text())" > ~/.config/natshell/config.toml
+```
+
+Or if installed from source, copy `src/natshell/config.default.toml` directly.
 
 ### Sections
 
@@ -140,41 +162,47 @@ Clipboard auto-detects the best backend with fallback to OSC52 terminal escape s
 
 ```
 src/natshell/
-├── __main__.py          # CLI entry point, model download, engine wiring
-├── app.py               # Textual TUI application
-├── config.py            # TOML config loading with env var support
-├── gpu.py               # GPU detection (vulkaninfo/nvidia-smi/lspci)
-├── platform.py          # Platform detection (Linux/macOS/WSL)
+├── __main__.py              # CLI entry point, model download, engine wiring
+├── app.py                   # Textual TUI application
+├── config.py                # TOML config loading with env var support
+├── config.default.toml      # Bundled default configuration
+├── gpu.py                   # GPU detection (vulkaninfo/nvidia-smi/lspci)
+├── platform.py              # Platform detection (Linux/macOS/WSL)
 ├── agent/
-│   ├── loop.py          # ReAct agent loop with safety checks
-│   ├── system_prompt.py # Platform-aware system prompt builder
-│   └── context.py       # System info gathering (CPU, RAM, disk, network, etc.)
+│   ├── loop.py              # ReAct agent loop with safety checks
+│   ├── system_prompt.py     # Platform-aware system prompt builder
+│   ├── context.py           # System info gathering (CPU, RAM, disk, network, etc.)
+│   ├── context_manager.py   # Conversation context window management
+│   └── plan.py              # Plan generation and execution
 ├── inference/
-│   ├── engine.py        # Inference engine protocol + CompletionResult types
-│   ├── local.py         # llama-cpp-python backend with GPU support
-│   ├── remote.py        # OpenAI-compatible API backend (httpx)
-│   └── ollama.py        # Ollama server discovery and model listing
+│   ├── engine.py            # Inference engine protocol + CompletionResult types
+│   ├── local.py             # llama-cpp-python backend with GPU support
+│   ├── remote.py            # OpenAI-compatible API backend (httpx)
+│   └── ollama.py            # Ollama server discovery and model listing
 ├── safety/
-│   └── classifier.py    # Regex-based command risk classifier
+│   └── classifier.py        # Regex-based command risk classifier
 ├── tools/
-│   ├── registry.py      # Tool registration and dispatch
-│   ├── execute_shell.py # Shell execution with sudo, env filtering, truncation
-│   ├── read_file.py     # File reading
-│   ├── write_file.py    # File writing
-│   ├── list_directory.py# Directory listing
-│   └── search_files.py  # Text/file search
+│   ├── registry.py          # Tool registration and dispatch
+│   ├── execute_shell.py     # Shell execution with sudo, env filtering, truncation
+│   ├── read_file.py         # File reading
+│   ├── write_file.py        # File writing
+│   ├── edit_file.py         # Targeted search-and-replace edits
+│   ├── run_code.py          # Code execution in 10 languages
+│   ├── list_directory.py    # Directory listing
+│   ├── search_files.py      # Text/file search
+│   └── natshell_help.py     # Self-documentation by topic
 └── ui/
-    ├── widgets.py       # TUI widgets (messages, command blocks, modals)
-    ├── commands.py      # Command palette providers
-    ├── clipboard.py     # Cross-platform clipboard integration
-    └── styles.tcss      # Textual CSS stylesheet
+    ├── widgets.py           # TUI widgets (messages, command blocks, modals)
+    ├── commands.py          # Command palette providers
+    ├── clipboard.py         # Cross-platform clipboard integration
+    └── styles.tcss          # Textual CSS stylesheet
 ```
 
 ## Development
 
 ```bash
 source .venv/bin/activate
-pytest                    # Run tests (182 tests)
+pytest                    # Run tests (353 tests)
 ruff check src/ tests/    # Lint
 ```
 

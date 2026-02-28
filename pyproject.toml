@@ -25,7 +25,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "llama-cpp-python>=0.3.0",
     "textual>=1.0.0",
     "rich>=13.0.0",
     "httpx>=0.27.0",
@@ -36,7 +35,9 @@ dependencies = [
 natshell = "natshell.__main__:main"
 
 [project.optional-dependencies]
+local = ["llama-cpp-python>=0.3.0"]
 dev = [
+    "llama-cpp-python>=0.3.0",
     "pytest",
     "pytest-asyncio",
     "ruff",
@@ -52,6 +53,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+natshell = ["config.default.toml", "ui/styles.tcss"]
 
 [tool.ruff]
 line-length = 100

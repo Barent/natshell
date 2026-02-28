@@ -83,7 +83,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
     config = NatShellConfig()
 
     # Load defaults from bundled config
-    default_path = Path(__file__).parent.parent.parent / "config.default.toml"
+    default_path = Path(__file__).parent / "config.default.toml"
     if default_path.exists():
         _merge_toml(config, default_path)
 

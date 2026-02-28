@@ -99,7 +99,7 @@ Context size is auto-detected from model filename (4B → 4096, 8B → 8192) whe
 ## Key Files Reference
 
 - `PROJECT_SCAFFOLD.md` — Original architectural specification (reference only — implementation has evolved)
-- `config.default.toml` — Default configuration with all safety patterns (23 confirm + 8 blocked, includes macOS-specific: brew, launchctl, diskutil)
+- `src/natshell/config.default.toml` — Default configuration with all safety patterns (23 confirm + 8 blocked, includes macOS-specific: brew, launchctl, diskutil). Bundled as package data.
 - `pyproject.toml` — Dependencies and entry point
 - `install.sh` — Cross-platform installer with GPU detection, Ollama setup, model download
 

@@ -123,7 +123,7 @@ def _topic_config() -> str:
 
 def _topic_config_reference() -> str:
     """Read the bundled config.default.toml reference."""
-    default_path = Path(__file__).parent.parent.parent.parent / "config.default.toml"
+    default_path = Path(__file__).parent.parent / "config.default.toml"
     if not default_path.exists():
         return (
             "Bundled config.default.toml not found. "
