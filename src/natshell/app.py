@@ -529,51 +529,46 @@ class NatShellApp(App):
     @work(exclusive=True, thread=False)
     async def _model_use_interactive(self, conversation: ScrollableContainer) -> None:
         """Show an interactive model picker when /model use is typed without args."""
-        try:
-            base_url = self._get_remote_base_url()
-            if not base_url:
-                conversation.mount(SystemMessage(
-                    "No remote server configured.\n"
-                    "Set [ollama] url in ~/.config/natshell/config.toml\n"
-                    "or use --remote <url> at startup."
-                ))
-                return
+        base_url = self._get_remote_base_url()
+        if not base_url:
+            conversation.mount(SystemMessage(
+                "No remote server configured.\n"
+                "Set [ollama] url in ~/.config/natshell/config.toml\n"
+                "or use --remote <url> at startup."
+            ))
+            return
 
-            conversation.mount(SystemMessage("Fetching models..."))
-            conversation.scroll_end()
+        conversation.mount(SystemMessage("Fetching models..."))
+        conversation.scroll_end()
 
-            reachable = await ping_server(base_url)
-            if not reachable:
-                conversation.mount(SystemMessage(f"[red]Cannot reach server at {base_url}[/]"))
-                return
+        reachable = await ping_server(base_url)
+        if not reachable:
+            conversation.mount(SystemMessage(f"[red]Cannot reach server at {base_url}[/]"))
+            return
 
-            models = await list_models(base_url)
-            if not models:
-                conversation.mount(SystemMessage("Server is running but returned no models."))
-                return
+        models = await list_models(base_url)
+        if not models:
+            conversation.mount(SystemMessage("Server is running but returned no models."))
+            return
 
-            current_info = self.agent.engine.engine_info()
-            choices: list[tuple[str, str]] = []
-            for m in models:
-                label = m.name
-                if m.size_gb:
-                    label += f"  ({m.size_gb} GB)"
-                if m.parameter_size:
-                    label += f"  \\[{m.parameter_size}]"
-                if m.name == current_info.model_name:
-                    label += "  ◀ active"
-                choices.append((m.name, label))
+        current_info = self.agent.engine.engine_info()
+        choices: list[tuple[str, str]] = []
+        for m in models:
+            label = m.name
+            if m.size_gb:
+                label += f"  ({m.size_gb} GB)"
+            if m.parameter_size:
+                label += f"  [{m.parameter_size}]"
+            if m.name == current_info.model_name:
+                label += "  ◀ active"
+            choices.append((m.name, label))
 
-            selected = await self.push_screen_wait(ModelSelectScreen(choices))
-            if selected and selected != current_info.model_name:
-                await self._model_use(selected, conversation)
-            elif selected == current_info.model_name:
-                conversation.mount(SystemMessage(f"Already using [bold]{selected}[/]."))
-            conversation.scroll_end()
-        except Exception as e:
-            logger.exception("Model picker failed")
-            conversation.mount(SystemMessage(f"[red]Model picker error: {_escape(str(e))}[/]"))
-            conversation.scroll_end()
+        selected = await self.push_screen_wait(ModelSelectScreen(choices))
+        if selected and selected != current_info.model_name:
+            await self._model_use(selected, conversation)
+        elif selected == current_info.model_name:
+            conversation.mount(SystemMessage(f"Already using [bold]{selected}[/]."))
+        conversation.scroll_end()
 
     async def _model_switch_local(self, conversation: ScrollableContainer) -> None:
         """Switch back to the local model."""
