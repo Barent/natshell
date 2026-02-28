@@ -29,7 +29,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 
 ### Core
 - `src/natshell/__main__.py` — CLI entry point with argparse, model download, engine wiring, GPU check
-- `src/natshell/app.py` — Textual TUI application with slash commands, confirmation dialogs, sudo prompts, model switching
+- `src/natshell/app.py` — Textual TUI application with slash commands, confirmation dialogs, sudo prompts, model switching. `/plan` generates a PLAN.md via the agent loop with a specialized prompt, then previews it; feeds into `/exeplan run PLAN.md`.
 - `src/natshell/config.py` — TOML config loading with defaults, env var API key support (`NATSHELL_API_KEY`), file permission warnings, engine preference persistence (`EngineConfig`, `save_engine_preference()`)
 
 ### Agent

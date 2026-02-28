@@ -69,7 +69,7 @@ class TestSlashDispatch:
 
     def test_unknown_command(self):
         parts = "/foo".split(maxsplit=1)
-        assert parts[0].lower() not in {"/help", "/clear", "/cmd", "/exeplan", "/model", "/history"}
+        assert parts[0].lower() not in {"/help", "/clear", "/cmd", "/exeplan", "/plan", "/model", "/history"}
 
 
 # ─── /cmd execution ─────────────────────────────────────────────────────────
@@ -252,3 +252,41 @@ class TestSkipPermissionsFlag:
         agent = _make_agent()
         risk = agent.safety.classify_command("sudo reboot")
         assert risk == Risk.CONFIRM
+
+
+# ─── /plan dispatch and prompt ──────────────────────────────────────────────
+
+
+class TestPlanDispatch:
+    def test_plan_recognized(self):
+        parts = "/plan".split(maxsplit=1)
+        assert parts[0].lower() == "/plan"
+
+    def test_plan_with_args(self):
+        parts = "/plan build a tetris game".split(maxsplit=1)
+        assert parts[0].lower() == "/plan"
+        assert parts[1] == "build a tetris game"
+
+
+class TestPlanPrompt:
+    def test_prompt_contains_description(self):
+        from natshell.app import _build_plan_prompt
+        prompt = _build_plan_prompt("build a REST API", "project/\n  src/")
+        assert "build a REST API" in prompt
+
+    def test_prompt_contains_directory_tree(self):
+        from natshell.app import _build_plan_prompt
+        prompt = _build_plan_prompt("test", "mydir/\n  file.py")
+        assert "mydir/" in prompt
+        assert "file.py" in prompt
+
+    def test_prompt_contains_format_rules(self):
+        from natshell.app import _build_plan_prompt
+        prompt = _build_plan_prompt("anything", "dir/")
+        assert "## Step" in prompt
+        assert "PLAN.md" in prompt
+
+    def test_prompt_mentions_preamble(self):
+        from natshell.app import _build_plan_prompt
+        prompt = _build_plan_prompt("anything", "dir/")
+        assert "preamble" in prompt.lower()

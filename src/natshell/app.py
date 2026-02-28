@@ -122,11 +122,52 @@ def _build_step_prompt(
     return "\n".join(parts)
 
 
+def _build_plan_prompt(description: str, directory_tree: str) -> str:
+    """Build a prompt that instructs the model to generate a PLAN.md file."""
+    parts = [
+        "Generate a multi-step plan file called PLAN.md in the current directory.",
+        "",
+        "User's request:",
+        description,
+        "",
+        "Current directory:",
+        directory_tree,
+        "",
+        "Plan format — the file MUST use this exact markdown structure:",
+        "",
+        "  # Plan Title",
+        "  ",
+        "  Preamble with shared context: tech stack, file structure, naming",
+        "  conventions, key interfaces. This context carries across all steps.",
+        "  ",
+        "  ## Step 1: Title describing what this step does",
+        "  ",
+        "  Detailed instructions. Include exact file paths, function names,",
+        "  data structures. A small LLM executes each step independently.",
+        "  ",
+        "  ## Step 2: Next step title",
+        "  ...",
+        "",
+        "Rules:",
+        "- First line: # heading (plan title)",
+        "- Preamble BEFORE the first ## heading with shared context",
+        "- Each step: ## heading (not ###)",
+        "- Each step: 1-3 files, achievable in under 15 tool calls",
+        "- Include exact names: functions, variables, file paths, types",
+        "- Order by dependency — foundations first",
+        "- 3-10 steps depending on complexity",
+        "",
+        "First examine the directory with list_directory, then write PLAN.md.",
+    ]
+    return "\n".join(parts)
+
+
 SLASH_COMMANDS = [
     ("/help", "Show available commands"),
     ("/clear", "Clear chat and model context"),
     ("/cmd", "Execute a shell command directly"),
     ("/exeplan", "Preview or execute a multi-step plan"),
+    ("/plan", "Generate a multi-step plan from a description"),
     ("/model", "Show current engine/model info"),
     ("/model list", "List models on the remote server"),
     ("/model use", "Switch to a remote model"),
@@ -366,6 +407,16 @@ class NatShellApp(App):
                     self.run_cmd(args)
             case "/exeplan":
                 self._handle_exeplan_command(args, conversation)
+            case "/plan":
+                if not args:
+                    conversation.mount(
+                        SystemMessage(
+                            "Usage: /plan <description>\n"
+                            "Example: /plan build a REST API with Express and SQLite"
+                        )
+                    )
+                else:
+                    self._handle_plan_command(args, conversation)
             case "/model":
                 await self._handle_model_command(args, conversation)
             case "/history":
@@ -425,6 +476,78 @@ class NatShellApp(App):
             self._busy = False
             self.query_one("#user-input", Input).focus()
             conversation.scroll_end()
+
+    # ─── /plan ────────────────────────────────────────────────────────────
+
+    def _handle_plan_command(
+        self, description: str, conversation: ScrollableContainer
+    ) -> None:
+        """Generate a PLAN.md file from a natural language description."""
+        conversation.mount(UserMessage(f"/plan {description}"))
+        conversation.mount(
+            SystemMessage("Generating plan\u2026 the model will examine your project and create PLAN.md.")
+        )
+        self.run_plan_generation(description)
+
+    @work(exclusive=True, thread=False)
+    async def run_plan_generation(self, description: str) -> None:
+        """Run the agent loop with a plan generation prompt."""
+        conversation = self.query_one("#conversation", ScrollableContainer)
+        thinking_ref: list[ThinkingIndicator | None] = [None]
+        self._busy = True
+
+        async def confirm_callback(tool_call: ToolCall) -> bool:
+            return await self.push_screen_wait(ConfirmScreen(tool_call))
+
+        async def password_callback(tool_call: ToolCall) -> str | None:
+            command = tool_call.arguments.get("command", "")
+            return await self.push_screen_wait(SudoPasswordScreen(command))
+
+        confirm_cb = None if self._skip_permissions else confirm_callback
+
+        # Fresh context — plan generation is self-contained
+        self.agent.clear_history()
+        tree = _shallow_tree(Path.cwd())
+        prompt = _build_plan_prompt(description, tree)
+
+        try:
+            async for event in self.agent.handle_user_message(
+                prompt,
+                confirm_callback=confirm_cb,
+                password_callback=password_callback,
+            ):
+                self._render_agent_event(event, conversation, thinking_ref)
+
+        except Exception as e:
+            conversation.mount(
+                Static(f"[bold red]Plan generation error:[/] {_escape(str(e))}")
+            )
+
+        finally:
+            if thinking_ref[0]:
+                thinking_ref[0].remove()
+            self._busy = False
+            self.query_one(LogoBanner).stop_animation()
+            self.query_one("#user-input", Input).focus()
+
+        # Preview the generated plan if it was written
+        plan_path = Path.cwd() / "PLAN.md"
+        if plan_path.exists():
+            try:
+                plan = parse_plan_file(str(plan_path))
+                conversation.mount(
+                    PlanOverviewMessage(plan.title, [s.title for s in plan.steps])
+                )
+            except (ValueError, FileNotFoundError):
+                conversation.mount(
+                    SystemMessage(
+                        f"Plan written to {plan_path}\n"
+                        "[dim]Note: could not parse step structure. "
+                        "Check that ## headings are used for steps.[/]"
+                    )
+                )
+
+        conversation.scroll_end()
 
     # ─── /exeplan ──────────────────────────────────────────────────────────
 
@@ -613,6 +736,7 @@ class NatShellApp(App):
             "  [bold cyan]/cmd <command>[/]         Execute a shell command directly\n"
             "  [bold cyan]/exeplan <file>[/]        Preview a multi-step plan\n"
             "  [bold cyan]/exeplan run <file>[/]    Execute all plan steps\n"
+            "  [bold cyan]/plan <description>[/]    Generate a multi-step plan\n"
             "  [bold cyan]/model[/]                 Show current engine/model info\n"
             "  [bold cyan]/model list[/]            List models on remote server\n"
             "  [bold cyan]/model use <name>[/]      Switch to a remote model\n"
