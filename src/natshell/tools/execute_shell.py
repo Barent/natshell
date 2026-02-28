@@ -131,7 +131,11 @@ async def execute_shell(
     timeout: int = 30,
 ) -> ToolResult:
     """Execute a shell command and return structured results."""
-    # Clamp timeout
+    # Coerce timeout to int (LLMs may send it as a string) and clamp
+    try:
+        timeout = int(timeout)
+    except (TypeError, ValueError):
+        timeout = 30
     timeout = max(1, min(timeout, 300))
 
     # Redact sudo -S from log output to avoid leaking password plumbing

@@ -35,6 +35,7 @@ from natshell.ui.widgets import (
     HistoryInput,
     LogoBanner,
     PlanningMessage,
+    RunStatsMessage,
     SudoPasswordScreen,
     SystemMessage,
     ThinkingIndicator,
@@ -253,6 +254,10 @@ class NatShellApp(App):
 
                     case EventType.RESPONSE:
                         conversation.mount(AssistantMessage(event.data, metrics=event.metrics))
+
+                    case EventType.RUN_STATS:
+                        if event.metrics:
+                            conversation.mount(RunStatsMessage(event.metrics))
 
                     case EventType.ERROR:
                         conversation.mount(

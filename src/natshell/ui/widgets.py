@@ -399,6 +399,38 @@ class HelpMessage(CopyableMessage):
         super().__init__(text, text)
 
 
+def _format_run_stats(stats: dict[str, Any]) -> str:
+    """Format cumulative run stats as a compact summary."""
+    parts = []
+    steps = stats.get("steps", 0)
+    if steps:
+        parts.append(f"{steps} steps")
+    total_wall_ms = stats.get("total_wall_ms", 0)
+    if total_wall_ms:
+        secs = total_wall_ms / 1000
+        if secs >= 60:
+            mins = int(secs // 60)
+            remainder = secs % 60
+            parts.append(f"{mins}m {remainder:.0f}s")
+        else:
+            parts.append(f"{secs:.1f}s")
+    total_tokens = stats.get("total_tokens", 0)
+    if total_tokens:
+        parts.append(f"{total_tokens:,} tokens")
+    avg_tps = stats.get("avg_tokens_per_sec")
+    if avg_tps:
+        parts.append(f"{avg_tps:.1f} tok/s avg")
+    return " · ".join(parts)
+
+
+class RunStatsMessage(Static):
+    """Compact run statistics shown after multi-step agent runs."""
+
+    def __init__(self, stats: dict[str, Any]) -> None:
+        formatted = _format_run_stats(stats)
+        super().__init__(f"[dim]Run: {formatted}[/]")
+
+
 class ThinkingIndicator(Static):
     """Animated thinking indicator with bouncing dots."""
 

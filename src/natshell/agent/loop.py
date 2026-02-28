@@ -33,6 +33,7 @@ class EventType(Enum):
     BLOCKED = "blocked"         # Command was blocked
     RESPONSE = "response"       # Final text response from model
     ERROR = "error"             # Something went wrong
+    RUN_STATS = "run_stats"     # Cumulative stats for the full agent run
 
 
 @dataclass
@@ -56,6 +57,29 @@ def _build_metrics(result: CompletionResult, elapsed_ms: int) -> dict[str, Any]:
     if result.prompt_tokens:
         metrics["prompt_tokens"] = result.prompt_tokens
     return metrics
+
+
+def _build_run_stats(
+    steps: int,
+    total_wall_ms: int,
+    total_inference_ms: int,
+    total_prompt_tokens: int,
+    total_completion_tokens: int,
+) -> dict[str, Any]:
+    """Build cumulative stats for an entire agent run."""
+    stats: dict[str, Any] = {
+        "steps": steps,
+        "total_wall_ms": total_wall_ms,
+        "total_inference_ms": total_inference_ms,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+    }
+    total_tokens = total_prompt_tokens + total_completion_tokens
+    if total_tokens:
+        stats["total_tokens"] = total_tokens
+    if total_inference_ms > 0 and total_completion_tokens:
+        stats["avg_tokens_per_sec"] = total_completion_tokens / (total_inference_ms / 1000)
+    return stats
 
 
 class AgentLoop:
@@ -157,7 +181,15 @@ class AgentLoop:
         """
         self.messages.append({"role": "user", "content": user_input})
 
+        # Cumulative stats for this run
+        run_t0 = time.monotonic()
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_inference_ms = 0
+        steps_used = 0
+
         for step in range(self.config.max_steps):
+            steps_used = step + 1
             # Signal that the model is thinking
             yield AgentEvent(type=EventType.THINKING)
 
@@ -175,6 +207,9 @@ class AgentLoop:
                     max_tokens=self._max_tokens,
                 )
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
+                total_inference_ms += elapsed_ms
+                total_prompt_tokens += result.prompt_tokens or 0
+                total_completion_tokens += result.completion_tokens or 0
             except Exception as e:
                 logger.exception("Inference error")
                 if self._can_fallback(e):
@@ -204,6 +239,10 @@ class AgentLoop:
                         data="Response was truncated (hit token limit). "
                         "The context window may be full. Try /clear to reset.",
                     )
+                    if steps_used > 1:
+                        run_wall_ms = int((time.monotonic() - run_t0) * 1000)
+                        yield AgentEvent(type=EventType.RUN_STATS, metrics=_build_run_stats(
+                            steps_used, run_wall_ms, total_inference_ms, total_prompt_tokens, total_completion_tokens))
                     return
                 else:
                     yield AgentEvent(
@@ -291,6 +330,10 @@ class AgentLoop:
                     "content": result.content,
                 })
                 yield AgentEvent(type=EventType.RESPONSE, data=result.content, metrics=_build_metrics(result, elapsed_ms))
+                if steps_used > 1:
+                    run_wall_ms = int((time.monotonic() - run_t0) * 1000)
+                    yield AgentEvent(type=EventType.RUN_STATS, metrics=_build_run_stats(
+                        steps_used, run_wall_ms, total_inference_ms, total_prompt_tokens, total_completion_tokens))
                 return
 
             # Case 3: Empty response (shouldn't happen, but handle gracefully)
@@ -301,11 +344,14 @@ class AgentLoop:
             return
 
         # Hit max steps
+        run_wall_ms = int((time.monotonic() - run_t0) * 1000)
         yield AgentEvent(
             type=EventType.RESPONSE,
             data=f"I've reached the maximum number of steps ({self.config.max_steps}). "
             f"Here's what I've done so far. You can continue with a follow-up request.",
         )
+        yield AgentEvent(type=EventType.RUN_STATS, metrics=_build_run_stats(
+            steps_used, run_wall_ms, total_inference_ms, total_prompt_tokens, total_completion_tokens))
 
     def _can_fallback(self, error: Exception) -> bool:
         """Check if we should attempt fallback to local model."""
