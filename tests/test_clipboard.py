@@ -14,6 +14,7 @@ from natshell.ui.clipboard import (
     backend_name,
     copy,
     detect_backend,
+    read,
 )
 
 
@@ -307,3 +308,113 @@ class TestWSLBackend:
                 assert copy("hello") is True
                 write_call = mock_run.call_args_list[0]
                 assert write_call.args[0] == ["clip.exe"]
+
+
+# ─── read ─────────────────────────────────────────────────────────────────────
+
+
+class TestRead:
+    def test_read_xclip(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}, clear=False):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
+
+                with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0, stdout="hello world")
+                    result = read()
+                    assert result == "hello world"
+                    mock_run.assert_called_once_with(
+                        ["xclip", "-selection", "clipboard", "-o"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+
+    def test_read_xsel(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}, clear=False):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xsel" if t == "xsel" else None
+                detect_backend()
+
+                with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0, stdout="pasted text")
+                    result = read()
+                    assert result == "pasted text"
+                    mock_run.assert_called_once_with(
+                        ["xsel", "--clipboard", "--output"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+
+    def test_read_pbpaste(self):
+        with patch("natshell.ui.clipboard.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            detect_backend()
+
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="mac text")
+                result = read()
+                assert result == "mac text"
+                mock_run.assert_called_once_with(
+                    ["pbpaste"],
+                    capture_output=True, text=True, timeout=5,
+                )
+
+    def test_read_wl_paste(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: f"/usr/bin/{t}" if t in ("wl-copy", "wl-paste") else None
+                detect_backend()
+
+        with patch("natshell.ui.clipboard.shutil.which", return_value="/usr/bin/wl-paste"):
+            with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="wayland text")
+                result = read()
+                assert result == "wayland text"
+                mock_run.assert_called_once_with(
+                    ["wl-paste", "--no-newline"],
+                    capture_output=True, text=True, timeout=5,
+                )
+
+    def test_read_powershell_wsl(self):
+        with patch("natshell.ui.clipboard.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            with patch("builtins.open", mock_open(read_data="Linux Microsoft WSL2")):
+                with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                    mock_which.side_effect = lambda t: "/mnt/c/clip.exe" if t == "clip.exe" else None
+                    detect_backend()
+
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("natshell.ui.clipboard.shutil.which", return_value="/mnt/c/powershell.exe"):
+                with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0, stdout="wsl text")
+                    result = read()
+                    assert result == "wsl text"
+                    mock_run.assert_called_once_with(
+                        ["powershell.exe", "-c", "Get-Clipboard"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+
+    def test_read_osc52_returns_none(self):
+        with patch("natshell.ui.clipboard.shutil.which", return_value=None):
+            detect_backend()
+        assert read() is None
+
+    def test_read_subprocess_failure_returns_none(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}, clear=False):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
+
+                with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=1)
+                    assert read() is None
+
+    def test_read_timeout_returns_none(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}, clear=False):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
+
+                with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                    mock_run.side_effect = subprocess.TimeoutExpired(cmd="xclip", timeout=5)
+                    assert read() is None

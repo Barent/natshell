@@ -109,10 +109,12 @@ class NatShellApp(App):
         )
         with Vertical(id="input-area"):
             yield Static(id="slash-suggestions")
-            yield HistoryInput(
-                placeholder="Ask me anything about your system...",
-                id="user-input",
-            )
+            with Horizontal(id="input-row"):
+                yield HistoryInput(
+                    placeholder="Ask me anything about your system...",
+                    id="user-input",
+                )
+                yield Button("\U0001f4cb", id="paste-btn", variant="default")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -148,14 +150,15 @@ class NatShellApp(App):
 
     @on(Input.Submitted, "#user-input")
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        user_text = event.value.strip()
+        input_widget = self.query_one("#user-input", HistoryInput)
+        user_text = input_widget.get_submit_text().strip()
         self.query_one("#slash-suggestions", Static).display = False
         if not user_text or self._busy:
             return
 
-        input_widget = self.query_one("#user-input", HistoryInput)
         input_widget.add_to_history(user_text)
         input_widget.value = ""
+        input_widget.clear_paste()
 
         # Intercept slash commands before the agent
         if user_text.startswith("/"):
@@ -729,6 +732,19 @@ class NatShellApp(App):
     @on(Button.Pressed, "#copy-chat-btn")
     def on_copy_chat_btn(self) -> None:
         self.action_copy_chat()
+
+    @on(Button.Pressed, "#paste-btn")
+    def on_paste_btn(self) -> None:
+        content = clipboard.read()
+        if content is None:
+            self.notify("Cannot read clipboard — no paste tool available", severity="error", timeout=3)
+            return
+        if not content.strip():
+            self.notify("Clipboard is empty", timeout=2)
+            return
+        input_widget = self.query_one("#user-input", HistoryInput)
+        input_widget.insert_from_clipboard(content)
+        input_widget.focus()
 
     def action_clear_chat(self) -> None:
         """Clear the conversation and agent history."""

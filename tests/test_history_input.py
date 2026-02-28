@@ -11,6 +11,8 @@ class _TestInput(HistoryInput):
         self._history: list[str] = []
         self._history_index: int = -1
         self._draft: str = ""
+        self._pasted_text: str | None = None
+        self._pre_paste_text: str = ""
         self._val: str = ""
         self._cur: int = 0
 
@@ -182,3 +184,70 @@ class TestSlashCommands:
         w.add_to_history("/clear")
         w.add_to_history("/model list")
         assert w._history == ["/help", "/clear", "/model list"]
+
+
+class TestPasteHandling:
+    """Tests for paste indicator and get_submit_text()."""
+
+    def test_paste_stores_text_and_shows_indicator(self):
+        w = _make()
+        w.insert_from_clipboard("hello world")
+        assert w._pasted_text == "hello world"
+        assert "[Pasted 11 chars]" in w.value
+
+    def test_paste_multiline_shows_line_count(self):
+        w = _make()
+        text = "line1\nline2\nline3"
+        w.insert_from_clipboard(text)
+        assert w._pasted_text == text
+        assert "[Pasted 17 chars, 3 lines]" in w.value
+
+    def test_get_submit_text_returns_pasted(self):
+        w = _make()
+        w.insert_from_clipboard("full pasted content\nwith newlines")
+        result = w.get_submit_text()
+        assert result == "full pasted content\nwith newlines"
+
+    def test_get_submit_text_with_prefix(self):
+        w = _make()
+        w.value = "prefix text"
+        w.insert_from_clipboard("pasted stuff")
+        result = w.get_submit_text()
+        assert result == "prefix text\npasted stuff"
+
+    def test_get_submit_text_without_paste(self):
+        w = _make()
+        w.value = "just typed"
+        assert w.get_submit_text() == "just typed"
+
+    def test_clear_paste_resets_state(self):
+        w = _make()
+        w.insert_from_clipboard("some text")
+        w.clear_paste()
+        assert w._pasted_text is None
+        assert w._pre_paste_text == ""
+        # After clearing, get_submit_text returns raw value
+        w.value = "new input"
+        assert w.get_submit_text() == "new input"
+
+    def test_insert_from_clipboard(self):
+        w = _make()
+        w.insert_from_clipboard("clipboard content")
+        assert w._pasted_text == "clipboard content"
+        assert "[Pasted 17 chars]" in w.value
+        assert w.cursor_position == len(w.value)
+
+    def test_insert_from_clipboard_with_existing_text(self):
+        w = _make()
+        w.value = "before"
+        w.insert_from_clipboard("pasted")
+        assert w._pre_paste_text == "before"
+        assert w.value.startswith("before ")
+        assert "[Pasted 6 chars]" in w.value
+
+    def test_second_paste_replaces_first(self):
+        w = _make()
+        w.insert_from_clipboard("first paste")
+        w.insert_from_clipboard("second paste")
+        assert w._pasted_text == "second paste"
+        assert w.get_submit_text() == "second paste"

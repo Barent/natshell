@@ -38,9 +38,15 @@ Footer {
     height: auto;
 }
 
+/* Input row (input + paste button) */
+#input-row {
+    height: auto;
+    margin: 0 1 1 1;
+}
+
 /* User input */
 #user-input {
-    margin: 0 1 1 1;
+    margin: 0;
     background: #0f3460;
     color: #e2e2e2;
     border: tall #30304a;
@@ -48,6 +54,22 @@ Footer {
 
 #user-input:focus {
     border: tall #5390d9;
+}
+
+/* Paste button */
+#paste-btn {
+    width: 5;
+    min-width: 5;
+    height: 3;
+    background: #16213e;
+    color: #a0a0a0;
+    border: tall #30304a;
+    margin: 0;
+}
+
+#paste-btn:hover {
+    background: #1e3a5f;
+    color: #e2e2e2;
 }
 
 /* Copy Chat button inside banner */

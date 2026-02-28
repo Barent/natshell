@@ -194,6 +194,25 @@ def _verify_copy(backend: str) -> bool:
         return True  # verification errored, assume the write worked
 
 
+def read() -> str | None:
+    """Read text from the system clipboard.
+
+    Returns the clipboard contents as a string, or None if reading is not
+    possible (e.g. OSC52-only backend, missing tools, or subprocess failure).
+    """
+    backend = detect_backend()
+    if backend == "osc52":
+        return None
+    read_cmd = _build_read_command(backend)
+    if read_cmd is None:
+        return None
+    try:
+        result = subprocess.run(read_cmd, capture_output=True, text=True, timeout=5)
+        return result.stdout if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def _reset() -> None:
     """Reset cached backend (for testing)."""
     global _backend, _wayland_warned

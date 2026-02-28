@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -32,6 +32,8 @@ class HistoryInput(Input):
         self._history: list[str] = []
         self._history_index: int = -1  # -1 = not navigating
         self._draft: str = ""
+        self._pasted_text: str | None = None  # full pasted content
+        self._pre_paste_text: str = ""  # text typed before paste
 
     def add_to_history(self, text: str) -> None:
         """Add text to history. Skips empty and consecutive duplicates."""
@@ -78,6 +80,76 @@ class HistoryInput(Input):
         self._history.clear()
         self._history_index = -1
         self._draft = ""
+
+    # ─── Paste handling ──────────────────────────────────────────────────
+
+    def _paste_indicator(self, text: str) -> str:
+        """Build a compact indicator string for pasted content."""
+        char_count = len(text)
+        line_count = text.count("\n") + 1
+        if line_count > 1:
+            return f"[Pasted {char_count} chars, {line_count} lines]"
+        return f"[Pasted {char_count} chars]"
+
+    def _on_paste(self, event: events.Paste) -> None:
+        event.prevent_default()
+        pasted = event.text
+        if not pasted or not pasted.strip():
+            return
+        # If there's already a paste, revert to pre-paste text first
+        if self._pasted_text is not None:
+            self.value = self._pre_paste_text
+        self._pasted_text = pasted
+        self._pre_paste_text = self.value
+        indicator = self._paste_indicator(pasted)
+        if self._pre_paste_text:
+            self.value = f"{self._pre_paste_text} {indicator}"
+        else:
+            self.value = indicator
+        self.cursor_position = len(self.value)
+
+    def _on_key(self, event: events.Key) -> None:
+        if event.key == "backspace" and self._pasted_text is not None:
+            if "[Pasted " in self.value:
+                self._pasted_text = None
+                self.value = self._pre_paste_text
+                self._pre_paste_text = ""
+                self.cursor_position = len(self.value)
+                event.prevent_default()
+                return
+        super()._on_key(event)
+
+    def get_submit_text(self) -> str:
+        """Return the actual text to send to the agent.
+
+        If content was pasted, returns the full pasted text (optionally
+        prefixed with any text typed before the paste).  Otherwise returns
+        the raw input value.
+        """
+        if self._pasted_text is not None:
+            if self._pre_paste_text:
+                return f"{self._pre_paste_text}\n{self._pasted_text}"
+            return self._pasted_text
+        return self.value
+
+    def clear_paste(self) -> None:
+        """Reset paste state (call after submit)."""
+        self._pasted_text = None
+        self._pre_paste_text = ""
+
+    def insert_from_clipboard(self, text: str) -> None:
+        """Programmatically insert clipboard content, same UX as paste."""
+        # If there's already a paste, revert to pre-paste text first
+        if self._pasted_text is not None:
+            self.value = self._pre_paste_text
+        self._pasted_text = text
+        self._pre_paste_text = self.value
+        indicator = self._paste_indicator(text)
+        if self._pre_paste_text:
+            self.value = f"{self._pre_paste_text} {indicator}"
+        else:
+            self.value = indicator
+        self.cursor_position = len(self.value)
 
 
 # ─── Logo frames ─────────────────────────────────────────────────────────────
