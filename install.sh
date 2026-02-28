@@ -504,12 +504,40 @@ WRAPPER
 chmod +x "$SYMLINK"
 ok "Launcher script created: $SYMLINK"
 
-# Check if ~/.local/bin is in PATH
+# Ensure ~/.local/bin is in PATH
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    warn "$BIN_DIR is not in your PATH"
-    echo "  Add this to your shell profile (~/.bashrc or ~/.zshrc):"
-    echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
+    # Detect the right shell profile
+    if [[ "$IS_MACOS" == true ]]; then
+        SHELL_RC="$HOME/.zshrc"
+        [[ "$(basename "${SHELL:-/bin/zsh}")" == "bash" ]] && SHELL_RC="$HOME/.bash_profile"
+    else
+        SHELL_RC="$HOME/.bashrc"
+        [[ "$(basename "${SHELL:-/bin/bash}")" == "zsh" ]] && SHELL_RC="$HOME/.zshrc"
+    fi
+
+    PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+
+    # Check if it's already in the profile (user may have it but hasn't sourced yet)
+    if [[ -f "$SHELL_RC" ]] && grep -qF '.local/bin' "$SHELL_RC" 2>/dev/null; then
+        info "$BIN_DIR already in $SHELL_RC (restart your shell to pick it up)"
+    else
+        warn "$BIN_DIR is not in your PATH"
+        read -rp "  Add it to $SHELL_RC now? [Y/n]: " path_answer
+        if [[ -z "$path_answer" ]] || is_yes "$path_answer"; then
+            echo "" >> "$SHELL_RC"
+            echo "# Added by NatShell installer" >> "$SHELL_RC"
+            echo "$PATH_LINE" >> "$SHELL_RC"
+            ok "PATH updated in $SHELL_RC"
+            info "Run 'source $SHELL_RC' or restart your terminal to use 'natshell'"
+        else
+            echo "  To add it manually, put this in $SHELL_RC:"
+            echo "    $PATH_LINE"
+            echo ""
+        fi
+    fi
+
+    # Add to PATH for the rest of this script (model download uses $SYMLINK)
+    export PATH="$BIN_DIR:$PATH"
 fi
 
 # ─── Interactive Setup ────────────────────────────────────────────────────────
@@ -712,6 +740,7 @@ echo ""
 ok "NatShell installed successfully!"
 echo ""
 echo "  Run:       natshell"
+echo "  Direct:    $INSTALL_DIR/.venv/bin/natshell"
 echo "  Config:    ~/.config/natshell/config.toml"
 echo "  Models:    ~/.local/share/natshell/models/"
 echo "  Uninstall: bash $INSTALL_DIR/uninstall.sh"
