@@ -55,7 +55,7 @@ def main() -> None:
         help="Enable verbose logging",
     )
     parser.add_argument(
-        "--dangerously-skip-permissions",
+        "--danger-fast",
         action="store_true",
         help="Skip all confirmation dialogs. BLOCKED commands are still blocked. "
              "Only use this on VMs or test environments.",
@@ -219,9 +219,9 @@ def main() -> None:
 
     # Launch the TUI
     from natshell.app import NatShellApp
-    if args.dangerously_skip_permissions:
-        print("WARNING: --dangerously-skip-permissions is active. All confirmations will be skipped.")
-    app = NatShellApp(agent=agent, config=config, skip_permissions=args.dangerously_skip_permissions)
+    if args.danger_fast:
+        print("WARNING: --danger-fast is active. All confirmations will be skipped.")
+    app = NatShellApp(agent=agent, config=config, skip_permissions=args.danger_fast)
     app.run()
 
 

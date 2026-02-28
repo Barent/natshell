@@ -224,7 +224,7 @@ class NatShellApp(App):
         if self._skip_permissions:
             conversation = self.query_one("#conversation", ScrollableContainer)
             conversation.mount(
-                Static("[bold yellow]WARNING: --dangerously-skip-permissions is active. "
+                Static("[bold yellow]WARNING: --danger-fast is active. "
                        "All confirmations will be skipped.[/]\n")
             )
 

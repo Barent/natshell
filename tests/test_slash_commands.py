@@ -219,11 +219,11 @@ class TestAutocomplete:
         assert not should_show
 
 
-# ─── --dangerously-skip-permissions flag ─────────────────────────────────────
+# ─── --danger-fast flag ──────────────────────────────────────────────────────
 
 
 class TestSkipPermissionsFlag:
-    """Test that the --dangerously-skip-permissions flag is wired correctly."""
+    """Test that the --danger-fast flag is wired correctly."""
 
     def test_app_accepts_skip_permissions_false(self):
         """NatShellApp defaults to skip_permissions=False."""
