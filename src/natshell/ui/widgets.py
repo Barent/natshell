@@ -108,7 +108,7 @@ class HistoryInput(Input):
             self.value = indicator
         self.cursor_position = len(self.value)
 
-    def _on_key(self, event: events.Key) -> None:
+    async def _on_key(self, event: events.Key) -> None:
         if event.key == "backspace" and self._pasted_text is not None:
             if "[Pasted " in self.value:
                 self._pasted_text = None
@@ -117,7 +117,7 @@ class HistoryInput(Input):
                 self.cursor_position = len(self.value)
                 event.prevent_default()
                 return
-        super()._on_key(event)
+        await super()._on_key(event)
 
     def get_submit_text(self) -> str:
         """Return the actual text to send to the agent.
