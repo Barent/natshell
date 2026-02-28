@@ -145,6 +145,7 @@ class TestStartupPreference:
         remote_url: str | None = None,
         cli_remote: str | None = None,
         cli_model: str | None = None,
+        cli_local: bool = False,
     ) -> bool:
         """Simulate the startup logic and return the final use_remote value.
 
@@ -155,9 +156,13 @@ class TestStartupPreference:
         if not remote_url and ollama_url:
             use_remote = True
 
+        # Apply --local override before preference logic
+        if cli_local:
+            use_remote = False
+
         # Apply persisted engine preference (CLI flags override)
         cli_forced_remote = bool(cli_remote)
-        cli_forced_local = bool(cli_model)
+        cli_forced_local = bool(cli_model) or cli_local
         if not cli_forced_remote and not cli_forced_local:
             if preferred == "local":
                 use_remote = False
@@ -222,3 +227,35 @@ class TestStartupPreference:
         """preferred=remote with no URL configured still results in local."""
         result = self._simulate_startup(preferred="remote")
         assert result is False
+
+    def test_cli_local_overrides_remote_config(self):
+        """--local forces local even when Ollama URL is configured."""
+        result = self._simulate_startup(
+            ollama_url="http://localhost:11434",
+            cli_local=True,
+        )
+        assert result is False
+
+    def test_cli_local_overrides_preferred_remote(self):
+        """--local overrides preferred=remote with remote URL configured."""
+        result = self._simulate_startup(
+            preferred="remote",
+            ollama_url="http://localhost:11434",
+            cli_local=True,
+        )
+        assert result is False
+
+
+# ─── --local / --remote conflict ─────────────────────────────────────────
+
+
+class TestLocalRemoteConflict:
+    def test_cli_local_and_remote_conflict(self):
+        """--local and --remote together should exit with an error."""
+        from natshell.__main__ import main
+
+        import sys
+        sys.argv = ["natshell", "--local", "--remote", "http://localhost:11434/v1"]
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1

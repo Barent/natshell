@@ -35,6 +35,11 @@ def main() -> None:
         help="Model name for the remote API (e.g., qwen3:4b)",
     )
     parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Force local model (ignore remote/Ollama configuration)",
+    )
+    parser.add_argument(
         "--download",
         action="store_true",
         help="Download the default model and exit",
@@ -69,6 +74,11 @@ def main() -> None:
 
     # Load config
     config = load_config(args.config)
+
+    # Conflict check
+    if args.local and args.remote:
+        print("Error: --local and --remote cannot be used together.")
+        sys.exit(1)
 
     # Override config with CLI args
     if args.model:
@@ -107,9 +117,13 @@ def main() -> None:
     if not remote_model:
         remote_model = "qwen3:4b"
 
+    # Apply --local override before preference logic
+    if args.local:
+        use_remote = False
+
     # Apply persisted engine preference (CLI flags override)
     cli_forced_remote = bool(args.remote)
-    cli_forced_local = bool(args.model)
+    cli_forced_local = bool(args.model) or args.local
     if not cli_forced_remote and not cli_forced_local:
         if config.engine.preferred == "local":
             use_remote = False
