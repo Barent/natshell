@@ -38,7 +38,7 @@ class OllamaConfig:
 
 @dataclass
 class AgentConfig:
-    max_steps: int = 15
+    max_steps: int = 30
     temperature: float = 0.3
     max_tokens: int = 2048
     context_reserve: int = 0  # Extra tokens to reserve (0 = auto ~400 tokens)

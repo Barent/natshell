@@ -35,7 +35,7 @@ main_gpu = -1
 
 [agent]
 # Maximum tool calls per user request before forcing a text response
-max_steps = 15
+max_steps = 30
 # Temperature for generation — lower = more deterministic
 temperature = 0.3
 # Max tokens per model generation
