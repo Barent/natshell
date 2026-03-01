@@ -4,6 +4,24 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.7] - 2026-02-28
+
+### Improved
+
+- Extend scaling tiers for 256K context windows (max_tokens→65536, max_steps→75, output→64K chars, read_file→4000 lines)
+
+## [0.1.6] - 2026-02-28
+
+### Improved
+
+- Improve command timeout handling: default raised from 30s to 60s, auto-detection patterns for long-running commands (nmap, apt install, make, etc.), system prompt guidance for timeout usage
+
+## [0.1.5] - 2026-02-28
+
+### Improved
+
+- Scale tool limits with context window size: shell output truncation and read_file line limits now auto-scale with n_ctx
+
 ## [0.1.4] - 2026-02-28
 
 ### Fixed

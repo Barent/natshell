@@ -26,7 +26,7 @@ Always use `--no-binary llama-cpp-python --no-cache-dir` when installing with GP
 ## Running Tests
 
 ```bash
-pytest                    # Full suite (353 tests)
+pytest                    # Full suite (393 tests)
 pytest --tb=short -q      # Compact output
 pytest tests/test_safety.py  # Single file
 ```
@@ -62,4 +62,4 @@ Line length limit is 100 characters. Ruff is configured in `pyproject.toml`.
 - System context is gathered once at startup, not on every request
 - Tool definitions follow the OpenAI function calling schema
 - The agent loop is async — wrap blocking calls in `asyncio.to_thread()`
-- Output from commands is truncated to ~4000 chars to fit context windows
+- Output from commands is truncated to ~4000–64000 chars depending on context window size

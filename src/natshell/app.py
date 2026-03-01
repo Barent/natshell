@@ -187,7 +187,22 @@ def _build_plan_prompt(description: str, directory_tree: str) -> str:
         "- Do not include \"start the server and verify in browser\" as validation.",
         "  Use test commands or scripts that start/stop automatically.",
         "",
-        "First examine the directory with list_directory, then write PLAN.md.",
+        "Quality expectations:",
+        "- READ the actual source files before writing about them. Use read_file",
+        "  on key modules — do not summarize from file names alone.",
+        "- Look for architecture docs (README, CONTRIBUTING, design docs, etc.)",
+        "  in the project root and read them to understand documented conventions",
+        "  and design decisions before proposing changes.",
+        "- Be specific: reference exact file paths, function names, line ranges,",
+        "  and concrete problems or patterns found.",
+        "- Suggestions must be actionable and evidence-based, not generic advice",
+        '  like "add more robust validation" or "improve error handling".',
+        "- If reviewing code, cite the specific code that needs improvement and",
+        "  explain why, not just which module it's in.",
+        "",
+        "First examine the directory with list_directory. Read key source files",
+        "and any project documentation (README, design docs, etc.) to understand",
+        "the codebase before writing PLAN.md.",
     ]
     return "\n".join(parts)
 
