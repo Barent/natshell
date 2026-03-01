@@ -6,12 +6,25 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from natshell.tools.execute_shell import _truncate_output, execute_shell
 from natshell.tools.list_directory import list_directory
 from natshell.tools.read_file import read_file
 from natshell.tools.registry import create_default_registry
 from natshell.tools.search_files import search_files
 from natshell.tools.write_file import write_file
+
+
+@pytest.fixture(autouse=True)
+def _reset_tool_limits():
+    yield
+    from natshell.tools.execute_shell import reset_limits as reset_shell
+    from natshell.tools.read_file import reset_limits as reset_read
+
+    reset_shell()
+    reset_read()
+
 
 # ─── execute_shell ───────────────────────────────────────────────────────────
 

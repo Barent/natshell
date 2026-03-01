@@ -470,9 +470,9 @@ class TestMaxTokensScaling:
         assert agent._max_tokens == 10240
 
     def test_very_large_context_capped(self):
-        """131072-token context: max(2048, min(32768, 16384)) = 16384 (cap)."""
+        """131072-token context: max(2048, min(32768, 32768)) = 32768 (cap)."""
         agent = _make_agent_with_ctx(n_ctx=131072)
-        assert agent._max_tokens == 16384
+        assert agent._max_tokens == 32768
 
     def test_user_high_floor_respected(self):
         """User sets max_tokens=8192 — should be respected as floor."""
@@ -493,3 +493,75 @@ class TestMaxTokensScaling:
         )
         await agent.swap_engine(new_engine)
         assert agent._max_tokens == 10240
+
+
+# ─── Shell output chars scaling ──────────────────────────────────────────────
+
+
+class TestOutputCharsScaling:
+    def _make_loop(self) -> AgentLoop:
+        engine = AsyncMock()
+        tools = create_default_registry()
+        safety = SafetyClassifier(SafetyConfig(mode="confirm"))
+        config = AgentConfig(max_steps=15, temperature=0.3, max_tokens=2048)
+        return AgentLoop(engine=engine, tools=tools, safety=safety, config=config)
+
+    def test_small_context_4000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(4096) == 4000
+
+    def test_16k_context_8000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(16384) == 8000
+
+    def test_32k_context_12000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(32768) == 12000
+
+    def test_64k_context_16000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(65536) == 16000
+
+    def test_128k_context_32000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(131072) == 32000
+
+    def test_262k_context_32000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(262144) == 32000
+
+
+# ─── Read file lines scaling ────────────────────────────────────────────────
+
+
+class TestReadFileLinesScaling:
+    def _make_loop(self) -> AgentLoop:
+        engine = AsyncMock()
+        tools = create_default_registry()
+        safety = SafetyClassifier(SafetyConfig(mode="confirm"))
+        config = AgentConfig(max_steps=15, temperature=0.3, max_tokens=2048)
+        return AgentLoop(engine=engine, tools=tools, safety=safety, config=config)
+
+    def test_small_context_200(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(4096) == 200
+
+    def test_16k_context_300(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(16384) == 300
+
+    def test_32k_context_500(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(32768) == 500
+
+    def test_64k_context_1000(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(65536) == 1000
+
+    def test_128k_context_2000(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(131072) == 2000
+
+    def test_262k_context_2000(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(262144) == 2000

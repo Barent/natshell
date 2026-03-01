@@ -13,10 +13,23 @@ from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
 
-# Maximum characters of output to return to the model
-MAX_OUTPUT_CHARS = 4000
-HEAD_CHARS = 2000
-TAIL_CHARS = 1500
+# Maximum characters of output to return to the model (mutable — scaled by agent loop)
+_max_output_chars = 4000
+_head_chars = 2000
+_tail_chars = 1500
+
+
+def configure_limits(max_output_chars: int) -> None:
+    """Set shell output truncation limits (called by agent loop based on context size)."""
+    global _max_output_chars, _head_chars, _tail_chars
+    _max_output_chars = max_output_chars
+    _head_chars = max_output_chars // 2
+    _tail_chars = int(max_output_chars * 0.375)
+
+
+def reset_limits() -> None:
+    """Restore default truncation limits (used by tests)."""
+    configure_limits(4000)
 
 # ── Sudo password support ───────────────────────────────────────────────────
 
@@ -113,12 +126,12 @@ DEFINITION = ToolDefinition(
 
 def _truncate_output(text: str) -> tuple[str, bool]:
     """Truncate output to fit in context window, preserving head and tail."""
-    if len(text) <= MAX_OUTPUT_CHARS:
+    if len(text) <= _max_output_chars:
         return text, False
 
     lines = text.splitlines()
-    head = text[:HEAD_CHARS]
-    tail = text[-TAIL_CHARS:]
+    head = text[:_head_chars]
+    tail = text[-_tail_chars:]
 
     # Count omitted lines for the message
     head_lines = head.count("\n")

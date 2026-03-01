@@ -7,6 +7,21 @@ from pathlib import Path
 
 from natshell.tools.registry import ToolDefinition, ToolResult
 
+# Default max lines to return (mutable — scaled by agent loop)
+_default_max_lines = 200
+
+
+def configure_limits(max_lines: int) -> None:
+    """Set default read_file line limit (called by agent loop based on context size)."""
+    global _default_max_lines
+    _default_max_lines = max_lines
+
+
+def reset_limits() -> None:
+    """Restore default line limit (used by tests)."""
+    configure_limits(200)
+
+
 DEFINITION = ToolDefinition(
     name="read_file",
     description=(
@@ -42,16 +57,19 @@ DEFINITION = ToolDefinition(
 
 async def read_file(
     path: str,
-    max_lines: int = 200,
+    max_lines: int | None = None,
     offset: int = 1,
     limit: int | None = None,
 ) -> ToolResult:
     """Read a file and return its contents."""
+    # Apply module-level default when caller doesn't specify
+    if max_lines is None and limit is None:
+        max_lines = _default_max_lines
     # Coerce params to int (LLMs may send strings like "63" or "63.0")
     try:
         max_lines = int(float(max_lines))
     except (TypeError, ValueError):
-        max_lines = 200
+        max_lines = _default_max_lines
     try:
         offset = int(float(offset))
     except (TypeError, ValueError):

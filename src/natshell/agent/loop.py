@@ -18,6 +18,8 @@ from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, ModelConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
+from natshell.tools import execute_shell as _exec_shell_mod
+from natshell.tools import read_file as _read_file_mod
 from natshell.tools.execute_shell import needs_sudo_password as _needs_sudo_password
 from natshell.tools.registry import ToolRegistry, ToolResult
 
@@ -125,11 +127,11 @@ class AgentLoop:
     def _effective_max_tokens(self, n_ctx: int) -> int:
         """Scale max_tokens based on context window size.
 
-        Uses 25% of the context window (capped at 16384), with the configured
+        Uses 25% of the context window (capped at 32768), with the configured
         value as a minimum floor.  This gives small local models their current
         behaviour while providing remote/large models proper output headroom.
         """
-        return max(self.config.max_tokens, min(n_ctx // 4, 16384))
+        return max(self.config.max_tokens, min(n_ctx // 4, 32768))
 
     _DEFAULT_MAX_STEPS = 15
 
@@ -150,6 +152,30 @@ class AgentLoop:
             return 25
         return self._DEFAULT_MAX_STEPS
 
+    def _effective_max_output_chars(self, n_ctx: int) -> int:
+        """Scale shell output truncation with context window."""
+        if n_ctx >= 131072:
+            return 32000
+        elif n_ctx >= 65536:
+            return 16000
+        elif n_ctx >= 32768:
+            return 12000
+        elif n_ctx >= 16384:
+            return 8000
+        return 4000
+
+    def _effective_read_file_lines(self, n_ctx: int) -> int:
+        """Scale read_file default line count with context window."""
+        if n_ctx >= 131072:
+            return 2000
+        elif n_ctx >= 65536:
+            return 1000
+        elif n_ctx >= 32768:
+            return 500
+        elif n_ctx >= 16384:
+            return 300
+        return 200
+
     def _setup_context_manager(self) -> None:
         """Create a ContextManager sized to the current engine's context window."""
         try:
@@ -161,6 +187,11 @@ class AgentLoop:
 
         self._max_tokens = self._effective_max_tokens(n_ctx)
         self._max_steps = self._effective_max_steps(n_ctx)
+
+        # Scale tool limits with context window
+        _exec_shell_mod.configure_limits(self._effective_max_output_chars(n_ctx))
+        _read_file_mod.configure_limits(self._effective_read_file_lines(n_ctx))
+
         if self._max_tokens != self.config.max_tokens:
             logger.info(
                 "Scaled max_tokens %d → %d for %d-token context window",
