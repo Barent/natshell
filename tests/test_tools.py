@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from natshell.tools.execute_shell import _truncate_output, execute_shell
+from natshell.tools.execute_shell import _min_timeout_for, _truncate_output, execute_shell
 from natshell.tools.list_directory import list_directory
 from natshell.tools.read_file import read_file
 from natshell.tools.registry import create_default_registry
@@ -78,6 +78,29 @@ class TestExecuteShell:
         out, truncated = _truncate_output(text)
         assert truncated
         assert "truncated" in out
+
+
+# ─── auto-timeout ─────────────────────────────────────────────────────────────
+
+
+class TestAutoTimeout:
+    def test_nmap(self):
+        assert _min_timeout_for("nmap -sn 192.168.1.0/24") == 120
+
+    def test_apt_install(self):
+        assert _min_timeout_for("apt install foo") == 300
+
+    def test_make(self):
+        assert _min_timeout_for("make -j4") == 300
+
+    def test_echo_no_match(self):
+        assert _min_timeout_for("echo hello") == 0
+
+    def test_find_root(self):
+        assert _min_timeout_for("find / -name foo") == 120
+
+    def test_ls_no_match(self):
+        assert _min_timeout_for("ls -la") == 0
 
 
 # ─── read_file ───────────────────────────────────────────────────────────────

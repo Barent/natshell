@@ -113,7 +113,7 @@ DEFINITION = ToolDefinition(
                 "type": "integer",
                 "description": (
                     "Maximum seconds to wait for the command to complete. "
-                    "Default 30. Use higher values for long-running operations "
+                    "Default 60. Use higher values for long-running operations "
                     "like network scans or package installs. Maximum 300."
                 ),
             },
@@ -122,6 +122,46 @@ DEFINITION = ToolDefinition(
     },
     requires_confirmation=False,  # Safety classifier handles per-command checks
 )
+
+
+# Long-running command patterns → minimum timeout (seconds)
+_LONG_RUNNING_PATTERNS: list[tuple[re.Pattern[str], int]] = [
+    # Network scanning/discovery
+    (re.compile(r"\bnmap\b"), 120),
+    (re.compile(r"\barp-scan\b"), 120),
+    (re.compile(r"\btcpdump\b"), 120),
+    (re.compile(r"\bnetdiscover\b"), 120),
+    (re.compile(r"\bmasscan\b"), 120),
+    # Package management
+    (re.compile(r"\bapt\s+(install|upgrade|dist-upgrade|full-upgrade)\b"), 300),
+    (re.compile(r"\bapt-get\s+(install|upgrade|dist-upgrade)\b"), 300),
+    (re.compile(r"\bdnf\s+(install|update|upgrade)\b"), 300),
+    (re.compile(r"\byum\s+(install|update)\b"), 300),
+    (re.compile(r"\bpacman\s+-S"), 300),
+    (re.compile(r"\bbrew\s+(install|upgrade)\b"), 300),
+    # Build/compile
+    (re.compile(r"\bmake\b"), 300),
+    (re.compile(r"\bcargo\s+build\b"), 300),
+    (re.compile(r"\bnpm\s+(install|ci)\b"), 300),
+    (re.compile(r"\bpip\s+install\b"), 300),
+    (re.compile(r"\bgcc\b|\bg\+\+\b"), 120),
+    (re.compile(r"\brustc\b"), 120),
+    # Filesystem scans
+    (re.compile(r"\bfind\s+/"), 120),
+    (re.compile(r"\bdu\s+.*-[a-zA-Z]*s"), 120),
+    (re.compile(r"\brsync\b"), 300),
+    (re.compile(r"\bwget\b|\bcurl\b.*-[oO]"), 120),
+    # Disk operations
+    (re.compile(r"\bdd\b"), 300),
+]
+
+
+def _min_timeout_for(command: str) -> int:
+    """Return the minimum timeout for a command based on known long-running patterns."""
+    for pattern, min_timeout in _LONG_RUNNING_PATTERNS:
+        if pattern.search(command):
+            return min_timeout
+    return 0
 
 
 def _truncate_output(text: str) -> tuple[str, bool]:
@@ -144,15 +184,22 @@ def _truncate_output(text: str) -> tuple[str, bool]:
 
 async def execute_shell(
     command: str,
-    timeout: int = 30,
+    timeout: int = 60,
 ) -> ToolResult:
     """Execute a shell command and return structured results."""
     # Coerce timeout to int (LLMs may send it as a string) and clamp
     try:
         timeout = int(timeout)
     except (TypeError, ValueError):
-        timeout = 30
+        timeout = 60
     timeout = max(1, min(timeout, 300))
+
+    # Auto-raise timeout for known long-running commands
+    min_timeout = _min_timeout_for(command)
+    if min_timeout > timeout:
+        logger.info("Auto-raised timeout %ds → %ds for long-running command", timeout, min_timeout)
+        timeout = min_timeout
+    timeout = max(1, min(timeout, 300))  # re-clamp after auto-raise
 
     # Redact sudo -S from log output to avoid leaking password plumbing
     sudo_pw = _get_sudo_password()
