@@ -63,7 +63,14 @@ class TestBuildStepPrompt:
     def test_do_not_read_plan_files_directive(self):
         plan = self._make_plan()
         prompt = _build_step_prompt(plan.steps[0], plan, [])
-        assert "do not read any plan files" in prompt
+        assert "Do NOT read the plan file" in prompt
+
+    def test_termination_directive(self):
+        plan = self._make_plan()
+        prompt = _build_step_prompt(plan.steps[0], plan, [])
+        assert "IMMEDIATELY provide a short text summary" in prompt
+        assert "STOP" in prompt
+        assert "Do not modify files not mentioned in this step" in prompt
 
     def test_step_title_in_prompt(self):
         plan = self._make_plan()

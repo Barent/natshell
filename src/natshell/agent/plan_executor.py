@@ -66,7 +66,12 @@ def _build_step_prompt(
         "kill it before finishing."
     )
     parts.append(
-        "\nExecute this step now. All instructions are above \u2014 do not read any plan files."
+        "\nIMPORTANT — scope and termination rules:"
+        "\n- Execute ONLY the task described above. Do not modify files not mentioned in this step."
+        "\n- Do NOT re-examine, refactor, or 'improve' files you already wrote."
+        "\n- Do NOT read the plan file (PLAN.md or similar)."
+        "\n- When the step is complete, IMMEDIATELY provide a short text summary of what you did"
+        " and STOP. Do not continue with additional tool calls after the work is done."
     )
 
     return "\n".join(parts)
