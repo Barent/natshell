@@ -4,6 +4,13 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.2] - 2026-02-28
+
+### Fixed
+
+- Publish workflow now attaches .whl and .tar.gz as GitHub release assets
+- Publish workflow is idempotent on re-runs (skip-existing for PyPI, --clobber for assets)
+
 ## [0.1.1] - 2026-02-28
 
 ### Improved
