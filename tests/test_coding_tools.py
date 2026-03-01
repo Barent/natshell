@@ -23,6 +23,9 @@ class TestEditFile:
             assert "Edited" in result.output
             assert "line 1" in result.output
             assert Path(path).read_text() == "goodbye world\nfoo bar\n"
+            # Context snippet with line numbers
+            assert "1 | goodbye world" in result.output
+            assert "2 | foo bar" in result.output
         finally:
             os.unlink(path)
 
@@ -108,6 +111,32 @@ class TestEditFile:
             assert result.exit_code == 0
             assert "replaced 2 lines with 3 lines" in result.output
             assert Path(path).read_text() == "start\nnew1\nnew2\nnew3\nend\n"
+            # Context snippet includes surrounding lines
+            assert "1 | start" in result.output
+            assert "2 | new1" in result.output
+            assert "5 | end" in result.output
+        finally:
+            os.unlink(path)
+
+    async def test_context_snippet_capped(self):
+        """Context snippet should be capped at 60 lines with omission marker."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            # 15 lines before + 1 target + 15 lines after = 31 lines
+            lines = [f"before_{i}" for i in range(15)]
+            lines.append("TARGET_LINE")
+            lines.extend(f"after_{i}" for i in range(15))
+            f.write("\n".join(lines) + "\n")
+            path = f.name
+        try:
+            # Replace 1 line with 80 lines — total snippet would be ~100 lines
+            big_replacement = "\n".join(f"new_line_{i}" for i in range(80))
+            result = await edit_file(path, "TARGET_LINE", big_replacement)
+            assert result.exit_code == 0
+            assert "lines omitted" in result.output
+            # Count actual output lines in the snippet (after the header)
+            snippet_section = result.output.split("after edit]\n", 1)[1]
+            snippet_lines = snippet_section.strip().splitlines()
+            assert len(snippet_lines) <= 41  # 20 + 1 omission + 20
         finally:
             os.unlink(path)
 

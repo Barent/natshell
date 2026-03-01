@@ -20,11 +20,12 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 4. Local inference uses `llama-cpp-python` — tool definitions are injected as plain text (not llama-cpp-python's built-in tool format) because Qwen3 outputs `<tool_call>` XML tags that are parsed manually
 5. The agent loop is async — local inference calls are wrapped in `asyncio.to_thread()` to avoid blocking the TUI
 6. Output from commands is truncated to ~4000 chars to fit context windows (auto-scales to 64K for 256K context windows)
+14. Truncation safety — when `read_file` truncates, it emits `⚠ FILE TRUNCATED` with the exact offset to continue reading. The system prompt forbids editing partially-read files. `edit_file` error previews show 200 lines (not 50) so the model can self-correct.
 7. Platform detection is centralized in `src/natshell/platform.py` (cached `lru_cache`). Use `is_macos()`, `is_wsl()`, `is_linux()` — don't scatter `sys.platform` checks
 8. GPU detection is in `src/natshell/gpu.py` (cached `lru_cache`). Tries vulkaninfo, nvidia-smi, lspci in order. Prefers discrete over integrated GPUs.
 9. The system prompt presents NatShell as both a system administration and coding assistant, with dedicated guidance for code editing (use `edit_file` for targeted changes, `write_file` for new files) and `natshell_help` for self-documentation.
 10. Engine preference is persisted via `[engine]` section in config.toml (`preferred = "auto" | "local" | "remote"`), allowing startup behavior to respect the user's last engine choice.
-11. Context window adaptive scaling — max_tokens, max_steps, output truncation, and read_file limits all auto-scale with n_ctx (4K→256K tiers). See `_effective_*` methods in loop.py.
+11. Context window adaptive scaling — max_tokens, max_steps, output truncation, and read_file limits all auto-scale with n_ctx (4K→256K tiers). See `_effective_*` methods in loop.py. Read_file tiers: 200/500/1000/2000/3000/4000 lines for <16K/16K/32K/64K/128K/256K contexts.
 12. Auto-timeout detection for long-running commands — pattern-based minimum timeouts (`execute_shell.py` `_LONG_RUNNING_PATTERNS`) ensure nmap, apt install, make, etc. get adequate time even when the LLM doesn't set a timeout.
 13. Plan generation and execution — `/plan` generates structured markdown plans; `/exeplan run` executes them step-by-step with dedicated agent budgets. Plan parser in `agent/plan.py`.
 
@@ -51,7 +52,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 ### Tools
 - `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (8 tools)
 - `src/natshell/tools/execute_shell.py` — Shell execution with sudo password caching (5-min timeout), sensitive env var filtering, output truncation, process group isolation, auto-timeout patterns for long-running commands (default 60s)
-- `src/natshell/tools/read_file.py` — File reading with line limits, `offset` and `limit` parameters
+- `src/natshell/tools/read_file.py` — File reading with line limits, `offset` and `limit` parameters, actionable truncation warning with offset hint
 - `src/natshell/tools/write_file.py` — File writing (always requires confirmation)
 - `src/natshell/tools/edit_file.py` — Targeted search-and-replace edits to existing files (unique match required, always requires confirmation)
 - `src/natshell/tools/run_code.py` — Execute code snippets in 10 languages (python, javascript, bash, ruby, perl, php, c, cpp, rust, go). Handles temp file creation, compilation, execution, and cleanup. Always requires confirmation.

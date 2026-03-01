@@ -84,9 +84,34 @@ async def edit_file(path: str, old_text: str, new_text: str) -> ToolResult:
 
     old_lines = old_text.count("\n") + 1
     new_lines = new_text.count("\n") + 1 if new_text else 0
+
+    # Build context snippet: 10 lines before + new text + 10 lines after
+    context_lines = new_content.splitlines()
+    edit_end = line_num - 1 + new_lines  # 0-based end of new text
+    snippet_start = max(0, line_num - 1 - 10)
+    snippet_end = min(len(context_lines), edit_end + 10)
+    snippet = context_lines[snippet_start:snippet_end]
+
+    # Cap total snippet at 60 lines
+    if len(snippet) > 60:
+        keep = 20
+        omitted = len(snippet) - keep * 2
+        snippet = (
+            snippet[:keep]
+            + [f"... [{omitted} lines omitted]"]
+            + snippet[-keep:]
+        )
+
+    # Format with line numbers
+    numbered = "\n".join(
+        f"{snippet_start + i + 1:4d} | {line}"
+        for i, line in enumerate(snippet)
+    )
+
     return ToolResult(
         output=(
             f"Edited {target} at line {line_num}:"
-            f" replaced {old_lines} lines with {new_lines} lines"
+            f" replaced {old_lines} lines with {new_lines} lines\n\n"
+            f"[lines {snippet_start + 1}-{snippet_end} after edit]\n{numbered}"
         )
     )
