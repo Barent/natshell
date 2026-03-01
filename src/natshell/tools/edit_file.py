@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 from pathlib import Path
 
+from natshell.backup import get_backup_manager
 from natshell.tools.file_tracker import get_tracker
 from natshell.tools.registry import ToolDefinition, ToolResult
 
@@ -245,6 +246,7 @@ async def edit_file(
         new_content = content.replace(old_text, new_text, 1)
 
     try:
+        get_backup_manager().backup(target)
         target.write_text(new_content)
     except Exception as e:
         return ToolResult(error=f"Error writing file: {e}", exit_code=1)

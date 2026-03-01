@@ -18,6 +18,11 @@ n_gpu_layers = -1
 # GPU device index (-1 = auto-detect best GPU, 0 = first device, etc.)
 # Useful on multi-GPU systems to select the discrete GPU over an iGPU.
 main_gpu = -1
+# Enable RAM-based prompt caching for local inference.
+# Caches tokenized prompts so repeated prefixes (e.g. system prompt) are faster.
+# prompt_cache = true
+# Maximum RAM to use for the prompt cache (megabytes).
+# prompt_cache_mb = 256
 
 [remote]
 # Uncomment to use a remote OpenAI-compatible API instead of local model.
@@ -100,6 +105,12 @@ blocked = [
     "> /dev/[sh]d[a-z]",
     "^diskutil\\s+eraseDisk",
 ]
+
+[backup]
+# Pre-edit file backup (supports /undo)
+enabled = true
+# Maximum backup copies to keep per file
+max_per_file = 10
 
 [ui]
 # Theme: "dark" or "light"

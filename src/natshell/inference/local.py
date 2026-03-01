@@ -97,6 +97,8 @@ class LocalEngine:
         n_threads: int = 0,
         n_gpu_layers: int = 0,
         main_gpu: int = -1,
+        prompt_cache: bool = True,
+        prompt_cache_mb: int = 256,
     ) -> None:
         from llama_cpp import Llama
 
@@ -128,6 +130,18 @@ class LocalEngine:
             llama_kwargs["main_gpu"] = resolved_gpu
 
         self.llm = Llama(**llama_kwargs)
+
+        # Enable RAM-based prompt cache for faster repeated prefixes
+        if prompt_cache:
+            try:
+                from llama_cpp import LlamaRAMCache
+
+                self.llm.set_cache(
+                    LlamaRAMCache(capacity_bytes=prompt_cache_mb * 1024 * 1024)
+                )
+                logger.info("Prompt cache enabled (%d MB)", prompt_cache_mb)
+            except (ImportError, AttributeError, Exception) as exc:
+                logger.debug("Prompt cache unavailable: %s", exc)
 
         if n_gpu_layers != 0:
             try:

@@ -288,27 +288,27 @@ class TestPlanDispatch:
 
 class TestPlanPrompt:
     def test_prompt_contains_description(self):
-        from natshell.app import _build_plan_prompt
+        from natshell.agent.plan_executor import _build_plan_prompt
 
         prompt = _build_plan_prompt("build a REST API", "project/\n  src/")
         assert "build a REST API" in prompt
 
     def test_prompt_contains_directory_tree(self):
-        from natshell.app import _build_plan_prompt
+        from natshell.agent.plan_executor import _build_plan_prompt
 
         prompt = _build_plan_prompt("test", "mydir/\n  file.py")
         assert "mydir/" in prompt
         assert "file.py" in prompt
 
     def test_prompt_contains_format_rules(self):
-        from natshell.app import _build_plan_prompt
+        from natshell.agent.plan_executor import _build_plan_prompt
 
         prompt = _build_plan_prompt("anything", "dir/")
         assert "## Step" in prompt
         assert "PLAN.md" in prompt
 
     def test_prompt_contains_execution_quality_rules(self):
-        from natshell.app import _build_plan_prompt
+        from natshell.agent.plan_executor import _build_plan_prompt
 
         prompt = _build_plan_prompt("anything", "dir/")
         assert "Execution quality:" in prompt
@@ -316,7 +316,7 @@ class TestPlanPrompt:
         assert "validation command" in prompt
 
     def test_prompt_mentions_preamble(self):
-        from natshell.app import _build_plan_prompt
+        from natshell.agent.plan_executor import _build_plan_prompt
 
         prompt = _build_plan_prompt("anything", "dir/")
         assert "preamble" in prompt.lower()

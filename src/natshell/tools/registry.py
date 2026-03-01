@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from natshell.tools.limits import ToolLimits
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +54,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolHandler] = {}
         self._definitions: dict[str, ToolDefinition] = {}
+        self.limits: ToolLimits = ToolLimits()
 
     def register(self, definition: ToolDefinition, handler: ToolHandler) -> None:
         """Register a tool with its definition and handler."""
@@ -159,6 +162,8 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.edit_file import edit_file
     from natshell.tools.execute_shell import DEFINITION as EXEC_DEF
     from natshell.tools.execute_shell import execute_shell
+    from natshell.tools.git_tool import DEFINITION as GIT_DEF
+    from natshell.tools.git_tool import git_tool
     from natshell.tools.list_directory import DEFINITION as LIST_DEF
     from natshell.tools.list_directory import list_directory
     from natshell.tools.natshell_help import DEFINITION as HELP_DEF
@@ -180,5 +185,6 @@ def create_default_registry() -> ToolRegistry:
     registry.register(LIST_DEF, list_directory)
     registry.register(SEARCH_DEF, search_files)
     registry.register(RUN_CODE_DEF, run_code)
+    registry.register(GIT_DEF, git_tool)
     registry.register(HELP_DEF, natshell_help)
     return registry

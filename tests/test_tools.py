@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from natshell.tools.execute_shell import _min_timeout_for, _truncate_output, execute_shell
+from natshell.tools.execute_shell import (
+    _SENSITIVE_ENV_VARS,
+    _SENSITIVE_SUFFIXES,
+    _min_timeout_for,
+    _truncate_output,
+    execute_shell,
+)
 from natshell.tools.list_directory import list_directory
 from natshell.tools.read_file import read_file
 from natshell.tools.registry import create_default_registry
@@ -259,12 +265,13 @@ class TestRegistry:
         assert "list_directory" in registry.tool_names
         assert "search_files" in registry.tool_names
         assert "run_code" in registry.tool_names
+        assert "git_tool" in registry.tool_names
         assert "natshell_help" in registry.tool_names
 
     def test_get_tool_schemas(self):
         registry = create_default_registry()
         schemas = registry.get_tool_schemas()
-        assert len(schemas) == 8
+        assert len(schemas) == 9
         for schema in schemas:
             assert schema["type"] == "function"
             assert "function" in schema
@@ -299,3 +306,50 @@ class TestRegistry:
         # should fail gracefully
         result = await registry.execute("search_files", {"wrong": "value"})
         assert result.exit_code == 1
+
+
+# ─── Env var filtering ──────────────────────────────────────────────────────
+
+
+class TestEnvVarFiltering:
+    def test_explicit_vars_in_set(self):
+        """All explicitly listed env vars should be in the set."""
+        assert "AWS_ACCESS_KEY_ID" in _SENSITIVE_ENV_VARS
+        assert "OPENAI_API_KEY" in _SENSITIVE_ENV_VARS
+        assert "NATSHELL_API_KEY" in _SENSITIVE_ENV_VARS
+
+    def test_new_credential_urls(self):
+        """Newly added credential URL env vars should be in the set."""
+        assert "REDIS_URL" in _SENSITIVE_ENV_VARS
+        assert "MONGODB_URI" in _SENSITIVE_ENV_VARS
+        assert "AMQP_URL" in _SENSITIVE_ENV_VARS
+
+    def test_suffix_password_filtered(self):
+        """Env vars ending in _PASSWORD should be caught by suffix matching."""
+        assert any("MY_DB_PASSWORD".endswith(s) for s in _SENSITIVE_SUFFIXES)
+
+    def test_suffix_secret_filtered(self):
+        """Env vars ending in _SECRET should be caught by suffix matching."""
+        assert any("APP_SECRET".endswith(s) for s in _SENSITIVE_SUFFIXES)
+
+    def test_suffix_token_filtered(self):
+        """Env vars ending in _TOKEN should be caught by suffix matching."""
+        assert any("SLACK_TOKEN".endswith(s) for s in _SENSITIVE_SUFFIXES)
+
+    def test_suffix_api_key_filtered(self):
+        """Env vars ending in _API_KEY should be caught by suffix matching."""
+        assert any("STRIPE_API_KEY".endswith(s) for s in _SENSITIVE_SUFFIXES)
+
+    async def test_suffix_vars_not_in_subprocess(self, monkeypatch):
+        """Env vars matching suffix patterns should not reach the subprocess."""
+        monkeypatch.setenv("MY_CUSTOM_PASSWORD", "secret123")
+        monkeypatch.setenv("SAFE_VAR", "visible")
+        result = await execute_shell("env")
+        assert "secret123" not in result.output
+        assert "SAFE_VAR" in result.output
+
+    async def test_explicit_vars_not_in_subprocess(self, monkeypatch):
+        """Explicitly listed env vars should not reach the subprocess."""
+        monkeypatch.setenv("REDIS_URL", "redis://secret")
+        result = await execute_shell("env")
+        assert "redis://secret" not in result.output

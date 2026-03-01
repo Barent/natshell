@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import difflib
+from pathlib import Path
 from typing import Any
 
 from textual import events, on
@@ -12,11 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from natshell.inference.engine import ToolCall
-
-
-def _escape(text: str) -> str:
-    """Escape Rich markup characters in untrusted text."""
-    return text.replace("[", "\\[")
+from natshell.ui.escape import escape_markup as _escape
 
 
 class HistoryInput(Input):
@@ -224,6 +222,7 @@ class LogoBanner(Horizontal):
     def __init__(self) -> None:
         super().__init__(id="logo-banner")
         self._animation_timer = None
+        self._auto_stop_timer = None
         self._frame_index = 0
 
     def compose(self) -> ComposeResult:
@@ -244,12 +243,21 @@ class LogoBanner(Horizontal):
         """Start sparkle animation around the tree."""
         if self._animation_timer is None:
             self._animation_timer = self.set_interval(0.4, self._next_frame)
+            # Auto-stop after 30 seconds to avoid running indefinitely
+            self._auto_stop_timer = self.set_timer(30, self._stop_sparkle)
+
+    def _stop_sparkle(self) -> None:
+        """Timer callback to auto-stop the animation."""
+        self.stop_animation()
 
     def stop_animation(self) -> None:
         """Stop animation and reset to static logo."""
         if self._animation_timer is not None:
             self._animation_timer.stop()
             self._animation_timer = None
+        if self._auto_stop_timer is not None:
+            self._auto_stop_timer.stop()
+            self._auto_stop_timer = None
         self._frame_index = 0
         self._update_content(_LOGO_STATIC)
 
@@ -537,6 +545,24 @@ def _format_tool_summary(tc: ToolCall) -> str:
             return f"{tc.name}:"
 
 
+def _color_diff(diff_lines: list[str]) -> str:
+    """Apply Rich markup colors to unified diff lines."""
+    colored = []
+    for line in diff_lines:
+        escaped = _escape(line)
+        if line.startswith("@@"):
+            colored.append(f"[cyan]{escaped}[/]")
+        elif line.startswith("---") or line.startswith("+++"):
+            colored.append(f"[bold]{escaped}[/]")
+        elif line.startswith("-"):
+            colored.append(f"[red]{escaped}[/]")
+        elif line.startswith("+"):
+            colored.append(f"[green]{escaped}[/]")
+        else:
+            colored.append(escaped)
+    return "\n".join(colored)
+
+
 def _format_tool_detail(tc: ToolCall) -> str:
     """Detailed content for the scrollable area."""
     match tc.name:
@@ -545,11 +571,39 @@ def _format_tool_detail(tc: ToolCall) -> str:
         case "edit_file":
             old = tc.arguments.get("old_text", "")
             new = tc.arguments.get("new_text", "")
-            return _escape(f"--- old\n{old}\n+++ new\n{new}")
+            diff = list(difflib.unified_diff(
+                old.splitlines(keepends=True),
+                new.splitlines(keepends=True),
+                fromfile="before",
+                tofile="after",
+            ))
+            if diff:
+                return _color_diff([line.rstrip("\n") for line in diff])
+            return _escape(f"(no changes)\nold: {old}\nnew: {new}")
         case "run_code":
             return _escape(tc.arguments.get("code", str(tc.arguments)))
         case "write_file":
+            path_str = tc.arguments.get("path", "")
             content = tc.arguments.get("content", "")
+            mode = tc.arguments.get("mode", "overwrite")
+            # Show diff against existing file for overwrites
+            if mode != "append" and path_str:
+                try:
+                    existing = Path(path_str).expanduser().resolve()
+                    if existing.is_file():
+                        old_text = existing.read_text()
+                        diff = list(difflib.unified_diff(
+                            old_text.splitlines(keepends=True),
+                            content.splitlines(keepends=True),
+                            fromfile=str(existing),
+                            tofile=str(existing),
+                        ))
+                        if diff:
+                            return _color_diff(
+                                [line.rstrip("\n") for line in diff[:200]]
+                            )
+                except Exception:
+                    pass
             preview = content[:2000] + ("..." if len(content) > 2000 else "")
             return _escape(preview)
         case _:

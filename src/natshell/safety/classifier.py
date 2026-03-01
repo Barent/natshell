@@ -28,6 +28,9 @@ _SENSITIVE_PATH_PATTERNS = [
     "/etc/sudoers",
     "/proc/self/environ",
     ".env",
+    "/.aws/credentials",
+    "/.kube/config",
+    "/.docker/config.json",
 ]
 
 
@@ -132,6 +135,19 @@ class SafetyClassifier:
                 if pattern in path:
                     return Risk.CONFIRM
             return Risk.SAFE
+
+        if tool_name == "git_tool":
+            operation = arguments.get("operation", "")
+            # Read-only operations are safe
+            if operation in ("status", "diff", "log", "branch"):
+                return Risk.SAFE
+            # Mutating operations require confirmation
+            if operation in ("commit", "stash"):
+                if self.mode == "yolo":
+                    return Risk.SAFE
+                return Risk.CONFIRM
+            # Unknown operation — let the tool handle the error, but confirm
+            return Risk.CONFIRM
 
         # list_directory, search_files are always safe
         return Risk.SAFE

@@ -21,6 +21,8 @@ class ModelConfig:
     n_threads: int = 0
     n_gpu_layers: int = -1
     main_gpu: int = -1  # -1 = auto-detect best GPU
+    prompt_cache: bool = True  # Enable llama-cpp-python RAM prompt cache
+    prompt_cache_mb: int = 256  # Cache capacity in megabytes
 
 
 @dataclass
@@ -59,8 +61,19 @@ class UIConfig:
 
 
 @dataclass
+class BackupConfig:
+    enabled: bool = True
+    max_per_file: int = 10
+
+
+@dataclass
 class EngineConfig:
     preferred: str = "auto"  # "auto", "local", or "remote"
+
+
+@dataclass
+class McpConfig:
+    safety_mode: str = "strict"  # "strict" (confirm->error) or "permissive" (confirm->auto-approve)
 
 
 @dataclass
@@ -71,7 +84,9 @@ class NatShellConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    backup: BackupConfig = field(default_factory=BackupConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
+    mcp: McpConfig = field(default_factory=McpConfig)
 
 
 def load_config(config_path: str | Path | None = None) -> NatShellConfig:
@@ -156,10 +171,20 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
             if hasattr(config.ui, key):
                 setattr(config.ui, key, value)
 
+    if "backup" in data:
+        for key, value in data["backup"].items():
+            if hasattr(config.backup, key):
+                setattr(config.backup, key, value)
+
     if "engine" in data:
         for key, value in data["engine"].items():
             if hasattr(config.engine, key):
                 setattr(config.engine, key, value)
+
+    if "mcp" in data:
+        for key, value in data["mcp"].items():
+            if hasattr(config.mcp, key):
+                setattr(config.mcp, key, value)
 
 
 def save_ollama_default(model_name: str, url: str | None = None) -> Path:

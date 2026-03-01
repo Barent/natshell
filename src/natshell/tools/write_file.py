@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from natshell.backup import get_backup_manager
 from natshell.tools.file_tracker import get_tracker
 from natshell.tools.registry import ToolDefinition, ToolResult
 
@@ -44,10 +45,12 @@ async def write_file(path: str, content: str, mode: str = "overwrite") -> ToolRe
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         if mode == "append":
+            get_backup_manager().backup(target)
             with target.open("a") as f:
                 f.write(content)
             action = "Appended to"
         else:
+            get_backup_manager().backup(target)
             target.write_text(content)
             action = "Wrote"
         # Invalidate tracker — file contents changed

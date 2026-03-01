@@ -158,7 +158,8 @@ def _topic_safety() -> str:
     lines.append(
         "\nSensitive file paths (read_file requires confirmation):\n"
         "  /.ssh/, /id_rsa, /id_ed25519, /etc/shadow, /etc/sudoers, "
-        "/proc/self/environ, .env"
+        "/proc/self/environ, .env, /.aws/credentials, /.kube/config, "
+        "/.docker/config.json"
     )
     return "\n".join(lines)
 

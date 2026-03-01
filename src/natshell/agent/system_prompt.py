@@ -74,6 +74,18 @@ When helping with code:
 - For data tasks in run_code, use csv and json (stdlib) instead of pandas.
 - Respect the project's existing style and conventions.
 
+## Git Integration
+
+When working with git repositories, prefer the git_tool over execute_shell for common operations:
+- `git_tool(operation="status")` — view staged, unstaged, and untracked changes
+- `git_tool(operation="diff")` or `git_tool(operation="diff", args="--staged")` — view diffs
+- `git_tool(operation="log")` or `git_tool(operation="log", args="-5")` — recent commits
+- `git_tool(operation="branch")` — list branches; `git_tool(operation="branch", args="new-branch")` — create one
+- `git_tool(operation="commit", args="-m \"message\"")` — commit staged changes
+- `git_tool(operation="stash", args="push")` / `git_tool(operation="stash", args="pop")` — stash management
+
+The git_tool returns clean, structured output. Use execute_shell for advanced git operations not covered by git_tool (rebase, merge, push, pull, etc.).
+
 ## Edit Failure Recovery
 
 When an edit_file call fails:

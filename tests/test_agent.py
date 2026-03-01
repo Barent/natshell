@@ -691,3 +691,65 @@ class TestEditFailureGuard:
         finally:
             os.unlink(path)
             reset_tracker()
+
+
+# ─── Remote engine error messages ─────────────────────────────────────────
+
+
+class TestRemoteEngineErrors:
+    async def test_connect_error_message(self):
+        """ConnectError should produce a clear error message."""
+        from natshell.inference.remote import RemoteEngine
+
+        engine = RemoteEngine(base_url="http://localhost:19", model="test")
+        try:
+            await engine.chat_completion(messages=[{"role": "user", "content": "hi"}])
+            assert False, "Should have raised"
+        except ConnectionError as e:
+            assert "Cannot connect" in str(e)
+            assert "localhost:19" in str(e)
+        finally:
+            await engine.close()
+
+    async def test_http_status_error_message(self):
+        """HTTPStatusError should produce a clear error message with status code."""
+        import httpx
+
+        from natshell.inference.remote import RemoteEngine
+
+        engine = RemoteEngine(base_url="http://localhost:11434", model="test")
+
+        # Mock the client.post to raise HTTPStatusError
+        mock_response = httpx.Response(
+            status_code=404,
+            text="model not found",
+            request=httpx.Request("POST", "http://localhost:11434/chat/completions"),
+        )
+        engine.client.post = AsyncMock(side_effect=httpx.HTTPStatusError(
+            "not found", request=mock_response.request, response=mock_response
+        ))
+        try:
+            await engine.chat_completion(messages=[{"role": "user", "content": "hi"}])
+            assert False, "Should have raised"
+        except ConnectionError as e:
+            assert "404" in str(e)
+        finally:
+            await engine.close()
+
+    async def test_fallback_on_connection_error(self):
+        """Agent should recognize ConnectionError for fallback."""
+        agent = _make_agent([CompletionResult(content="ok")])
+        # The _can_fallback needs a RemoteEngine and fallback config
+        assert not agent._can_fallback(ConnectionError("test"))
+
+    async def test_connection_error_yields_error_event(self):
+        """ConnectionError from remote engine should yield an error event."""
+        agent = _make_agent([])
+        agent.engine.chat_completion = AsyncMock(
+            side_effect=ConnectionError("Cannot connect to server")
+        )
+        events = await _collect_events(agent, "test")
+        types = [e.type for e in events]
+        assert EventType.ERROR in types
+        error_event = next(e for e in events if e.type == EventType.ERROR)
+        assert "Cannot connect" in error_event.data

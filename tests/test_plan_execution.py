@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from natshell.agent.plan import Plan, parse_plan_file, parse_plan_text
-from natshell.app import _build_step_prompt, _shallow_tree
+from natshell.agent.plan_executor import _build_step_prompt, _shallow_tree
 
 # ─── _build_step_prompt ──────────────────────────────────────────────────────
 

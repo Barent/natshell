@@ -202,8 +202,12 @@ class AgentLoop:
         self._max_steps = self._effective_max_steps(n_ctx)
 
         # Scale tool limits with context window
-        _exec_shell_mod.configure_limits(self._effective_max_output_chars(n_ctx))
-        _read_file_mod.configure_limits(self._effective_read_file_lines(n_ctx))
+        max_output = self._effective_max_output_chars(n_ctx)
+        read_lines = self._effective_read_file_lines(n_ctx)
+        _exec_shell_mod.configure_limits(max_output)
+        _read_file_mod.configure_limits(read_lines)
+        self.tools.limits.max_output_chars = max_output
+        self.tools.limits.read_file_lines = read_lines
 
         if self._max_tokens != self.config.max_tokens:
             logger.info(
@@ -524,7 +528,7 @@ class AgentLoop:
             return False
         if self.fallback_config is None:
             return False
-        return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
+        return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError))
 
     async def _try_local_fallback(self) -> bool:
         """Attempt to load and swap to the local model. Returns True on success."""
@@ -594,8 +598,11 @@ class AgentLoop:
             self.messages = []
         reset_tracker()
 
-    def compact_history(self) -> dict[str, Any]:
+    def compact_history(self, dry_run: bool = False) -> dict[str, Any]:
         """Compact conversation history, keeping system prompt and last 2 messages.
+
+        Args:
+            dry_run: If True, compute and return stats without mutating messages.
 
         Returns a stats dict with compaction results.
         """
@@ -627,10 +634,12 @@ class AgentLoop:
             ),
         }
 
-        self.messages = [system, summary_msg] + last_2
+        new_messages = [system, summary_msg] + last_2
+        after_msgs = len(new_messages)
+        after_tokens = cm.estimate_tokens(new_messages) if cm else 0
 
-        after_msgs = len(self.messages)
-        after_tokens = cm.estimate_tokens(self.messages) if cm else 0
+        if not dry_run:
+            self.messages = new_messages
 
         return {
             "compacted": True,

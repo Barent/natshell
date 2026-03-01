@@ -59,7 +59,13 @@ _SENSITIVE_ENV_VARS = {
     "DATABASE_URL",
     "DB_PASSWORD",
     "NATSHELL_API_KEY",
+    "REDIS_URL",
+    "MONGODB_URI",
+    "AMQP_URL",
 }
+
+# Any env var ending with one of these suffixes is also filtered
+_SENSITIVE_SUFFIXES = ("_PASSWORD", "_SECRET", "_TOKEN", "_API_KEY")
 
 
 def _get_sudo_password() -> str | None:
@@ -209,7 +215,12 @@ async def execute_shell(
     logger.info(f"Executing: {log_cmd} (timeout={timeout}s)")
 
     # Filter sensitive environment variables before passing to subprocess
-    env = {k: v for k, v in os.environ.items() if k not in _SENSITIVE_ENV_VARS}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in _SENSITIVE_ENV_VARS
+        and not any(k.endswith(s) for s in _SENSITIVE_SUFFIXES)
+    }
     env["LC_ALL"] = "C"  # Consistent output for parsing
 
     try:

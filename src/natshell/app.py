@@ -15,7 +15,18 @@ from textual.events import MouseUp
 from textual.widgets import Button, Footer, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
-from natshell.agent.plan import Plan, PlanStep, parse_plan_file
+from natshell.agent.plan import Plan, parse_plan_file
+from natshell.agent.plan_executor import (
+    _build_plan_prompt,
+    _build_step_prompt,
+    _shallow_tree,
+)
+from natshell.commands import (
+    compact_chat,
+    handle_undo,
+    show_help,
+    show_history_info,
+)
 from natshell.config import (
     NatShellConfig,
     save_engine_preference,
@@ -23,13 +34,19 @@ from natshell.config import (
     save_ollama_default,
 )
 from natshell.inference.engine import ToolCall
-from natshell.inference.ollama import (
-    get_model_context_length,
-    list_models,
-    normalize_base_url,
-    ping_server,
+from natshell.model_manager import (
+    fetch_model_list,
+    find_local_model,
+    format_local_models,
+    format_model_info,
+    format_model_list,
+    get_remote_base_url,
+    prepare_remote_engine_params,
+    resolve_local_model_path,
+    set_default_model,
 )
 from natshell.safety.classifier import Risk
+from natshell.session import SessionManager
 from natshell.tools.execute_shell import (
     execute_shell,
     needs_sudo_password,
@@ -42,7 +59,6 @@ from natshell.ui.widgets import (
     BlockedMessage,
     CommandBlock,
     ConfirmScreen,
-    HelpMessage,
     HistoryInput,
     LogoBanner,
     PlanningMessage,
@@ -77,136 +93,6 @@ def _tool_display_text(tool_call: ToolCall) -> str:
 logger = logging.getLogger(__name__)
 
 
-def _shallow_tree(directory: Path, max_depth: int = 2) -> str:
-    """Build a compact directory tree string (2 levels deep, no hidden files)."""
-    lines: list[str] = [f"{directory}/"]
-
-    def _walk(path: Path, prefix: str, depth: int) -> None:
-        if depth > max_depth:
-            return
-        try:
-            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
-        except OSError:
-            return
-        entries = [e for e in entries if not e.name.startswith(".")]
-        for i, entry in enumerate(entries):
-            connector = "\u2514\u2500 " if i == len(entries) - 1 else "\u251c\u2500 "
-            extension = "   " if i == len(entries) - 1 else "\u2502  "
-            if entry.is_dir():
-                lines.append(f"{prefix}{connector}{entry.name}/")
-                _walk(entry, prefix + extension, depth + 1)
-            else:
-                lines.append(f"{prefix}{connector}{entry.name}")
-
-    _walk(directory, "  ", 1)
-    return "\n".join(lines)
-
-
-def _build_step_prompt(
-    step: PlanStep, plan: Plan, completed_summaries: list[str], max_steps: int = 25
-) -> str:
-    """Build a focused prompt for a single plan step.
-
-    Includes the step body, one-line summaries of completed steps,
-    project directory tree, preamble context, budget guidance,
-    and a directive to not read plan files.
-    """
-    parts = [f"Execute this task (step {step.number} of {len(plan.steps)}):"]
-
-    # Include project directory structure so the model doesn't waste steps discovering it
-    if plan.source_dir and plan.source_dir.is_dir():
-        tree = _shallow_tree(plan.source_dir)
-        parts.append(f"\nProject layout:\n{tree}")
-
-    # Include preamble context (tech stack, conventions, key interfaces)
-    if plan.preamble:
-        parts.append(f"\nProject context:\n{plan.preamble}")
-
-    if completed_summaries:
-        parts.append("\nPreviously completed:")
-        for summary in completed_summaries:
-            parts.append(f"  {summary}")
-
-    parts.append(f"\n## {step.title}\n")
-    parts.append(step.body)
-    parts.append(
-        f"\nYou have {max_steps} tool calls for this step. Prioritize core implementation over "
-        "validation. Do not re-read files you just wrote. Do not start long-running servers "
-        "unless the step specifically requires it. If you must start a server for testing, "
-        "kill it before finishing."
-    )
-    parts.append(
-        "\nExecute this step now. All instructions are above \u2014 do not read any plan files."
-    )
-
-    return "\n".join(parts)
-
-
-def _build_plan_prompt(description: str, directory_tree: str) -> str:
-    """Build a prompt that instructs the model to generate a PLAN.md file."""
-    parts = [
-        "Generate a multi-step plan file called PLAN.md in the current directory.",
-        "",
-        "User's request:",
-        description,
-        "",
-        "Current directory:",
-        directory_tree,
-        "",
-        "Plan format — the file MUST use this exact markdown structure:",
-        "",
-        "  # Plan Title",
-        "  ",
-        "  Preamble with shared context: tech stack, file structure, naming",
-        "  conventions, key interfaces. This context carries across all steps.",
-        "  ",
-        "  ## Step 1: Title describing what this step does",
-        "  ",
-        "  Detailed instructions. Include exact file paths, function names,",
-        "  data structures. A small LLM executes each step independently.",
-        "  ",
-        "  ## Step 2: Next step title",
-        "  ...",
-        "",
-        "Rules:",
-        "- First line: # heading (plan title)",
-        "- Preamble BEFORE the first ## heading with shared context",
-        "- Each step: ## heading (not ###)",
-        "- Each step: 1-3 files, achievable in under 15 tool calls",
-        "- Include exact names: functions, variables, file paths, types",
-        "- Order by dependency — foundations first",
-        "- 3-10 steps depending on complexity",
-        "",
-        "Execution quality:",
-        "- Each step is executed by a small LLM with NO memory of previous steps",
-        "  (only one-line summaries). Include ALL context needed in each step.",
-        "- When a file depends on config from another file (e.g., import style",
-        "  matching package.json \"type\"), state the dependency explicitly.",
-        "- Test steps must specify: framework setup, state isolation between tests,",
-        "  and the exact validation command.",
-        "- Do not include \"start the server and verify in browser\" as validation.",
-        "  Use test commands or scripts that start/stop automatically.",
-        "",
-        "Quality expectations:",
-        "- READ the actual source files before writing about them. Use read_file",
-        "  on key modules — do not summarize from file names alone.",
-        "- Look for architecture docs (README, CONTRIBUTING, design docs, etc.)",
-        "  in the project root and read them to understand documented conventions",
-        "  and design decisions before proposing changes.",
-        "- Be specific: reference exact file paths, function names, line ranges,",
-        "  and concrete problems or patterns found.",
-        "- Suggestions must be actionable and evidence-based, not generic advice",
-        '  like "add more robust validation" or "improve error handling".',
-        "- If reviewing code, cite the specific code that needs improvement and",
-        "  explain why, not just which module it's in.",
-        "",
-        "First examine the directory with list_directory. Read key source files",
-        "and any project documentation (README, design docs, etc.) to understand",
-        "the codebase before writing PLAN.md.",
-    ]
-    return "\n".join(parts)
-
-
 SLASH_COMMANDS = [
     ("/help", "Show available commands"),
     ("/clear", "Clear chat and model context"),
@@ -221,6 +107,11 @@ SLASH_COMMANDS = [
     ("/model local", "Switch back to local model"),
     ("/model default", "Set default remote model"),
     ("/history", "Show conversation context size"),
+    ("/keys", "Show keyboard shortcuts"),
+    ("/undo", "Undo the last file edit or write"),
+    ("/save", "Save current session"),
+    ("/load", "Load a saved session (list if no id)"),
+    ("/sessions", "List saved sessions"),
 ]
 
 
@@ -253,6 +144,7 @@ class NatShellApp(App):
         self._config = config or NatShellConfig()
         self._busy = False
         self._skip_permissions = skip_permissions
+        self._session_mgr = SessionManager()
 
     def compose(self) -> ComposeResult:
         yield LogoBanner()
@@ -469,6 +361,16 @@ class NatShellApp(App):
                 await self._handle_model_command(args, conversation)
             case "/history":
                 self._show_history_info(conversation)
+            case "/keys":
+                self._show_keys(conversation)
+            case "/undo":
+                self._handle_undo(conversation)
+            case "/save":
+                self._handle_save(args, conversation)
+            case "/load":
+                self._handle_load(args, conversation)
+            case "/sessions":
+                self._handle_sessions(conversation)
             case _:
                 conversation.mount(
                     SystemMessage(f"Unknown command: {command}. Type /help for available commands.")
@@ -512,15 +414,23 @@ class NatShellApp(App):
 
             output = result.output or result.error
             conversation.mount(CommandBlock(command, output, result.exit_code))
+            # Show stderr in red when both stdout and stderr are present
+            if result.error and result.output:
+                conversation.mount(
+                    Static(f"[red]{_escape(result.error)}[/]", classes="cmd-output")
+                )
 
             # Inject into agent context so the model knows what the user ran
+            context_output = output
+            if result.error and result.output:
+                context_output = f"{result.output}\nStderr:\n{result.error}"
             self.agent.messages.append(
                 {
                     "role": "user",
                     "content": (
                         f"[The user directly ran a shell command: `{command}`]\n"
                         f"Exit code: {result.exit_code}\n"
-                        f"Output:\n{output}"
+                        f"Output:\n{context_output}"
                     ),
                 }
             )
@@ -773,33 +683,21 @@ class NatShellApp(App):
 
     def _show_help(self, conversation: ScrollableContainer) -> None:
         """Show available slash commands."""
-        help_text = (
-            "[bold]Available Commands[/]\n\n"
-            "  [bold cyan]/help[/]                  Show this help message\n"
-            "  [bold cyan]/clear[/]                 Clear chat and model context\n"
-            "  [bold cyan]/compact[/]               Compact context, keeping key facts\n"
-            "  [bold cyan]/cmd <command>[/]         Execute a shell command directly\n"
-            "  [bold cyan]/exeplan <file>[/]        Preview a multi-step plan\n"
-            "  [bold cyan]/exeplan run <file>[/]    Execute all plan steps\n"
-            "  [bold cyan]/plan <description>[/]    Generate a multi-step plan\n"
-            "  [bold cyan]/model[/]                 Show current engine/model info\n"
-            "  [bold cyan]/model list[/]            List models on remote server\n"
-            "  [bold cyan]/model use <name>[/]      Switch to a remote model\n"
-            "  [bold cyan]/model switch[/]          Switch local model (or Ctrl+P)\n"
-            "  [bold cyan]/model local[/]           Switch back to local model\n"
-            "  [bold cyan]/model default <name>[/]  Save default remote model\n"
-            "  [bold cyan]/history[/]               Show conversation context size\n\n"
-            "[bold]Copy & Paste[/]\n\n"
-            "  Click [bold cyan]\U0001f4cb[/] on any message to copy it.\n"
-            "  Click [bold cyan]\U0001f4cb Copy Chat[/] or press"
-            " [bold cyan]Ctrl+E[/] to copy entire chat.\n"
-            "  [bold cyan]Shift+drag[/] to select text, then use terminal copy.\n"
-            "  [bold cyan]Right-click[/] or [bold cyan]Ctrl+Y[/] to copy Textual selection.\n"
-            "  [bold cyan]Ctrl+Shift+V[/] or terminal paste to paste.\n"
-            f"  Clipboard: [bold cyan]{clipboard.backend_name()}[/]\n\n"
-            "[dim]Tip: Use /cmd when you know the exact command to run.[/]"
+        show_help(conversation)
+
+    def _show_keys(self, conversation: ScrollableContainer) -> None:
+        """Show keyboard shortcuts."""
+        keys_text = (
+            "[bold]Keyboard Shortcuts[/]\n\n"
+            "  [bold cyan]Enter[/]       Send message\n"
+            "  [bold cyan]Up/Down[/]     Navigate input history\n"
+            "  [bold cyan]Ctrl+C[/]      Quit\n"
+            "  [bold cyan]Ctrl+E[/]      Copy entire chat\n"
+            "  [bold cyan]Ctrl+L[/]      Clear chat\n"
+            "  [bold cyan]Ctrl+P[/]      Command palette (model switcher)\n"
+            "  [bold cyan]Ctrl+Y[/]      Copy selection"
         )
-        conversation.mount(HelpMessage(help_text))
+        conversation.mount(SystemMessage(keys_text))
 
     async def _handle_model_command(self, args: str, conversation: ScrollableContainer) -> None:
         """Dispatch /model subcommands."""
@@ -843,57 +741,13 @@ class NatShellApp(App):
 
     def _get_remote_base_url(self) -> str | None:
         """Find the remote base URL from config or current engine."""
-        if self._config.ollama.url:
-            return normalize_base_url(self._config.ollama.url)
-        if self._config.remote.url:
-            return normalize_base_url(self._config.remote.url)
-        info = self.agent.engine.engine_info()
-        if info.base_url:
-            return normalize_base_url(info.base_url)
-        return None
+        return get_remote_base_url(self._config, self.agent.engine.engine_info())
 
     def _show_model_info(self, conversation: ScrollableContainer) -> None:
         """Show current model/engine information."""
         info = self.agent.engine.engine_info()
-        parts = ["[bold]Model Info[/]"]
-        parts.append(f"  Engine: {info.engine_type}")
-        if info.model_name:
-            parts.append(f"  Model: {info.model_name}")
-        if info.base_url:
-            parts.append(f"  URL: {info.base_url}")
-        if info.n_ctx:
-            parts.append(f"  Context: {info.n_ctx} tokens")
-        if info.n_gpu_layers:
-            parts.append(f"  GPU layers: {info.n_gpu_layers}")
-        if info.engine_type == "local":
-            try:
-                from llama_cpp import llama_supports_gpu_offload
-
-                gpu_ok = llama_supports_gpu_offload()
-            except ImportError:
-                gpu_ok = False
-            status = "[green]active[/]" if gpu_ok else "[red]unavailable (CPU-only build)[/]"
-            parts.append(f"  GPU backend: {status}")
-
-            # Show detected GPU hardware
-            from natshell.gpu import detect_gpus
-
-            gpus = detect_gpus()
-            if gpus:
-                if info.main_gpu is not None and info.main_gpu >= 0:
-                    # Find the selected GPU by device index
-                    selected = next((g for g in gpus if g.device_index == info.main_gpu), gpus[0])
-                else:
-                    selected = gpus[0]
-                vram = f", {selected.vram_mb} MB VRAM" if selected.vram_mb else ""
-                parts.append(f"  GPU: {selected.name}{vram}")
-                if len(gpus) > 1:
-                    parts.append(f"  Device index: {selected.device_index} (of {len(gpus)} GPUs)")
-
-        remote_url = self._get_remote_base_url()
-        if remote_url:
-            parts.append("\n[dim]Tip: /model list — see available remote models[/]")
-        conversation.mount(SystemMessage("\n".join(parts)))
+        text = format_model_info(info, self._config)
+        conversation.mount(SystemMessage(text))
 
     async def _model_list(self, conversation: ScrollableContainer) -> None:
         """Ping server and list available models."""
@@ -910,31 +764,21 @@ class NatShellApp(App):
 
         conversation.mount(SystemMessage(f"Checking {base_url}..."))
 
-        reachable = await ping_server(base_url)
-        if not reachable:
-            conversation.mount(SystemMessage(f"[red]Cannot reach server at {base_url}[/]"))
-            return
-
-        models = await list_models(base_url)
-        if not models:
-            conversation.mount(SystemMessage("Server is running but returned no models."))
+        reachable, models, error = await fetch_model_list(base_url)
+        if not reachable or models is None:
+            conversation.mount(SystemMessage(error or "Unknown error"))
             return
 
         current_info = self.agent.engine.engine_info()
-        lines = ["[bold]Available Models[/]"]
-        for m in models:
-            marker = " [green]◀ active[/]" if m.name == current_info.model_name else ""
-            detail = ""
-            if m.size_gb:
-                detail += f" ({m.size_gb} GB)"
-            if m.parameter_size:
-                detail += f" [{m.parameter_size}]"
-            lines.append(f"  {m.name}{detail}{marker}")
-        lines.append("\n[dim]Use /model use <name> to switch[/]")
-        conversation.mount(SystemMessage("\n".join(lines)))
+        conversation.mount(
+            SystemMessage(format_model_list(models, current_info.model_name))
+        )
 
     async def _model_use(self, model_name: str, conversation: ScrollableContainer) -> None:
         """Switch to a remote model."""
+        from natshell.inference.ollama import ping_server
+        from natshell.inference.remote import RemoteEngine
+
         base_url = self._get_remote_base_url()
         if not base_url:
             conversation.mount(
@@ -947,14 +791,9 @@ class NatShellApp(App):
             conversation.mount(SystemMessage(f"[red]Cannot reach server at {base_url}[/]"))
             return
 
-        from natshell.inference.remote import RemoteEngine
-
-        # Ensure URL has /v1 for the OpenAI-compatible endpoint
-        api_url = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
-        if self._config.remote.n_ctx > 0:
-            n_ctx = self._config.remote.n_ctx
-        else:
-            n_ctx = await get_model_context_length(base_url, model_name)
+        api_url, n_ctx = await prepare_remote_engine_params(
+            model_name, base_url, self._config
+        )
         new_engine = RemoteEngine(base_url=api_url, model=model_name, n_ctx=n_ctx)
         await self.agent.swap_engine(new_engine)
         save_engine_preference("remote")
@@ -973,11 +812,7 @@ class NatShellApp(App):
             conversation.mount(SystemMessage("Already using the local model."))
             return
 
-        mc = self._config.model
-        model_path = mc.path
-        if model_path == "auto":
-            model_dir = Path.home() / ".local" / "share" / "natshell" / "models"
-            model_path = str(model_dir / mc.hf_file)
+        model_path = resolve_local_model_path(self._config)
 
         if not Path(model_path).exists():
             conversation.mount(
@@ -992,6 +827,7 @@ class NatShellApp(App):
 
         from natshell.inference.local import LocalEngine
 
+        mc = self._config.model
         try:
             engine = await asyncio.to_thread(
                 LocalEngine,
@@ -1000,6 +836,8 @@ class NatShellApp(App):
                 n_threads=mc.n_threads,
                 n_gpu_layers=mc.n_gpu_layers,
                 main_gpu=mc.main_gpu,
+                prompt_cache=mc.prompt_cache,
+                prompt_cache_mb=mc.prompt_cache_mb,
             )
             await self.agent.swap_engine(engine)
             save_engine_preference("local")
@@ -1031,23 +869,13 @@ class NatShellApp(App):
             return
 
         if not args:
-            # List available models
             current = self.agent.engine.engine_info().model_name
-            lines = ["[bold]Local Models[/]"]
-            for gguf in available:
-                marker = " [green]◀ active[/]" if gguf.name == current else ""
-                lines.append(f"  {gguf.name}{marker}")
-            lines.append("\n[dim]Use /model switch <filename> to switch[/]")
-            conversation.mount(SystemMessage("\n".join(lines)))
+            conversation.mount(
+                SystemMessage(format_local_models(available, current))
+            )
             return
 
-        # Find matching model file
-        target = None
-        for gguf in available:
-            if gguf.name == args or gguf.stem == args:
-                target = gguf
-                break
-
+        target = find_local_model(args, available)
         if not target:
             conversation.mount(
                 SystemMessage(
@@ -1076,6 +904,8 @@ class NatShellApp(App):
                 n_threads=mc.n_threads,
                 n_gpu_layers=mc.n_gpu_layers,
                 main_gpu=mc.main_gpu,
+                prompt_cache=mc.prompt_cache,
+                prompt_cache_mb=mc.prompt_cache_mb,
             )
             await self.agent.swap_engine(engine)
 
@@ -1097,43 +927,83 @@ class NatShellApp(App):
 
     def _model_set_default(self, model_name: str, conversation: ScrollableContainer) -> None:
         """Persist the default model and remote URL to user config."""
-        remote_url = self._get_remote_base_url()
-        config_path = save_ollama_default(model_name, url=remote_url)
-        parts = [f"Default model set to [bold]{model_name}[/]"]
-        if remote_url:
-            parts.append(f"Server: {remote_url}")
-        parts.append(f"Saved to {config_path}")
-        conversation.mount(SystemMessage("\n".join(parts)))
+        info = self.agent.engine.engine_info()
+        text = set_default_model(model_name, self._config, info)
+        conversation.mount(SystemMessage(text))
 
     def _show_history_info(self, conversation: ScrollableContainer) -> None:
         """Show conversation context size and context window usage."""
-        msg_count = len(self.agent.messages)
-        char_count = sum(len(str(m.get("content", ""))) for m in self.agent.messages)
+        show_history_info(self.agent, conversation)
 
-        parts = [f"Conversation: {msg_count} messages, ~{char_count} chars"]
+    def _handle_undo(self, conversation: ScrollableContainer) -> None:
+        """Undo the last file edit or write by restoring from backup."""
+        handle_undo(conversation)
 
-        cm = self.agent._context_manager
-        if cm:
-            used = cm.estimate_tokens(self.agent.messages)
-            budget = cm.context_budget
-            pct = min(100, int(used / budget * 100)) if budget > 0 else 0
-            bar_len = 20
-            filled = int(bar_len * pct / 100)
-            bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
+    # ─── /save, /load, /sessions ─────────────────────────────────────────
 
-            if pct >= 90:
-                color = "red"
-            elif pct >= 70:
-                color = "yellow"
-            else:
-                color = "green"
+    def _handle_save(self, args: str, conversation: ScrollableContainer) -> None:
+        """Save current conversation to a session file."""
+        name = args.strip()
+        info = self.agent.engine.engine_info()
+        engine_dict = {
+            "engine_type": info.engine_type,
+            "model_name": info.model_name,
+            "base_url": info.base_url,
+            "n_ctx": info.n_ctx,
+        }
+        sid = self._session_mgr.save(
+            messages=self.agent.messages,
+            engine_info=engine_dict,
+            name=name,
+        )
+        display_name = name or sid[:12]
+        conversation.mount(
+            SystemMessage(f"Session saved: [bold]{_escape(display_name)}[/]\nID: {sid}")
+        )
 
-            parts.append(f"  Context: [{color}]{bar}[/] {pct}% ({used}/{budget} tokens)")
+    def _handle_load(self, args: str, conversation: ScrollableContainer) -> None:
+        """Load a saved session, or list sessions if no ID given."""
+        session_id = args.strip()
+        if not session_id:
+            self._handle_sessions(conversation)
+            return
 
-            if cm.trimmed_count > 0:
-                parts.append(f"  Trimmed: {cm.trimmed_count} messages compressed")
+        data = self._session_mgr.load(session_id)
+        if data is None:
+            conversation.mount(
+                SystemMessage(f"Session not found: {_escape(session_id)}")
+            )
+            return
 
-        conversation.mount(SystemMessage("\n".join(parts)))
+        self.agent.messages = data["messages"]
+        name = data.get("name", session_id)
+        msg_count = len(data["messages"])
+        conversation.mount(
+            SystemMessage(
+                f"Loaded session: [bold]{_escape(name)}[/]\n"
+                f"Messages restored: {msg_count}"
+            )
+        )
+
+    def _handle_sessions(self, conversation: ScrollableContainer) -> None:
+        """List all saved sessions."""
+        sessions = self._session_mgr.list_sessions()
+        if not sessions:
+            conversation.mount(SystemMessage("No saved sessions."))
+            return
+
+        lines = ["[bold]Saved Sessions[/]\n"]
+        for s in sessions:
+            name = s["name"] or "(unnamed)"
+            msg_count = s["message_count"]
+            updated = s["updated"][:19].replace("T", " ")  # trim to readable
+            lines.append(
+                f"  [bold cyan]{s['id'][:12]}[/]  "
+                f"{_escape(name)}  "
+                f"[dim]({msg_count} msgs, {updated})[/]"
+            )
+        lines.append("\n[dim]Use /load <id> to restore a session.[/]")
+        conversation.mount(SystemMessage("\n".join(lines)))
 
     def on_mouse_up(self, event: MouseUp) -> None:
         """Copy selected text to clipboard on right-click."""
@@ -1201,17 +1071,4 @@ class NatShellApp(App):
 
     def _compact_chat(self, conversation: ScrollableContainer) -> None:
         """Compact conversation context, keeping key facts."""
-        stats = self.agent.compact_history()
-        if not stats["compacted"]:
-            conversation.mount(SystemMessage("Nothing to compact — conversation is too short."))
-            return
-
-        conversation.remove_children()
-        summary_lines = [
-            "[bold]Context compacted[/]\n",
-            f"  Messages: {stats['before_msgs']} \u2192 {stats['after_msgs']}",
-            f"  Tokens:   ~{stats['before_tokens']} \u2192 ~{stats['after_tokens']}",
-        ]
-        if stats["summary"]:
-            summary_lines.append(f"\n[dim]Preserved facts:[/]\n{_escape(stats['summary'])}")
-        conversation.mount(SystemMessage("\n".join(summary_lines)))
+        compact_chat(self.agent, conversation)

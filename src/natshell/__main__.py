@@ -58,10 +58,22 @@ def main() -> None:
         help="Enable verbose logging",
     )
     parser.add_argument(
+        "--headless",
+        metavar="PROMPT",
+        help="Run a single prompt without the TUI and exit. "
+        "Response text goes to stdout (pipeable), diagnostics to stderr.",
+    )
+    parser.add_argument(
         "--danger-fast",
         action="store_true",
         help="Skip all confirmation dialogs. BLOCKED commands are still blocked. "
         "Only use this on VMs or test environments.",
+    )
+    parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="Run as an MCP (Model Context Protocol) server over stdio. "
+        "Requires the 'mcp' package: pip install 'natshell[mcp]'",
     )
 
     args = parser.parse_args()
@@ -171,6 +183,8 @@ def main() -> None:
             n_threads=config.model.n_threads,
             n_gpu_layers=config.model.n_gpu_layers,
             main_gpu=config.model.main_gpu,
+            prompt_cache=config.model.prompt_cache,
+            prompt_cache_mb=config.model.prompt_cache_mb,
         )
         try:
             from llama_cpp import llama_supports_gpu_offload
@@ -211,6 +225,13 @@ def main() -> None:
 
     tools = create_default_registry()
 
+    # Load plugins
+    from natshell.plugins import load_plugins
+
+    loaded = load_plugins(tools)
+    if loaded:
+        print(f"Loaded {loaded} plugin(s)")
+
     # Build the safety classifier
     from natshell.safety.classifier import SafetyClassifier
 
@@ -220,6 +241,17 @@ def main() -> None:
     from natshell.tools.natshell_help import set_safety_config
 
     set_safety_config(config.safety)
+
+    # MCP server mode — run over stdio and exit
+    if args.mcp:
+        try:
+            from natshell.mcp_server import run_mcp_server
+
+            asyncio.run(run_mcp_server(tools, safety, config.mcp))
+        except ImportError:
+            print("MCP support requires the 'mcp' package: pip install 'natshell[mcp]'")
+            sys.exit(1)
+        sys.exit(0)
 
     # Build the agent
     from natshell.agent.loop import AgentLoop
@@ -238,6 +270,15 @@ def main() -> None:
     print("Gathering system information...")
     context = asyncio.run(gather_system_context())
     agent.initialize(context)
+
+    # Headless mode — single-shot CLI, no TUI
+    if args.headless:
+        from natshell.headless import run_headless
+
+        exit_code = asyncio.run(
+            run_headless(agent, args.headless, auto_approve=args.danger_fast)
+        )
+        sys.exit(exit_code)
 
     # Launch the TUI
     from natshell.app import NatShellApp

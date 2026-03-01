@@ -68,13 +68,27 @@ class RemoteEngine:
         read_timeout = max(300.0, max_tokens / 10.0 + 60.0)
 
         url = f"{self.base_url}/chat/completions"
-        response = await self.client.post(
-            url,
-            json=payload,
-            headers=headers,
-            timeout=httpx.Timeout(connect=30.0, read=read_timeout, write=30.0, pool=30.0),
-        )
-        response.raise_for_status()
+        try:
+            response = await self.client.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=httpx.Timeout(connect=30.0, read=read_timeout, write=30.0, pool=30.0),
+            )
+            response.raise_for_status()
+        except httpx.ConnectError as e:
+            raise ConnectionError(
+                f"Cannot connect to {self.base_url} — is the server running?"
+            ) from e
+        except httpx.ConnectTimeout as e:
+            raise ConnectionError(
+                f"Connection to {self.base_url} timed out."
+            ) from e
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:200] if e.response else ""
+            raise ConnectionError(
+                f"Remote API error {e.response.status_code}: {body}"
+            ) from e
 
         data = response.json()
         return self._parse_response(data)

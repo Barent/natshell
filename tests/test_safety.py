@@ -294,3 +294,32 @@ class TestYoloMode:
             )
             == Risk.CONFIRM
         )
+
+
+# ─── Sensitive path patterns ────────────────────────────────────────────────
+
+
+class TestSensitivePathPatterns:
+    def test_aws_credentials(self):
+        c = _make_classifier()
+        path = "/home/user/.aws/credentials"
+        assert c.classify_tool_call("read_file", {"path": path}) == Risk.CONFIRM
+
+    def test_kube_config(self):
+        c = _make_classifier()
+        path = "/home/user/.kube/config"
+        assert c.classify_tool_call("read_file", {"path": path}) == Risk.CONFIRM
+
+    def test_docker_config(self):
+        c = _make_classifier()
+        path = "/home/user/.docker/config.json"
+        assert c.classify_tool_call("read_file", {"path": path}) == Risk.CONFIRM
+
+    def test_ssh_key(self):
+        c = _make_classifier()
+        path = "/home/user/.ssh/id_rsa"
+        assert c.classify_tool_call("read_file", {"path": path}) == Risk.CONFIRM
+
+    def test_non_sensitive_path_safe(self):
+        c = _make_classifier()
+        assert c.classify_tool_call("read_file", {"path": "/home/user/readme.txt"}) == Risk.SAFE
