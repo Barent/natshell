@@ -127,11 +127,11 @@ class AgentLoop:
     def _effective_max_tokens(self, n_ctx: int) -> int:
         """Scale max_tokens based on context window size.
 
-        Uses 25% of the context window (capped at 32768), with the configured
+        Uses 25% of the context window (capped at 65536), with the configured
         value as a minimum floor.  This gives small local models their current
         behaviour while providing remote/large models proper output headroom.
         """
-        return max(self.config.max_tokens, min(n_ctx // 4, 32768))
+        return max(self.config.max_tokens, min(n_ctx // 4, 65536))
 
     _DEFAULT_MAX_STEPS = 15
 
@@ -144,7 +144,11 @@ class AgentLoop:
         """
         if self.config.max_steps != self._DEFAULT_MAX_STEPS:
             return self.config.max_steps
-        if n_ctx >= 32768:
+        if n_ctx >= 262144:
+            return 75
+        elif n_ctx >= 131072:
+            return 60
+        elif n_ctx >= 32768:
             return 50
         elif n_ctx >= 16384:
             return 35
@@ -154,7 +158,9 @@ class AgentLoop:
 
     def _effective_max_output_chars(self, n_ctx: int) -> int:
         """Scale shell output truncation with context window."""
-        if n_ctx >= 131072:
+        if n_ctx >= 262144:
+            return 64000
+        elif n_ctx >= 131072:
             return 32000
         elif n_ctx >= 65536:
             return 16000
@@ -166,7 +172,9 @@ class AgentLoop:
 
     def _effective_read_file_lines(self, n_ctx: int) -> int:
         """Scale read_file default line count with context window."""
-        if n_ctx >= 131072:
+        if n_ctx >= 262144:
+            return 4000
+        elif n_ctx >= 131072:
             return 2000
         elif n_ctx >= 65536:
             return 1000

@@ -207,6 +207,14 @@ class TestEffectiveMaxSteps:
         agent = self._make_loop(max_steps=15)
         assert agent._effective_max_steps(32768) == 50
 
+    def test_scales_to_60_for_128k_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(131072) == 60
+
+    def test_scales_to_75_for_256k_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(262144) == 75
+
     def test_explicit_override_respected(self):
         """When user sets max_steps != 15, auto-scaling is disabled."""
         agent = self._make_loop(max_steps=10)
@@ -470,9 +478,14 @@ class TestMaxTokensScaling:
         assert agent._max_tokens == 10240
 
     def test_very_large_context_capped(self):
-        """131072-token context: max(2048, min(32768, 32768)) = 32768 (cap)."""
+        """131072-token context: max(2048, min(32768, 65536)) = 32768."""
         agent = _make_agent_with_ctx(n_ctx=131072)
         assert agent._max_tokens == 32768
+
+    def test_256k_context_scales_to_cap(self):
+        """262144-token context: max(2048, min(65536, 65536)) = 65536 (cap)."""
+        agent = _make_agent_with_ctx(n_ctx=262144)
+        assert agent._max_tokens == 65536
 
     def test_user_high_floor_respected(self):
         """User sets max_tokens=8192 — should be respected as floor."""
@@ -526,9 +539,9 @@ class TestOutputCharsScaling:
         agent = self._make_loop()
         assert agent._effective_max_output_chars(131072) == 32000
 
-    def test_262k_context_32000(self):
+    def test_262k_context_64000(self):
         agent = self._make_loop()
-        assert agent._effective_max_output_chars(262144) == 32000
+        assert agent._effective_max_output_chars(262144) == 64000
 
 
 # ─── Read file lines scaling ────────────────────────────────────────────────
@@ -562,6 +575,6 @@ class TestReadFileLinesScaling:
         agent = self._make_loop()
         assert agent._effective_read_file_lines(131072) == 2000
 
-    def test_262k_context_2000(self):
+    def test_262k_context_4000(self):
         agent = self._make_loop()
-        assert agent._effective_read_file_lines(262144) == 2000
+        assert agent._effective_read_file_lines(262144) == 4000
