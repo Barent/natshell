@@ -4,6 +4,15 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.1] - 2026-02-28
+
+### Improved
+
+- Plan execution now injects preamble context (tech stack, conventions, key interfaces) into each step prompt, preventing cross-step mistakes like ESM/CJS confusion
+- Higher step budget for plan execution (25 tool calls per step, up from 15) to allow write-test-debug cycles
+- Step prompts include budget awareness and cleanup guidance to reduce wasted tool calls and prevent cascading port conflicts
+- Plan generation prompt includes execution-quality rules: explicit cross-file dependencies, test framework setup, and no "verify in browser" validation
+
 ## [0.1.0] - 2026-02-28
 
 Initial public release.
