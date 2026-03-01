@@ -4,6 +4,12 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.16] - 2026-03-01
+
+### Fixed
+
+- Fix flaky CI test: env var filtering tests used `env` which truncated on GitHub Actions; switched to targeted `echo` commands
+
 ## [0.1.15] - 2026-03-01
 
 ### Fixed

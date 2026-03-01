@@ -344,12 +344,15 @@ class TestEnvVarFiltering:
         """Env vars matching suffix patterns should not reach the subprocess."""
         monkeypatch.setenv("MY_CUSTOM_PASSWORD", "secret123")
         monkeypatch.setenv("SAFE_VAR", "visible")
-        result = await execute_shell("env")
+        # Use targeted echo instead of `env` to avoid truncation on CI
+        result = await execute_shell(
+            'echo "PW=$MY_CUSTOM_PASSWORD SAFE=$SAFE_VAR"'
+        )
         assert "secret123" not in result.output
-        assert "SAFE_VAR" in result.output
+        assert "visible" in result.output
 
     async def test_explicit_vars_not_in_subprocess(self, monkeypatch):
         """Explicitly listed env vars should not reach the subprocess."""
         monkeypatch.setenv("REDIS_URL", "redis://secret")
-        result = await execute_shell("env")
+        result = await execute_shell('echo "REDIS=$REDIS_URL"')
         assert "redis://secret" not in result.output
