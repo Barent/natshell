@@ -175,6 +175,8 @@ def main() -> None:
 
             if config.remote.n_ctx > 0:
                 n_ctx = config.remote.n_ctx
+            elif config.ollama.n_ctx > 0:
+                n_ctx = config.ollama.n_ctx
             else:
                 n_ctx = asyncio.run(get_model_context_length(remote_url, remote_model))
             engine = RemoteEngine(

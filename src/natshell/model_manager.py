@@ -134,6 +134,8 @@ async def prepare_remote_engine_params(
     api_url = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
     if config.remote.n_ctx > 0:
         n_ctx = config.remote.n_ctx
+    elif config.ollama.n_ctx > 0:
+        n_ctx = config.ollama.n_ctx
     else:
         n_ctx = await get_model_context_length(base_url, model_name)
     return api_url, n_ctx

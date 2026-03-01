@@ -1,6 +1,6 @@
 [project]
 name = "natshell"
-version = "0.1.17"
+version = "0.1.18"
 description = "Natural language shell interface — a local-first agentic TUI powered by a bundled LLM"
 readme = "README.md"
 license = "MIT"
