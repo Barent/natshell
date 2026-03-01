@@ -686,9 +686,12 @@ class NatShellApp(App):
                 plan_max = self.agent.config.plan_max_steps
                 original_max = self.agent.config.max_steps
                 self.agent.config.max_steps = plan_max
+                # Re-derive effective max_steps with the plan floor
+                effective_max = getattr(self.agent, "_max_steps", plan_max)
+                effective_max = max(effective_max, plan_max)
 
                 # Build focused prompt for this step
-                prompt = _build_step_prompt(step, plan, completed_summaries, max_steps=plan_max)
+                prompt = _build_step_prompt(step, plan, completed_summaries, max_steps=effective_max)
 
                 # Run the agent loop for this step
                 thinking_ref: list[ThinkingIndicator | None] = [None]

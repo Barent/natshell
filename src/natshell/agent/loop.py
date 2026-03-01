@@ -131,6 +131,25 @@ class AgentLoop:
         """
         return max(self.config.max_tokens, min(n_ctx // 4, 16384))
 
+    _DEFAULT_MAX_STEPS = 15
+
+    def _effective_max_steps(self, n_ctx: int) -> int:
+        """Scale max_steps based on context window size.
+
+        Larger models with bigger context windows handle more complex multi-step
+        tasks.  Only auto-scales when the configured value is the default (15);
+        an explicit user override is respected as-is.
+        """
+        if self.config.max_steps != self._DEFAULT_MAX_STEPS:
+            return self.config.max_steps
+        if n_ctx >= 32768:
+            return 50
+        elif n_ctx >= 16384:
+            return 35
+        elif n_ctx >= 8192:
+            return 25
+        return self._DEFAULT_MAX_STEPS
+
     def _setup_context_manager(self) -> None:
         """Create a ContextManager sized to the current engine's context window."""
         try:
@@ -141,11 +160,19 @@ class AgentLoop:
             n_ctx = 4096
 
         self._max_tokens = self._effective_max_tokens(n_ctx)
+        self._max_steps = self._effective_max_steps(n_ctx)
         if self._max_tokens != self.config.max_tokens:
             logger.info(
                 "Scaled max_tokens %d → %d for %d-token context window",
                 self.config.max_tokens,
                 self._max_tokens,
+                n_ctx,
+            )
+        if self._max_steps != self.config.max_steps:
+            logger.info(
+                "Scaled max_steps %d → %d for %d-token context window",
+                self.config.max_steps,
+                self._max_steps,
                 n_ctx,
             )
 
@@ -192,7 +219,8 @@ class AgentLoop:
         total_inference_ms = 0
         steps_used = 0
 
-        for step in range(self.config.max_steps):
+        max_steps = getattr(self, "_max_steps", self.config.max_steps)
+        for step in range(max_steps):
             steps_used = step + 1
             # Signal that the model is thinking
             yield AgentEvent(type=EventType.THINKING)
@@ -374,7 +402,7 @@ class AgentLoop:
         run_wall_ms = int((time.monotonic() - run_t0) * 1000)
         yield AgentEvent(
             type=EventType.RESPONSE,
-            data=f"I've reached the maximum number of steps ({self.config.max_steps}). "
+            data=f"I've reached the maximum number of steps ({max_steps}). "
             f"Here's what I've done so far. You can continue with a follow-up request.",
         )
         yield AgentEvent(

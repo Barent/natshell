@@ -179,6 +179,44 @@ class TestMaxSteps:
         assert "maximum" in response_event.data.lower()
 
 
+# ─── Effective max steps scaling ─────────────────────────────────────────────
+
+
+class TestEffectiveMaxSteps:
+    def _make_loop(self, max_steps: int = 15) -> AgentLoop:
+        engine = AsyncMock()
+        tools = create_default_registry()
+        safety = SafetyClassifier(SafetyConfig(mode="confirm"))
+        config = AgentConfig(max_steps=max_steps, temperature=0.3, max_tokens=2048)
+        agent = AgentLoop(engine=engine, tools=tools, safety=safety, config=config)
+        return agent
+
+    def test_default_15_stays_15_for_small_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(4096) == 15
+
+    def test_scales_to_25_for_8k_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(8192) == 25
+
+    def test_scales_to_35_for_16k_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(16384) == 35
+
+    def test_scales_to_50_for_32k_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(32768) == 50
+
+    def test_explicit_override_respected(self):
+        """When user sets max_steps != 15, auto-scaling is disabled."""
+        agent = self._make_loop(max_steps=10)
+        assert agent._effective_max_steps(32768) == 10
+
+    def test_high_override_respected(self):
+        agent = self._make_loop(max_steps=50)
+        assert agent._effective_max_steps(4096) == 50
+
+
 # ─── Blocked commands ────────────────────────────────────────────────────────
 
 

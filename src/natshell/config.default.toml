@@ -34,7 +34,8 @@ main_gpu = -1
 # default_model = "qwen3:4b"
 
 [agent]
-# Maximum tool calls per user request before forcing a text response
+# Maximum tool calls per user request (minimum floor).
+# Auto-scales with context window: 15/25/35/50 for 4k/8k/16k/32k+ contexts.
 max_steps = 15
 # Temperature for generation — lower = more deterministic
 temperature = 0.3

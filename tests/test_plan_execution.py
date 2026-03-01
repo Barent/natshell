@@ -181,7 +181,7 @@ class TestPlanMaxSteps:
         from natshell.config import AgentConfig
 
         config = AgentConfig()
-        assert config.plan_max_steps == 25
+        assert config.plan_max_steps == 35
 
     def test_plan_max_steps_independent_of_max_steps(self):
         from natshell.config import AgentConfig

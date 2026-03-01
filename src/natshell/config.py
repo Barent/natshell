@@ -39,7 +39,7 @@ class OllamaConfig:
 @dataclass
 class AgentConfig:
     max_steps: int = 15
-    plan_max_steps: int = 25  # Higher limit for plan execution steps
+    plan_max_steps: int = 35  # Higher limit for plan execution steps
     temperature: float = 0.3
     max_tokens: int = 8192
     context_reserve: int = 0  # Extra tokens to reserve (0 = auto ~400 tokens)

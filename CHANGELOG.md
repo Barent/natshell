@@ -4,6 +4,15 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.3] - 2026-02-28
+
+### Improved
+
+- Agent step limit now auto-scales with model context window size: 15/25/35/50 steps for 4k/8k/16k/32k+ contexts
+- Large and remote models get up to 50 steps per request, allowing complex multi-file tasks without hitting the ceiling
+- Plan execution step limit increased from 25 to 35
+- Explicit `max_steps` config overrides disable auto-scaling (user control preserved)
+
 ## [0.1.2] - 2026-02-28
 
 ### Fixed
