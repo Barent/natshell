@@ -44,15 +44,15 @@ main_gpu = -1
 
 [agent]
 # Maximum tool calls per user request (minimum floor).
-# Auto-scales with context window: 15/25/35/50 for 4k/8k/16k/32k+ contexts.
+# Auto-scales with context window: 15/25/35/50/60/75 for 4k/8k/16k/32k/128k/256k contexts.
 max_steps = 15
 # Temperature for generation — lower = more deterministic
 temperature = 0.3
 # Max tokens per model generation (minimum floor).
-# Auto-scales to 25% of the context window (capped at 32768) when larger.
+# Auto-scales to 25% of the context window (capped at 65536) when larger.
 # Shell output truncation and file read limits also auto-scale with context:
-#   Shell output: 4k/8k/12k/16k/32k chars for 4k/16k/32k/64k/128k+ contexts.
-#   File read: 200/300/500/1000/2000 lines for 4k/16k/32k/64k/128k+ contexts.
+#   Shell output: 4k/8k/12k/16k/32k/64k chars for 4k/16k/32k/64k/128k/256k contexts.
+#   File read: 200/500/1000/2000/3000/4000 lines for <16k/16k/32k/64k/128k/256k contexts.
 max_tokens = 2048
 # Extra context tokens to reserve beyond max_tokens (0 = auto ~400 tokens).
 # Increase if you add many custom safety patterns or use verbose tool outputs.
