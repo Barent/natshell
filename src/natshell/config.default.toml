@@ -41,6 +41,11 @@ main_gpu = -1
 # url = "http://localhost:11434"
 # Default model for the remote server
 # default_model = "qwen3:4b"
+# Override context window size (tokens). 0 = auto-detect from server.
+# Auto-detect can report inflated values if the model isn't loaded yet
+# (falls back to the model's maximum instead of the actual allocated context).
+# Set explicitly to avoid mismatch. Common values: 8192, 32768, 65536, 131072.
+n_ctx = 32768
 
 [agent]
 # Maximum tool calls per user request (minimum floor).
