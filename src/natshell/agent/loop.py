@@ -300,11 +300,22 @@ class AgentLoop:
                 if self._can_fallback(e):
                     fell_back = await self._try_local_fallback()
                     if fell_back:
-                        yield AgentEvent(
-                            type=EventType.ERROR,
-                            data="Remote server unreachable."
-                            " Switched to local model. History cleared.",
+                        msg = (
+                            "Remote server unreachable."
+                            " Switched to local model. History cleared."
                         )
+                        # Warn if fallback is CPU-only
+                        try:
+                            from llama_cpp import llama_supports_gpu_offload
+
+                            if not llama_supports_gpu_offload():
+                                msg += (
+                                    " Note: local model is running on CPU"
+                                    " (llama-cpp-python has no GPU support)."
+                                )
+                        except ImportError:
+                            pass
+                        yield AgentEvent(type=EventType.ERROR, data=msg)
                         return
                 yield AgentEvent(type=EventType.ERROR, data=f"Inference error: {e}")
                 return
@@ -528,7 +539,18 @@ class AgentLoop:
             return False
         if self.fallback_config is None:
             return False
-        return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError))
+        return isinstance(
+            error,
+            (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.PoolTimeout,
+                httpx.RemoteProtocolError,
+                ConnectionError,
+                OSError,
+            ),
+        )
 
     async def _try_local_fallback(self) -> bool:
         """Attempt to load and swap to the local model. Returns True on success."""
@@ -554,8 +576,24 @@ class AgentLoop:
                 n_ctx=self.fallback_config.n_ctx,
                 n_threads=self.fallback_config.n_threads,
                 n_gpu_layers=self.fallback_config.n_gpu_layers,
+                main_gpu=self.fallback_config.main_gpu,
             )
             await self.swap_engine(engine)
+
+            # Warn if GPU offload was requested but unavailable
+            if self.fallback_config.n_gpu_layers != 0:
+                try:
+                    from llama_cpp import llama_supports_gpu_offload
+
+                    if not llama_supports_gpu_offload():
+                        logger.warning(
+                            "Fallback model running on CPU — llama-cpp-python"
+                            " was built without GPU support. Reinstall with"
+                            ' CMAKE_ARGS="-DGGML_VULKAN=on" for GPU acceleration.'
+                        )
+                except ImportError:
+                    pass
+
             return True
         except Exception:
             logger.exception("Failed to load local model for fallback")

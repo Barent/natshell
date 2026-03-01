@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,10 @@ import httpx
 from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 
 logger = logging.getLogger(__name__)
+
+# Retry config for transient failures
+_MAX_RETRIES = 2
+_RETRY_BACKOFF = 1.0  # seconds; doubles each retry
 
 
 class RemoteEngine:
@@ -64,31 +69,64 @@ class RemoteEngine:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        # Scale read timeout for large generations: assume ≥10 tok/s + 60s overhead
+        # Scale read timeout for large generations: assume ≥10 tok/s + 60s overhead.
+        # Pool timeout must match — the server may be busy processing before it
+        # starts sending the response.
         read_timeout = max(300.0, max_tokens / 10.0 + 60.0)
+        req_timeout = httpx.Timeout(
+            connect=30.0, read=read_timeout, write=30.0, pool=read_timeout,
+        )
 
         url = f"{self.base_url}/chat/completions"
-        try:
-            response = await self.client.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=httpx.Timeout(connect=30.0, read=read_timeout, write=30.0, pool=30.0),
-            )
-            response.raise_for_status()
-        except httpx.ConnectError as e:
-            raise ConnectionError(
-                f"Cannot connect to {self.base_url} — is the server running?"
-            ) from e
-        except httpx.ConnectTimeout as e:
-            raise ConnectionError(
-                f"Connection to {self.base_url} timed out."
-            ) from e
-        except httpx.HTTPStatusError as e:
-            body = e.response.text[:200] if e.response else ""
-            raise ConnectionError(
-                f"Remote API error {e.response.status_code}: {body}"
-            ) from e
+
+        # Retry on transient connection failures with exponential backoff
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = await self.client.post(
+                    url, json=payload, headers=headers, timeout=req_timeout,
+                )
+                response.raise_for_status()
+                break  # success
+            except httpx.ConnectError as e:
+                last_exc = ConnectionError(
+                    f"Cannot connect to {self.base_url} — is the server running?"
+                )
+                last_exc.__cause__ = e
+            except httpx.ConnectTimeout as e:
+                last_exc = ConnectionError(
+                    f"Connection to {self.base_url} timed out."
+                )
+                last_exc.__cause__ = e
+            except (httpx.ReadTimeout, httpx.PoolTimeout) as e:
+                last_exc = ConnectionError(
+                    f"Request to {self.base_url} timed out waiting for response "
+                    f"({type(e).__name__})."
+                )
+                last_exc.__cause__ = e
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                body = e.response.text[:200] if e.response else ""
+                # Only retry on transient server errors (502/503/504)
+                if status not in (502, 503, 504):
+                    raise ConnectionError(
+                        f"Remote API error {status}: {body}"
+                    ) from e
+                last_exc = ConnectionError(
+                    f"Remote API error {status}: {body}"
+                )
+                last_exc.__cause__ = e
+
+            # If we have retries left, back off and retry
+            if attempt < _MAX_RETRIES:
+                delay = _RETRY_BACKOFF * (2 ** attempt)
+                logger.warning(
+                    "Remote request failed (attempt %d/%d): %s — retrying in %.1fs",
+                    attempt + 1, _MAX_RETRIES + 1, last_exc, delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise last_exc  # type: ignore[misc]
 
         data = response.json()
         return self._parse_response(data)
