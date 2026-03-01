@@ -47,8 +47,9 @@ DEFINITION = ToolDefinition(
             "end_line": {
                 "type": "integer",
                 "description": (
-                    "Optional: restrict search to lines up to and including this line number (1-based). "
-                    "Use with start_line to target a specific region."
+                    "Optional: restrict search to lines up to and including "
+                    "this line number (1-based). Use with start_line to "
+                    "target a specific region."
                 ),
             },
         },

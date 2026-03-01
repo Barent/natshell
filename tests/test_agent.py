@@ -625,7 +625,6 @@ class TestEditFailureGuard:
             )
 
             events = await _collect_events(agent, "fix the bug")
-            types = [e.type for e in events]
 
             # The first text response ("I've fixed the bug!") should NOT be yielded
             # because the completion guard intercepts it.
@@ -680,7 +679,6 @@ class TestEditFailureGuard:
             )
 
             events = await _collect_events(agent, "update the file")
-            types = [e.type for e in events]
 
             response_events = [e for e in events if e.type == EventType.RESPONSE]
             assert len(response_events) == 1

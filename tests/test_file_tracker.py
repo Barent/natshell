@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from natshell.tools.file_tracker import FileReadTracker, get_tracker, reset_tracker
+from natshell.tools.file_tracker import get_tracker, reset_tracker
 
 
 class TestFileReadTracker:
