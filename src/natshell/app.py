@@ -102,11 +102,14 @@ def _shallow_tree(directory: Path, max_depth: int = 2) -> str:
     return "\n".join(lines)
 
 
-def _build_step_prompt(step: PlanStep, plan: Plan, completed_summaries: list[str]) -> str:
+def _build_step_prompt(
+    step: PlanStep, plan: Plan, completed_summaries: list[str], max_steps: int = 25
+) -> str:
     """Build a focused prompt for a single plan step.
 
     Includes the step body, one-line summaries of completed steps,
-    project directory tree, and a directive to not read plan files.
+    project directory tree, preamble context, budget guidance,
+    and a directive to not read plan files.
     """
     parts = [f"Execute this task (step {step.number} of {len(plan.steps)}):"]
 
@@ -115,6 +118,10 @@ def _build_step_prompt(step: PlanStep, plan: Plan, completed_summaries: list[str
         tree = _shallow_tree(plan.source_dir)
         parts.append(f"\nProject layout:\n{tree}")
 
+    # Include preamble context (tech stack, conventions, key interfaces)
+    if plan.preamble:
+        parts.append(f"\nProject context:\n{plan.preamble}")
+
     if completed_summaries:
         parts.append("\nPreviously completed:")
         for summary in completed_summaries:
@@ -122,6 +129,12 @@ def _build_step_prompt(step: PlanStep, plan: Plan, completed_summaries: list[str
 
     parts.append(f"\n## {step.title}\n")
     parts.append(step.body)
+    parts.append(
+        f"\nYou have {max_steps} tool calls for this step. Prioritize core implementation over "
+        "validation. Do not re-read files you just wrote. Do not start long-running servers "
+        "unless the step specifically requires it. If you must start a server for testing, "
+        "kill it before finishing."
+    )
     parts.append(
         "\nExecute this step now. All instructions are above \u2014 do not read any plan files."
     )
@@ -163,6 +176,16 @@ def _build_plan_prompt(description: str, directory_tree: str) -> str:
         "- Include exact names: functions, variables, file paths, types",
         "- Order by dependency — foundations first",
         "- 3-10 steps depending on complexity",
+        "",
+        "Execution quality:",
+        "- Each step is executed by a small LLM with NO memory of previous steps",
+        "  (only one-line summaries). Include ALL context needed in each step.",
+        "- When a file depends on config from another file (e.g., import style",
+        "  matching package.json \"type\"), state the dependency explicitly.",
+        "- Test steps must specify: framework setup, state isolation between tests,",
+        "  and the exact validation command.",
+        "- Do not include \"start the server and verify in browser\" as validation.",
+        "  Use test commands or scripts that start/stop automatically.",
         "",
         "First examine the directory with list_directory, then write PLAN.md.",
     ]
@@ -659,8 +682,13 @@ class NatShellApp(App):
                 # Clear agent history (keep system prompt) for a fresh context
                 self.agent.clear_history()
 
+                # Use higher step limit for plan execution
+                plan_max = self.agent.config.plan_max_steps
+                original_max = self.agent.config.max_steps
+                self.agent.config.max_steps = plan_max
+
                 # Build focused prompt for this step
-                prompt = _build_step_prompt(step, plan, completed_summaries)
+                prompt = _build_step_prompt(step, plan, completed_summaries, max_steps=plan_max)
 
                 # Run the agent loop for this step
                 thinking_ref: list[ThinkingIndicator | None] = [None]
@@ -690,6 +718,7 @@ class NatShellApp(App):
                     continue
 
                 finally:
+                    self.agent.config.max_steps = original_max
                     if thinking_ref[0]:
                         thinking_ref[0].remove()
                     self.query_one(LogoBanner).stop_animation()

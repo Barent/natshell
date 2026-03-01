@@ -307,6 +307,14 @@ class TestPlanPrompt:
         assert "## Step" in prompt
         assert "PLAN.md" in prompt
 
+    def test_prompt_contains_execution_quality_rules(self):
+        from natshell.app import _build_plan_prompt
+
+        prompt = _build_plan_prompt("anything", "dir/")
+        assert "Execution quality:" in prompt
+        assert "NO memory" in prompt
+        assert "validation command" in prompt
+
     def test_prompt_mentions_preamble(self):
         from natshell.app import _build_plan_prompt
 

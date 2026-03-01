@@ -102,6 +102,36 @@ class TestBuildStepPrompt:
         prompt = _build_step_prompt(plan.steps[0], plan, [])
         assert "Project layout:" not in prompt
 
+    def test_includes_preamble_when_present(self):
+        """When plan has a preamble, it is injected into the step prompt."""
+        plan = self._make_plan()
+        # The fixture plan has title "Fix Tetris" but no preamble text
+        plan.preamble = "Tech stack: C++17 with SDL2. Use snake_case naming."
+        prompt = _build_step_prompt(plan.steps[0], plan, [])
+        assert "Project context:" in prompt
+        assert "C++17 with SDL2" in prompt
+        assert "snake_case" in prompt
+
+    def test_no_preamble_when_empty(self):
+        """When plan preamble is empty, no project context section appears."""
+        plan = self._make_plan()
+        plan.preamble = ""
+        prompt = _build_step_prompt(plan.steps[0], plan, [])
+        assert "Project context:" not in prompt
+
+    def test_budget_guidance_in_prompt(self):
+        """Step prompt includes budget guidance with the step limit."""
+        plan = self._make_plan()
+        prompt = _build_step_prompt(plan.steps[0], plan, [], max_steps=25)
+        assert "25 tool calls" in prompt
+        assert "kill it before finishing" in prompt
+
+    def test_budget_uses_custom_max_steps(self):
+        """Budget guidance reflects the max_steps parameter."""
+        plan = self._make_plan()
+        prompt = _build_step_prompt(plan.steps[0], plan, [], max_steps=30)
+        assert "30 tool calls" in prompt
+
     def test_parse_plan_file_sets_source_dir(self, tmp_path: Path):
         """parse_plan_file populates source_dir from the file's parent."""
         plan_file = tmp_path / "FIXPLAN.md"
@@ -138,6 +168,27 @@ class TestShallowTree:
         assert "b/" in tree
         # c/ is at depth 3, should not appear
         assert "deep.txt" not in tree
+
+
+# ─── /exeplan in SLASH_COMMANDS ──────────────────────────────────────────────
+
+
+# ─── AgentConfig plan_max_steps ──────────────────────────────────────────────
+
+
+class TestPlanMaxSteps:
+    def test_plan_max_steps_default(self):
+        from natshell.config import AgentConfig
+
+        config = AgentConfig()
+        assert config.plan_max_steps == 25
+
+    def test_plan_max_steps_independent_of_max_steps(self):
+        from natshell.config import AgentConfig
+
+        config = AgentConfig(max_steps=10, plan_max_steps=30)
+        assert config.max_steps == 10
+        assert config.plan_max_steps == 30
 
 
 # ─── /exeplan in SLASH_COMMANDS ──────────────────────────────────────────────
