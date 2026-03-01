@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from natshell.tools.file_tracker import get_tracker
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 # Default max lines to return (mutable — scaled by agent loop)
@@ -111,6 +112,14 @@ async def read_file(
             )
         if start > 0:
             content = f"[starting at line {offset}]\n" + content
+
+        # Track read state for edit_file gating
+        tracker = get_tracker()
+        if offset == 1:
+            tracker.record_read(str(target), truncated)
+        else:
+            tracker.record_continuation(str(target), truncated)
+
         return ToolResult(output=content, truncated=truncated)
     except Exception as e:
         return ToolResult(error=f"Error reading file: {e}", exit_code=1)

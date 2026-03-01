@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from natshell.tools.file_tracker import get_tracker
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 DEFINITION = ToolDefinition(
@@ -49,6 +50,8 @@ async def write_file(path: str, content: str, mode: str = "overwrite") -> ToolRe
         else:
             target.write_text(content)
             action = "Wrote"
+        # Invalidate tracker — file contents changed
+        get_tracker().invalidate(str(target))
         return ToolResult(output=f"{action} {target} ({len(content)} chars)")
     except Exception as e:
         return ToolResult(error=f"Error writing file: {e}", exit_code=1)

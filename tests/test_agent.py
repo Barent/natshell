@@ -578,3 +578,118 @@ class TestReadFileLinesScaling:
     def test_262k_context_4000(self):
         agent = self._make_loop()
         assert agent._effective_read_file_lines(262144) == 4000
+
+
+# ─── Edit failure completion guard ──────────────────────────────────────────
+
+
+class TestEditFailureGuard:
+    async def test_edit_failure_warning_injected(self):
+        """When all edits fail and model tries to respond, a warning is injected."""
+        import os
+        import tempfile
+
+        from natshell.tools.file_tracker import reset_tracker
+
+        reset_tracker()
+
+        # Create a temp file for the edit to target
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("real content\n")
+            path = f.name
+
+        try:
+            agent = _make_agent(
+                [
+                    # Step 1: model calls edit_file with wrong old_text (will fail)
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="1",
+                                name="edit_file",
+                                arguments={
+                                    "path": path,
+                                    "old_text": "nonexistent text",
+                                    "new_text": "replacement",
+                                },
+                            )
+                        ],
+                    ),
+                    # Step 2: model tries to declare success
+                    CompletionResult(content="I've fixed the bug!"),
+                    # Step 3: model responds after the warning
+                    CompletionResult(content="Let me re-read and try again."),
+                ],
+                max_steps=5,
+                safety_mode="yolo",  # skip confirmation for edit_file
+            )
+
+            events = await _collect_events(agent, "fix the bug")
+            types = [e.type for e in events]
+
+            # The first text response ("I've fixed the bug!") should NOT be yielded
+            # because the completion guard intercepts it.
+            # The second text response ("Let me re-read...") should be yielded.
+            response_events = [e for e in events if e.type == EventType.RESPONSE]
+            assert len(response_events) == 1
+            assert "re-read" in response_events[0].data
+
+            # Check that the warning was injected into the message history
+            user_msgs = [m for m in agent.messages if m["role"] == "user"]
+            warning_msgs = [m for m in user_msgs if "[SYSTEM] Warning" in m["content"]]
+            assert len(warning_msgs) == 1
+        finally:
+            os.unlink(path)
+            reset_tracker()
+
+    async def test_successful_edit_no_warning(self):
+        """When edits succeed, no warning should be injected."""
+        import os
+        import tempfile
+
+        from natshell.tools.file_tracker import reset_tracker
+
+        reset_tracker()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("old content\n")
+            path = f.name
+
+        try:
+            agent = _make_agent(
+                [
+                    # Step 1: model calls edit_file with correct old_text
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="1",
+                                name="edit_file",
+                                arguments={
+                                    "path": path,
+                                    "old_text": "old content",
+                                    "new_text": "new content",
+                                },
+                            )
+                        ],
+                    ),
+                    # Step 2: model declares success
+                    CompletionResult(content="Done! I've updated the file."),
+                ],
+                max_steps=5,
+                safety_mode="yolo",
+            )
+
+            events = await _collect_events(agent, "update the file")
+            types = [e.type for e in events]
+
+            response_events = [e for e in events if e.type == EventType.RESPONSE]
+            assert len(response_events) == 1
+            assert "Done" in response_events[0].data
+
+            # No warning should have been injected
+            user_msgs = [m for m in agent.messages if m["role"] == "user"]
+            warning_msgs = [m for m in user_msgs if "[SYSTEM] Warning" in m.get("content", "")]
+            assert len(warning_msgs) == 0
+        finally:
+            os.unlink(path)
+            reset_tracker()

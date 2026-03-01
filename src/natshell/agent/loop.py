@@ -21,6 +21,7 @@ from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.tools import execute_shell as _exec_shell_mod
 from natshell.tools import read_file as _read_file_mod
 from natshell.tools.execute_shell import needs_sudo_password as _needs_sudo_password
+from natshell.tools.file_tracker import reset_tracker
 from natshell.tools.registry import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,10 @@ class AgentLoop:
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
         self._max_tokens: int = config.max_tokens
+        # Edit failure tracking
+        self._edit_failures: int = 0
+        self._edit_successes: int = 0
+        self._completion_warning_sent: bool = False
 
     def initialize(self, system_context: SystemContext) -> None:
         """Build the system prompt and initialize conversation."""
@@ -251,6 +256,11 @@ class AgentLoop:
         """
         self.messages.append({"role": "user", "content": user_input})
 
+        # Reset edit failure tracking for this run
+        self._edit_failures = 0
+        self._edit_successes = 0
+        self._completion_warning_sent = False
+
         # Cumulative stats for this run
         run_t0 = time.monotonic()
         total_prompt_tokens = 0
@@ -391,20 +401,69 @@ class AgentLoop:
                                 tool_call.name, tool_call.arguments
                             )
 
+                    # Track edit_file/write_file results
+                    if tool_call.name == "edit_file":
+                        if tool_result.exit_code != 0:
+                            self._edit_failures += 1
+                        else:
+                            self._edit_successes += 1
+                    elif tool_call.name == "write_file" and tool_result.exit_code == 0:
+                        self._edit_successes += 1
+
                     yield AgentEvent(
                         type=EventType.TOOL_RESULT,
                         tool_call=tool_call,
                         tool_result=tool_result,
                     )
 
+                    # Build result content with escalating warnings on repeated failures
+                    result_content = tool_result.to_message_content()
+                    if (
+                        tool_call.name == "edit_file"
+                        and tool_result.exit_code != 0
+                    ):
+                        if self._edit_failures >= 3:
+                            result_content += (
+                                "\n\n\u26a0 REPEATED EDIT FAILURES (3+). "
+                                "Stop and re-read the file with read_file "
+                                "before any more edits."
+                            )
+                        elif self._edit_failures >= 2:
+                            result_content += (
+                                "\n\n\u26a0 Multiple edit failures. "
+                                "Re-read the file before retrying."
+                            )
+
                     # Append exchange to conversation history
-                    self._append_tool_exchange(tool_call, tool_result.to_message_content())
+                    self._append_tool_exchange(tool_call, result_content)
 
                 # Continue the loop — model will see tool results and decide next step
                 continue
 
             # Case 2: Model responded with text only (task complete or needs info)
             if result.content:
+                # Completion guard: warn if all edits failed
+                if (
+                    self._edit_failures > 0
+                    and self._edit_successes == 0
+                    and not self._completion_warning_sent
+                ):
+                    self._completion_warning_sent = True
+                    self.messages.append(
+                        {"role": "assistant", "content": result.content}
+                    )
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "[SYSTEM] Warning: All edit_file calls failed. "
+                                "Verify changes were applied before declaring "
+                                "the task complete."
+                            ),
+                        }
+                    )
+                    continue
+
                 self.messages.append(
                     {
                         "role": "assistant",
@@ -533,6 +592,7 @@ class AgentLoop:
             self.messages = [self.messages[0]]
         else:
             self.messages = []
+        reset_tracker()
 
     def compact_history(self) -> dict[str, Any]:
         """Compact conversation history, keeping system prompt and last 2 messages.

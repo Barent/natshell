@@ -20,7 +20,8 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 4. Local inference uses `llama-cpp-python` — tool definitions are injected as plain text (not llama-cpp-python's built-in tool format) because Qwen3 outputs `<tool_call>` XML tags that are parsed manually
 5. The agent loop is async — local inference calls are wrapped in `asyncio.to_thread()` to avoid blocking the TUI
 6. Output from commands is truncated to ~4000 chars to fit context windows (auto-scales to 64K for 256K context windows)
-14. Truncation safety — when `read_file` truncates, it emits `⚠ FILE TRUNCATED` with the exact offset to continue reading. The system prompt forbids editing partially-read files. `edit_file` error previews show 200 lines (not 50) so the model can self-correct.
+14. Truncation safety — when `read_file` truncates, it emits `⚠ FILE TRUNCATED` with the exact offset to continue reading. The `FileReadTracker` (`file_tracker.py`) enforces that `edit_file` blocks edits on partially-read files. `edit_file` error previews show 200 lines (not 50) so the model can self-correct.
+15. Edit failure tracking — the agent loop tracks `edit_file` successes/failures per run. Escalating warnings are injected after 2+ failures. A completion guard prevents the model from declaring success when all edits failed.
 7. Platform detection is centralized in `src/natshell/platform.py` (cached `lru_cache`). Use `is_macos()`, `is_wsl()`, `is_linux()` — don't scatter `sys.platform` checks
 8. GPU detection is in `src/natshell/gpu.py` (cached `lru_cache`). Tries vulkaninfo, nvidia-smi, lspci in order. Prefers discrete over integrated GPUs.
 9. The system prompt presents NatShell as both a system administration and coding assistant, with dedicated guidance for code editing (use `edit_file` for targeted changes, `write_file` for new files) and `natshell_help` for self-documentation.
@@ -37,7 +38,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/config.py` — TOML config loading with defaults, env var API key support (`NATSHELL_API_KEY`), file permission warnings, engine preference persistence (`EngineConfig`, `save_engine_preference()`)
 
 ### Agent
-- `src/natshell/agent/loop.py` — ReAct agent loop with safety classification, sudo password retry, engine fallback
+- `src/natshell/agent/loop.py` — ReAct agent loop with safety classification, sudo password retry, engine fallback, edit failure tracking with escalating warnings and completion guard
 - `src/natshell/agent/system_prompt.py` — Platform-aware system prompt with behavior rules, coding/development guidance, natshell_help integration, and `/no_think` directive
 - `src/natshell/agent/context.py` — System context gathering (CPU, RAM, disk, network, services, containers, tools) with per-platform commands
 - `src/natshell/agent/context_manager.py` — Token budget management, auto-trimming of older messages, extractive summarization for `/compact`
@@ -54,7 +55,8 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/tools/execute_shell.py` — Shell execution with sudo password caching (5-min timeout), sensitive env var filtering, output truncation, process group isolation, auto-timeout patterns for long-running commands (default 60s)
 - `src/natshell/tools/read_file.py` — File reading with line limits, `offset` and `limit` parameters, actionable truncation warning with offset hint
 - `src/natshell/tools/write_file.py` — File writing (always requires confirmation)
-- `src/natshell/tools/edit_file.py` — Targeted search-and-replace edits to existing files (unique match required, always requires confirmation)
+- `src/natshell/tools/file_tracker.py` — Tracks file read state (`partial`/`full`) to prevent editing partially-read files. Module-level singleton shared by read_file, edit_file, and write_file.
+- `src/natshell/tools/edit_file.py` — Targeted search-and-replace edits to existing files (unique match required, always requires confirmation). Supports `start_line`/`end_line` to target specific regions when duplicates exist. Fuzzy match suggestions on not-found errors, line numbers on multiple-match errors.
 - `src/natshell/tools/run_code.py` — Execute code snippets in 10 languages (python, javascript, bash, ruby, perl, php, c, cpp, rust, go). Handles temp file creation, compilation, execution, and cleanup. Always requires confirmation.
 - `src/natshell/tools/list_directory.py` — Directory listing with sizes, types, hidden file toggle
 - `src/natshell/tools/search_files.py` — Text search (grep) and file search (find)
@@ -114,10 +116,11 @@ Context size is auto-detected from model filename (4B → 4096, 8B → 8192) whe
 Run tests with `pytest` (393 tests across 16 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
 
 Test files:
-- `test_agent.py` — Agent loop and event handling
+- `test_agent.py` — Agent loop and event handling, edit failure completion guard
 - `test_safety.py` — Safety classifier patterns, chaining, file sensitivity
 - `test_tools.py` — Individual tool execution
-- `test_coding_tools.py` — edit_file and run_code tool tests
+- `test_file_tracker.py` — FileReadTracker state tracking and path resolution
+- `test_coding_tools.py` — edit_file and run_code tool tests (includes fuzzy match, start_line/end_line, tracker integration)
 - `test_natshell_help.py` — natshell_help static/dynamic topic tests
 - `test_history_input.py` — HistoryInput widget history navigation
 - `test_engine_preference.py` — Engine preference persistence and loading
