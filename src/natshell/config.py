@@ -28,6 +28,7 @@ class RemoteConfig:
     url: str | None = None
     model: str = ""
     api_key: str = ""
+    n_ctx: int = 0  # 0 = auto (query server), >0 = override
 
 
 @dataclass

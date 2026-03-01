@@ -951,7 +951,10 @@ class NatShellApp(App):
 
         # Ensure URL has /v1 for the OpenAI-compatible endpoint
         api_url = base_url if base_url.endswith("/v1") else f"{base_url}/v1"
-        n_ctx = await get_model_context_length(base_url, model_name)
+        if self._config.remote.n_ctx > 0:
+            n_ctx = self._config.remote.n_ctx
+        else:
+            n_ctx = await get_model_context_length(base_url, model_name)
         new_engine = RemoteEngine(base_url=api_url, model=model_name, n_ctx=n_ctx)
         await self.agent.swap_engine(new_engine)
         save_engine_preference("remote")

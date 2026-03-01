@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from natshell.inference.ollama import (
+    _get_running_context,
+    _model_matches,
     get_model_context_length,
     list_models,
     normalize_base_url,
@@ -169,9 +171,182 @@ class TestListModels:
 # ─── get_model_context_length ────────────────────────────────────────────────
 
 
+# ─── _model_matches ─────────────────────────────────────────────────────────
+
+
+class TestModelMatches:
+    def test_exact_match_name(self):
+        assert _model_matches("qwen3:4b", "qwen3:4b", "qwen3:4b") is True
+
+    def test_exact_match_model_field(self):
+        assert _model_matches("qwen3:4b", "other", "qwen3:4b") is True
+
+    def test_no_match(self):
+        assert _model_matches("qwen3:4b", "llama3:8b", "llama3:8b") is False
+
+    def test_implicit_latest_tag(self):
+        """Query without tag matches entry with :latest."""
+        assert _model_matches("qwen3", "qwen3:latest", "qwen3:latest") is True
+
+    def test_implicit_latest_no_false_positive(self):
+        """Query without tag should not match a different tag."""
+        assert _model_matches("qwen3", "qwen3:4b", "qwen3:4b") is False
+
+
+# ─── _get_running_context ───────────────────────────────────────────────────
+
+
+class TestGetRunningContext:
+    async def test_model_loaded_returns_context_length(self):
+        """Returns context_length when model is loaded in /api/ps."""
+        ps_response = httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "qwen3:4b",
+                        "model": "qwen3:4b",
+                        "context_length": 32768,
+                        "size_vram": 2684354560,
+                    }
+                ]
+            },
+        )
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.get = AsyncMock(return_value=ps_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await _get_running_context("http://localhost:11434", "qwen3:4b")
+            assert result == 32768
+
+    async def test_model_not_loaded_returns_none(self):
+        """Returns None when model is not in /api/ps results."""
+        ps_response = httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "llama3:8b",
+                        "model": "llama3:8b",
+                        "context_length": 8192,
+                    }
+                ]
+            },
+        )
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.get = AsyncMock(return_value=ps_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await _get_running_context("http://localhost:11434", "qwen3:4b")
+            assert result is None
+
+    async def test_non_ollama_server_returns_none(self):
+        """Non-Ollama server (404 on /api/ps) returns None."""
+        ps_response = httpx.Response(404, text="Not Found")
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.get = AsyncMock(return_value=ps_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await _get_running_context("http://localhost:8080", "gpt-4")
+            assert result is None
+
+    async def test_connection_failure_returns_none(self):
+        """Connection failure returns None."""
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("refused"))
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await _get_running_context("http://badhost:11434", "qwen3:4b")
+            assert result is None
+
+    async def test_empty_models_returns_none(self):
+        """Empty models list returns None."""
+        ps_response = httpx.Response(200, json={"models": []})
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.get = AsyncMock(return_value=ps_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await _get_running_context("http://localhost:11434", "qwen3:4b")
+            assert result is None
+
+    async def test_implicit_latest_tag_match(self):
+        """Query "qwen3" matches entry with name "qwen3:latest"."""
+        ps_response = httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "qwen3:latest",
+                        "model": "qwen3:latest",
+                        "context_length": 4096,
+                    }
+                ]
+            },
+        )
+        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.get = AsyncMock(return_value=ps_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await _get_running_context("http://localhost:11434", "qwen3")
+            assert result == 4096
+
+
+# ─── get_model_context_length ────────────────────────────────────────────────
+
+
 class TestGetModelContextLength:
+    async def test_prefers_api_ps_over_api_show(self):
+        """When model is running, uses /api/ps context instead of /api/show metadata."""
+        with patch(
+            "natshell.inference.ollama._get_running_context",
+            new_callable=AsyncMock,
+            return_value=32768,
+        ):
+            result = await get_model_context_length("http://localhost:11434", "qwen3:4b")
+            assert result == 32768
+
+    async def test_falls_back_to_api_show_when_not_running(self):
+        """When model is not in /api/ps, falls back to /api/show metadata."""
+        show_response = httpx.Response(
+            200,
+            json={"model_info": {"qwen2.context_length": 262144}},
+        )
+        with (
+            patch(
+                "natshell.inference.ollama._get_running_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient,
+        ):
+            instance = AsyncMock()
+            instance.post = AsyncMock(return_value=show_response)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await get_model_context_length("http://localhost:11434", "qwen3:4b")
+            assert result == 262144
+
     async def test_returns_context_length_from_model_info(self):
-        """Successful query returns context length from architecture-prefixed key."""
+        """Successful /api/show query returns context length from architecture-prefixed key."""
         show_response = httpx.Response(
             200,
             json={
@@ -182,7 +357,14 @@ class TestGetModelContextLength:
                 }
             },
         )
-        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+        with (
+            patch(
+                "natshell.inference.ollama._get_running_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient,
+        ):
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -203,7 +385,14 @@ class TestGetModelContextLength:
                 }
             },
         )
-        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+        with (
+            patch(
+                "natshell.inference.ollama._get_running_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient,
+        ):
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -214,9 +403,16 @@ class TestGetModelContextLength:
             assert result == 8192
 
     async def test_non_ollama_server_returns_zero(self):
-        """Non-Ollama server (404 on /api/show) returns 0."""
+        """Non-Ollama server (404 on both endpoints) returns 0."""
         show_response = httpx.Response(404, text="Not Found")
-        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+        with (
+            patch(
+                "natshell.inference.ollama._get_running_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient,
+        ):
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -228,7 +424,14 @@ class TestGetModelContextLength:
 
     async def test_connection_failure_returns_zero(self):
         """Connection failure returns 0."""
-        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+        with (
+            patch(
+                "natshell.inference.ollama._get_running_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient,
+        ):
             instance = AsyncMock()
             instance.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("refused"))
             instance.__aexit__ = AsyncMock(return_value=False)
@@ -246,7 +449,14 @@ class TestGetModelContextLength:
                 "modelfile": "FROM qwen3:4b",
             },
         )
-        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+        with (
+            patch(
+                "natshell.inference.ollama._get_running_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient,
+        ):
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -257,9 +467,16 @@ class TestGetModelContextLength:
             assert result == 0
 
     async def test_strips_v1_from_url(self):
-        """URL with /v1 suffix is normalized before querying /api/show."""
+        """URL with /v1 suffix is normalized before querying."""
         show_response = httpx.Response(200, json={"model_info": {"qwen2.context_length": 4096}})
-        with patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient:
+        with (
+            patch(
+                "natshell.inference.ollama._get_running_context",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("natshell.inference.ollama.httpx.AsyncClient") as MockClient,
+        ):
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=show_response)
             instance.__aenter__ = AsyncMock(return_value=instance)

@@ -122,12 +122,69 @@ def _parse_openai_models(data: dict) -> list[OllamaModel]:
     return models
 
 
-async def get_model_context_length(base_url: str, model: str) -> int:
-    """Query Ollama /api/show for the model's context window size.
+def _model_matches(query: str, name: str, model: str) -> bool:
+    """Check if a model query matches an /api/ps entry.
 
-    Returns the context length in tokens, or 0 if unavailable.
+    Handles Ollama's implicit :latest tag — e.g. query "qwen3" matches
+    name "qwen3:latest".
+    """
+    if query in (name, model):
+        return True
+    # "qwen3" should match "qwen3:latest"
+    if ":" not in query:
+        return f"{query}:latest" in (name, model)
+    return False
+
+
+async def _get_running_context(base_url: str, model: str) -> int | None:
+    """Query Ollama /api/ps for the actual runtime context of a loaded model.
+
+    Returns the context length if the model is currently loaded, or None if
+    unavailable (model not loaded, non-Ollama server, connection failure).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url}/api/ps")
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            for entry in data.get("models", []):
+                entry_name = entry.get("name", "")
+                entry_model = entry.get("model", "")
+                if _model_matches(model, entry_name, entry_model):
+                    # Ollama returns context_length as a top-level field
+                    ctx = entry.get("context_length")
+                    if isinstance(ctx, int) and ctx > 0:
+                        return ctx
+    except (
+        httpx.HTTPError,
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        OSError,
+        ValueError,
+        KeyError,
+    ):
+        pass
+    return None
+
+
+async def get_model_context_length(base_url: str, model: str) -> int:
+    """Query the server for the model's context window size.
+
+    Precedence:
+    1. /api/ps runtime context (actual loaded context)
+    2. /api/show metadata (architecture maximum)
+    3. 0 (unavailable)
     """
     base_url = normalize_base_url(base_url)
+
+    # Prefer runtime context from /api/ps (reflects actual loaded n_ctx)
+    runtime_ctx = await _get_running_context(base_url, model)
+    if runtime_ctx is not None:
+        logger.debug("Got runtime context from /api/ps: %d", runtime_ctx)
+        return runtime_ctx
+
+    # Fall back to metadata from /api/show (architecture maximum)
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(

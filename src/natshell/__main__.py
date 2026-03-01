@@ -145,7 +145,10 @@ def main() -> None:
             from natshell.inference.ollama import get_model_context_length
             from natshell.inference.remote import RemoteEngine
 
-            n_ctx = asyncio.run(get_model_context_length(remote_url, remote_model))
+            if config.remote.n_ctx > 0:
+                n_ctx = config.remote.n_ctx
+            else:
+                n_ctx = asyncio.run(get_model_context_length(remote_url, remote_model))
             engine = RemoteEngine(
                 base_url=remote_url,
                 model=remote_model,

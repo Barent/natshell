@@ -25,6 +25,10 @@ main_gpu = -1
 # url = "http://localhost:11434/v1"
 # model = "qwen3:4b"
 # api_key = ""
+# Override the context window size for the remote model (tokens).
+# 0 = auto: queries the running model's actual context from the server.
+# Set explicitly if the server doesn't report context size correctly.
+# n_ctx = 0
 
 [ollama]
 # Remote server URL (Ollama or any OpenAI-compatible API).
