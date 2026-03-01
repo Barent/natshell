@@ -4,6 +4,16 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.15] - 2026-03-01
+
+### Fixed
+
+- Fix remote-to-local fallback: pass `main_gpu` config to LocalEngine (was missing, broke multi-GPU auto-selection)
+- Fix pool timeout firing prematurely on large models — pool timeout now scales with read timeout instead of fixed 30s
+- Expand fallback exception list: `ReadTimeout`, `PoolTimeout`, `RemoteProtocolError`, `OSError` now trigger fallback (previously only `ConnectError`, `ConnectTimeout`, `ConnectionError`)
+- Add retry with exponential backoff (2 retries, 1s/2s) for transient connection failures and 502/503/504 server errors
+- Surface GPU warning to user when fallback model runs on CPU-only llama-cpp-python build
+
 ## [0.1.14] - 2026-03-01
 
 ### Security
