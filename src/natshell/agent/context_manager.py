@@ -73,6 +73,36 @@ class ContextManager:
         return max(1, len(text) // 3)
 
     # ------------------------------------------------------------------
+    # Budget calibration from actual API token counts
+    # ------------------------------------------------------------------
+
+    def calibrate_from_actual(self, estimated_tokens: int, actual_tokens: int) -> None:
+        """Shrink context_budget if our estimate significantly underestimates reality.
+
+        Called after each successful inference with the estimated token count
+        (from our ``len(text)//3`` heuristic) and the actual prompt_tokens
+        reported by the API.  When the actual count exceeds the estimate by
+        more than 15%, the budget is shrunk proportionally (floor 1024).
+        """
+        if estimated_tokens <= 0 or actual_tokens <= 0:
+            return
+        ratio = actual_tokens / estimated_tokens
+        if ratio > 1.15:
+            new_budget = int(self.context_budget / ratio)
+            new_budget = max(new_budget, 1024)
+            if new_budget != self.context_budget:
+                logger.info(
+                    "Calibrating context budget %d → %d "
+                    "(estimate %d vs actual %d tokens, ratio %.2f)",
+                    self.context_budget,
+                    new_budget,
+                    estimated_tokens,
+                    actual_tokens,
+                    ratio,
+                )
+                self.context_budget = new_budget
+
+    # ------------------------------------------------------------------
     # Trimming
     # ------------------------------------------------------------------
 

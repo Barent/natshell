@@ -111,6 +111,8 @@ class AgentLoop:
         self._edit_failures: int = 0
         self._edit_successes: int = 0
         self._completion_warning_sent: bool = False
+        # Context overflow recovery guard
+        self._context_recovery_attempted: bool = False
 
     def initialize(self, system_context: SystemContext) -> None:
         """Build the system prompt and initialize conversation."""
@@ -139,6 +141,7 @@ class AgentLoop:
         return max(self.config.max_tokens, min(n_ctx // 4, 65536))
 
     _DEFAULT_MAX_STEPS = 15
+    _CONTEXT_PRESSURE_THRESHOLD = 0.85
 
     def _effective_max_steps(self, n_ctx: int) -> int:
         """Scale max_steps based on context window size.
@@ -264,6 +267,7 @@ class AgentLoop:
         self._edit_failures = 0
         self._edit_successes = 0
         self._completion_warning_sent = False
+        self._context_recovery_attempted = False
 
         # Cumulative stats for this run
         run_t0 = time.monotonic()
@@ -295,8 +299,58 @@ class AgentLoop:
                 total_inference_ms += elapsed_ms
                 total_prompt_tokens += result.prompt_tokens or 0
                 total_completion_tokens += result.completion_tokens or 0
+
+                # Calibrate token budget from actual API usage
+                if result.prompt_tokens > 0 and self._context_manager:
+                    estimated = self._context_manager.estimate_tokens(self.messages)
+                    self._context_manager.calibrate_from_actual(estimated, result.prompt_tokens)
+
+                # Proactive compaction when context pressure is high
+                try:
+                    n_ctx = self.engine.engine_info().n_ctx or 0
+                except (AttributeError, TypeError):
+                    n_ctx = 0
+                if (
+                    n_ctx > 0
+                    and result.prompt_tokens > 0
+                    and result.prompt_tokens / n_ctx > self._CONTEXT_PRESSURE_THRESHOLD
+                ):
+                    compact_stats = self.compact_history()
+                    if compact_stats.get("compacted"):
+                        yield AgentEvent(
+                            type=EventType.ERROR,
+                            data="Context nearing capacity — automatically compacted conversation.",
+                        )
             except Exception as e:
                 logger.exception("Inference error")
+                # Handle context overflow: compact and retry on same engine
+                from natshell.inference.remote import ContextOverflowError
+
+                if isinstance(e, ContextOverflowError):
+                    if self._context_recovery_attempted:
+                        yield AgentEvent(
+                            type=EventType.ERROR,
+                            data="Context window still full after compaction. "
+                            "Use /clear to reset the conversation.",
+                        )
+                        return
+                    stats = self.compact_history()
+                    if stats.get("compacted"):
+                        self._context_recovery_attempted = True
+                        yield AgentEvent(
+                            type=EventType.ERROR,
+                            data="Context window full — automatically compacted "
+                            "conversation. Retrying…",
+                        )
+                        continue  # retry this step with compacted context
+                    else:
+                        yield AgentEvent(
+                            type=EventType.ERROR,
+                            data="Context window full and conversation is too "
+                            "short to compact. Use /clear to reset.",
+                        )
+                        return
+
                 if self._can_fallback(e):
                     fell_back = await self._try_local_fallback()
                     if fell_back:
@@ -533,8 +587,11 @@ class AgentLoop:
         """Check if we should attempt fallback to local model."""
         import httpx
 
-        from natshell.inference.remote import RemoteEngine
+        from natshell.inference.remote import ContextOverflowError, RemoteEngine
 
+        # Context overflow is not a connectivity issue — don't swap engines
+        if isinstance(error, ContextOverflowError):
+            return False
         if not isinstance(self.engine, RemoteEngine):
             return False
         if self.fallback_config is None:

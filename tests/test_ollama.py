@@ -490,3 +490,79 @@ class TestGetModelContextLength:
                 "http://localhost:11434/api/show",
                 json={"model": "qwen3:4b"},
             )
+
+
+# ─── ContextOverflowError detection in RemoteEngine ──────────────────────────
+
+
+class TestContextOverflowDetection:
+    async def test_400_context_length_raises_overflow(self):
+        """HTTP 400 with context-length body raises ContextOverflowError."""
+        from natshell.inference.remote import ContextOverflowError, RemoteEngine
+
+        engine = RemoteEngine(base_url="http://localhost:11434", model="test")
+        mock_response = httpx.Response(
+            status_code=400,
+            text="model requires more context length",
+            request=httpx.Request("POST", "http://localhost:11434/chat/completions"),
+        )
+        engine.client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "bad request", request=mock_response.request, response=mock_response
+            )
+        )
+        try:
+            await engine.chat_completion(messages=[{"role": "user", "content": "hi"}])
+            assert False, "Should have raised"
+        except ContextOverflowError as e:
+            assert "context" in str(e).lower()
+        finally:
+            await engine.close()
+
+    async def test_413_raises_overflow(self):
+        """HTTP 413 with known pattern raises ContextOverflowError."""
+        from natshell.inference.remote import ContextOverflowError, RemoteEngine
+
+        engine = RemoteEngine(base_url="http://localhost:11434", model="test")
+        mock_response = httpx.Response(
+            status_code=413,
+            text="request too large: prompt exceeds token limit",
+            request=httpx.Request("POST", "http://localhost:11434/chat/completions"),
+        )
+        engine.client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "too large", request=mock_response.request, response=mock_response
+            )
+        )
+        try:
+            await engine.chat_completion(messages=[{"role": "user", "content": "hi"}])
+            assert False, "Should have raised"
+        except ContextOverflowError as e:
+            assert "token limit" in str(e).lower() or "request too large" in str(e).lower()
+        finally:
+            await engine.close()
+
+    async def test_400_non_context_raises_connection_error(self):
+        """HTTP 400 with unrelated body raises regular ConnectionError."""
+        from natshell.inference.remote import ContextOverflowError, RemoteEngine
+
+        engine = RemoteEngine(base_url="http://localhost:11434", model="test")
+        mock_response = httpx.Response(
+            status_code=400,
+            text="invalid model format",
+            request=httpx.Request("POST", "http://localhost:11434/chat/completions"),
+        )
+        engine.client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "bad request", request=mock_response.request, response=mock_response
+            )
+        )
+        try:
+            await engine.chat_completion(messages=[{"role": "user", "content": "hi"}])
+            assert False, "Should have raised"
+        except ContextOverflowError:
+            assert False, "Should not be ContextOverflowError"
+        except ConnectionError as e:
+            assert "400" in str(e)
+        finally:
+            await engine.close()

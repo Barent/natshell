@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 _MAX_RETRIES = 2
 _RETRY_BACKOFF = 1.0  # seconds; doubles each retry
 
+# Known error strings that indicate the prompt exceeded the model's context window.
+# Covers Ollama, OpenAI, vLLM, and other OpenAI-compatible servers.
+_CONTEXT_OVERFLOW_PATTERNS = (
+    "context length",
+    "context_length",
+    "maximum context",
+    "token limit",
+    "too many tokens",
+    "prompt is too long",
+    "num_ctx",
+    "request too large",
+)
+
+
+class ContextOverflowError(ConnectionError):
+    """The remote API rejected the request because the prompt exceeds the model's context window."""
+
 
 class RemoteEngine:
     """LLM inference via a remote OpenAI-compatible API."""
@@ -107,6 +124,13 @@ class RemoteEngine:
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
                 body = e.response.text[:200] if e.response else ""
+                # Detect context window overflow (400/413 with known patterns)
+                if status in (400, 413):
+                    body_lower = body.lower()
+                    if any(pat in body_lower for pat in _CONTEXT_OVERFLOW_PATTERNS):
+                        raise ContextOverflowError(
+                            f"Prompt exceeds model context window (HTTP {status}): {body}"
+                        ) from e
                 # Only retry on transient server errors (502/503/504)
                 if status not in (502, 503, 504):
                     raise ConnectionError(

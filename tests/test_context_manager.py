@@ -282,3 +282,38 @@ class TestEdgeCases:
         msgs = [_sys(""), _user(""), _assistant("")]
         result = cm.trim_messages(msgs)
         assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# Budget calibration from actual token counts
+# ---------------------------------------------------------------------------
+
+
+class TestCalibrateFromActual:
+    def test_calibrate_shrinks_budget(self):
+        """Budget shrinks proportionally when API reports more tokens than estimated."""
+        cm = ContextManager(context_budget=10000)
+        # Actual is 2x the estimate — budget should roughly halve
+        cm.calibrate_from_actual(estimated_tokens=1000, actual_tokens=2000)
+        assert cm.context_budget == 5000
+
+    def test_calibrate_no_change_when_accurate(self):
+        """Budget stays the same when estimate is within 15% of actual."""
+        cm = ContextManager(context_budget=10000)
+        cm.calibrate_from_actual(estimated_tokens=1000, actual_tokens=1100)
+        assert cm.context_budget == 10000
+
+    def test_calibrate_floor(self):
+        """Budget never drops below 1024."""
+        cm = ContextManager(context_budget=2000)
+        # Actual is 10x the estimate — would shrink to 200, but floor is 1024
+        cm.calibrate_from_actual(estimated_tokens=100, actual_tokens=1000)
+        assert cm.context_budget == 1024
+
+    def test_calibrate_no_op_on_zero(self):
+        """No-op when either value is zero."""
+        cm = ContextManager(context_budget=10000)
+        cm.calibrate_from_actual(estimated_tokens=0, actual_tokens=500)
+        assert cm.context_budget == 10000
+        cm.calibrate_from_actual(estimated_tokens=500, actual_tokens=0)
+        assert cm.context_budget == 10000

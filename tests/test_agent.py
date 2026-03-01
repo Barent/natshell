@@ -753,3 +753,129 @@ class TestRemoteEngineErrors:
         assert EventType.ERROR in types
         error_event = next(e for e in events if e.type == EventType.ERROR)
         assert "Cannot connect" in error_event.data
+
+
+# ─── Context overflow detection and recovery ────────────────────────────────
+
+
+class TestContextOverflow:
+    async def test_context_overflow_triggers_compaction_and_retry(self):
+        """First ContextOverflowError triggers compaction, second call succeeds."""
+        from natshell.inference.remote import ContextOverflowError
+
+        # Build an agent with enough history to compact
+        agent = _make_agent([])
+
+        # Seed conversation history (system + several exchanges)
+        agent.messages.append({"role": "user", "content": "first question"})
+        agent.messages.append({"role": "assistant", "content": "first answer"})
+        agent.messages.append({"role": "user", "content": "second question"})
+        agent.messages.append({"role": "assistant", "content": "second answer"})
+
+        # First call raises overflow, second call succeeds
+        agent.engine.chat_completion = AsyncMock(
+            side_effect=[
+                ContextOverflowError("context length exceeded"),
+                CompletionResult(content="Recovered response."),
+            ]
+        )
+
+        events = await _collect_events(agent, "third question")
+        types = [e.type for e in events]
+
+        # Should have an error about compaction
+        error_events = [e for e in events if e.type == EventType.ERROR]
+        assert any("compacted" in e.data.lower() for e in error_events)
+
+        # Should still get a successful response after retry
+        assert EventType.RESPONSE in types
+        response_event = next(e for e in events if e.type == EventType.RESPONSE)
+        assert response_event.data == "Recovered response."
+
+    async def test_context_overflow_does_not_trigger_local_fallback(self):
+        """_can_fallback returns False for ContextOverflowError."""
+        from natshell.inference.remote import ContextOverflowError
+
+        agent = _make_agent([CompletionResult(content="ok")])
+        assert not agent._can_fallback(ContextOverflowError("context full"))
+
+    async def test_context_overflow_unrecoverable_shows_clear_message(self):
+        """When conversation is too short to compact, suggest /clear."""
+        from natshell.inference.remote import ContextOverflowError
+
+        agent = _make_agent([])
+        # Only system + user message — too short to compact (≤3 messages)
+        agent.engine.chat_completion = AsyncMock(
+            side_effect=ContextOverflowError("context length exceeded")
+        )
+
+        events = await _collect_events(agent, "short question")
+        error_events = [e for e in events if e.type == EventType.ERROR]
+        assert any("/clear" in e.data for e in error_events)
+
+    async def test_context_overflow_double_failure_gives_up(self):
+        """If overflow happens again after compaction, give up."""
+        from natshell.inference.remote import ContextOverflowError
+
+        agent = _make_agent([])
+
+        # Seed enough history to allow compaction
+        agent.messages.append({"role": "user", "content": "first question"})
+        agent.messages.append({"role": "assistant", "content": "first answer"})
+        agent.messages.append({"role": "user", "content": "second question"})
+        agent.messages.append({"role": "assistant", "content": "second answer"})
+
+        # Both calls raise overflow — compaction doesn't help
+        agent.engine.chat_completion = AsyncMock(
+            side_effect=ContextOverflowError("context length exceeded")
+        )
+
+        events = await _collect_events(agent, "third question")
+        error_events = [e for e in events if e.type == EventType.ERROR]
+        # Should get both the "compacted" message and the "still full" message
+        assert any("still full" in e.data.lower() for e in error_events)
+
+
+# ─── Proactive compaction on context pressure ────────────────────────────────
+
+
+class TestProactiveCompaction:
+    async def test_proactive_compaction_on_high_pressure(self):
+        """When prompt_tokens/n_ctx > 85%, compaction fires and info event is emitted."""
+        # Create agent with known n_ctx
+        agent = _make_agent_with_ctx(n_ctx=4096)
+
+        # Seed enough history to allow compaction
+        agent.messages.append({"role": "user", "content": "first question"})
+        agent.messages.append({"role": "assistant", "content": "first answer"})
+        agent.messages.append({"role": "user", "content": "second question"})
+        agent.messages.append({"role": "assistant", "content": "second answer"})
+
+        # Return a result with prompt_tokens > 85% of n_ctx
+        agent.engine.chat_completion = AsyncMock(
+            return_value=CompletionResult(
+                content="Response here.",
+                prompt_tokens=3600,  # 3600/4096 = 87.9% > 85%
+                completion_tokens=50,
+            ),
+        )
+
+        events = await _collect_events(agent, "third question")
+        error_events = [e for e in events if e.type == EventType.ERROR]
+        assert any("compacted" in e.data.lower() for e in error_events)
+
+    async def test_no_proactive_compaction_when_low_pressure(self):
+        """When context pressure is under threshold, no compaction event."""
+        agent = _make_agent_with_ctx(n_ctx=32768)
+
+        agent.engine.chat_completion = AsyncMock(
+            return_value=CompletionResult(
+                content="Response here.",
+                prompt_tokens=1000,  # 1000/32768 = 3% — well under threshold
+                completion_tokens=50,
+            ),
+        )
+
+        events = await _collect_events(agent, "test question")
+        error_events = [e for e in events if e.type == EventType.ERROR]
+        assert not any("compacted" in e.data.lower() for e in error_events)
