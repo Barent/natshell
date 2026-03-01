@@ -314,3 +314,42 @@ class TestGitToolClassification:
     def test_unknown_operation_confirms(self):
         c = _make_classifier()
         assert c.classify_tool_call("git_tool", {"operation": "push"}) == Risk.CONFIRM
+
+
+# ─── Commit flag restrictions ────────────────────────────────────────────────
+
+
+class TestCommitFlagRestriction:
+    async def test_amend_rejected(self, git_repo_with_commit):
+        (git_repo_with_commit / "new.txt").write_text("content\n")
+        subprocess.run(
+            ["git", "add", "new.txt"],
+            cwd=git_repo_with_commit,
+            capture_output=True,
+            check=True,
+        )
+        result = await git_tool("commit", args='--amend -m "amend"')
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_author_rejected(self, git_repo_with_commit):
+        result = await git_tool("commit", args='--author="Fake <f@ke>" -m "msg"')
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_date_rejected(self, git_repo_with_commit):
+        result = await git_tool("commit", args='--date="2020-01-01" -m "msg"')
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_normal_commit_still_works(self, git_repo_with_commit):
+        (git_repo_with_commit / "ok.txt").write_text("ok\n")
+        subprocess.run(
+            ["git", "add", "ok.txt"],
+            cwd=git_repo_with_commit,
+            capture_output=True,
+            check=True,
+        )
+        result = await git_tool("commit", args='-m "Normal commit"')
+        assert result.exit_code == 0
+        assert "Normal commit" in result.output

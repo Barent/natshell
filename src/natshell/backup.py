@@ -25,11 +25,16 @@ class BackupManager:
 
         Returns the backup path, or None if the file doesn't exist.
         """
-        source = Path(path).expanduser().resolve()
+        raw = Path(path).expanduser()
+        if raw.is_symlink():
+            logger.warning("Refusing to back up symlink: %s → %s", raw, raw.resolve())
+            return None
+        source = raw.resolve()
         if not source.exists() or not source.is_file():
             return None
 
         self._backup_dir.mkdir(parents=True, exist_ok=True)
+        self._backup_dir.chmod(0o700)
         ts = time.time_ns()
         backup_name = f"{source.stem}.{ts}{source.suffix}.bak"
         backup_path = self._backup_dir / backup_name

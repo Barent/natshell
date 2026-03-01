@@ -26,7 +26,7 @@ Always use `--no-binary llama-cpp-python --no-cache-dir` when installing with GP
 ## Running Tests
 
 ```bash
-pytest                    # Full suite (393 tests)
+pytest                    # Full suite (641+ tests)
 pytest --tb=short -q      # Compact output
 pytest tests/test_safety.py  # Single file
 ```

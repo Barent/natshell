@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_SESSION_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+
+# Default max serialized session size: 10 MB
+_DEFAULT_MAX_SIZE = 10 * 1024 * 1024
 
 SESSION_DIR = Path.home() / ".local" / "share" / "natshell" / "sessions"
 
@@ -30,8 +36,19 @@ class SessionManager:
         }
     """
 
-    def __init__(self, session_dir: Path | None = None) -> None:
+    def __init__(
+        self, session_dir: Path | None = None, max_size: int = _DEFAULT_MAX_SIZE
+    ) -> None:
         self._dir = session_dir or SESSION_DIR
+        self._max_size = max_size
+
+    # ── validation ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _validate_session_id(session_id: str) -> None:
+        """Reject session IDs that aren't 32-char lowercase hex (UUID hex)."""
+        if not _SESSION_ID_RE.match(session_id):
+            raise ValueError(f"Invalid session ID: {session_id!r}")
 
     # ── public API ────────────────────────────────────────────────────
 
@@ -63,9 +80,11 @@ class SessionManager:
             The session ID (uuid).
         """
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._dir.chmod(0o700)
 
         now = datetime.now(timezone.utc).isoformat()
         sid = session_id or uuid.uuid4().hex
+        self._validate_session_id(sid)
 
         # Auto-generate a name from the first user message
         if not name:
@@ -91,12 +110,19 @@ class SessionManager:
             "messages": messages,
         }
 
-        path.write_text(json.dumps(data, indent=2, default=str))
+        serialized = json.dumps(data, indent=2, default=str)
+        if len(serialized.encode()) > self._max_size:
+            raise RuntimeError(
+                f"Session too large ({len(serialized.encode())} bytes, "
+                f"limit {self._max_size} bytes)"
+            )
+        path.write_text(serialized)
         logger.info("Session saved: %s (%s)", sid, name)
         return sid
 
     def load(self, session_id: str) -> dict[str, Any] | None:
         """Load a session by ID.  Returns ``None`` if not found."""
+        self._validate_session_id(session_id)
         path = self._dir / f"{session_id}.json"
         if not path.exists():
             return None
@@ -135,6 +161,7 @@ class SessionManager:
 
     def delete(self, session_id: str) -> bool:
         """Delete a session file.  Returns ``True`` if the file existed."""
+        self._validate_session_id(session_id)
         path = self._dir / f"{session_id}.json"
         if path.exists():
             path.unlink()

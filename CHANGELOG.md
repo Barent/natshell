@@ -4,6 +4,77 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.14] - 2026-03-01
+
+### Security
+
+- **CRITICAL**: Fix path traversal in session persistence — session IDs are now validated as 32-char hex (UUID format)
+- Add session size limit (10 MB default) to prevent disk exhaustion
+- Set 0o700 permissions on session and backup directories (owner-only access)
+- Reject symlinks in backup system to prevent silent exfiltration
+- Block dangerous git commit flags (--amend, --author=, --date=, --reset-author, --allow-empty-message) in git_tool
+- Fix headless exit code — any error now returns exit code 1, even if a response was also produced
+
+### Added
+
+- Security tests for session path traversal, size limits, backup symlinks, git commit flags, headless exit codes
+
+### Documentation
+
+- Update README.md with all new features (backup/undo, sessions, headless, MCP, plugins, prompt caching, diff preview)
+- Update CLAUDE.md with new modules, security hardening items 10-17, 28 test files
+- Add CHANGELOG entries for v0.1.8 through v0.1.14
+- Update test counts across all documentation
+
+## [0.1.13] - 2026-02-28
+
+### Fixed
+
+- Fix lint errors from v0.1.12
+
+## [0.1.12] - 2026-02-28
+
+### Improved
+
+- Improve code editing reliability with file read tracker, fuzzy match suggestions, and completion guard
+
+## [0.1.11] - 2026-02-28
+
+### Improved
+
+- Return context around edit point on successful edit_file operations
+
+## [0.1.10] - 2026-02-28
+
+### Fixed
+
+- Prevent editing partially-read files (FileReadTracker enforcement)
+
+## [0.1.9] - 2026-02-28
+
+### Added
+
+- Backup & undo system — pre-edit file backups with `/undo` support
+- Headless mode — `--headless` for non-interactive single-shot execution
+- Session persistence — `/save`, `/load`, `/sessions` for conversation management
+- Git tool — structured access to common git operations (status, diff, log, branch, commit, stash)
+- Plugin system — custom tools from `~/.config/natshell/plugins/`
+- MCP server mode — `--mcp` for JSON-RPC integration
+- Prompt caching for reduced inference latency
+- Diff preview in edit confirmations
+- Slash command refactoring (commands.py extracted from app.py)
+- Plan executor module for step-by-step plan execution
+- Output limits module (tools/limits.py) for context-aware truncation
+- Rich markup escape module (ui/escape.py)
+- Model manager module for download and switching logic
+
+## [0.1.8] - 2026-02-28
+
+### Improved
+
+- Test coverage sweep: 393 → 641+ tests across 28 test files
+- Added tests for GPU detection, system context, widgets, slash commands, plugins, MCP, prompt cache, headless, sessions, git tool, backup
+
 ## [0.1.7] - 2026-02-28
 
 ### Improved

@@ -53,6 +53,10 @@ _SAFE_OPERATIONS = {"status", "diff", "log", "branch"}
 # Operations that mutate repository state
 _CONFIRM_OPERATIONS = {"commit", "stash"}
 
+# Flags blocked in git commit — use execute_shell for these (goes through safety classifier)
+_BLOCKED_COMMIT_FLAGS = {"--amend", "--reset-author", "--allow-empty-message"}
+_BLOCKED_COMMIT_PREFIXES = ("--author=", "--date=")
+
 
 def _run_git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run a git command synchronously (to be called via asyncio.to_thread)."""
@@ -224,6 +228,16 @@ async def git_tool(operation: str, args: str = "") -> ToolResult:
                     error="commit requires arguments, e.g. -m \"your message\"",
                     exit_code=1,
                 )
+            # Block dangerous flags — use execute_shell for these
+            for arg in extra_args:
+                if arg in _BLOCKED_COMMIT_FLAGS or any(
+                    arg.startswith(p) for p in _BLOCKED_COMMIT_PREFIXES
+                ):
+                    return ToolResult(
+                        error=f"Flag {arg!r} is not allowed via git_tool. "
+                        "Use execute_shell for advanced git commit options.",
+                        exit_code=1,
+                    )
             result = await asyncio.to_thread(_run_git, ["commit"] + extra_args)
             return ToolResult(output=_format_commit(result), exit_code=result.returncode)
 

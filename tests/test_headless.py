@@ -64,6 +64,20 @@ class TestHeadlessBasic:
         code = await run_headless(agent, "hi")
         assert code == 1
 
+    async def test_error_with_response_still_returns_1(self, capsys):
+        """Any error should return exit code 1, even if a response was also produced."""
+        agent = _make_agent([])
+        # Simulate an agent that yields both ERROR and RESPONSE events
+        from natshell.agent.loop import AgentEvent, EventType
+
+        async def _fake_handler(prompt, **kw):
+            yield AgentEvent(type=EventType.RESPONSE, data="Got a response")
+            yield AgentEvent(type=EventType.ERROR, data="But also an error")
+
+        agent.handle_user_message = _fake_handler
+        code = await run_headless(agent, "mixed")
+        assert code == 1
+
 
 # ─── Tool execution ─────────────────────────────────────────────────────────
 

@@ -12,10 +12,26 @@ from pathlib import Path
 from natshell.config import load_config
 
 
+def _get_version() -> str:
+    """Return the installed package version, or fall back to 'unknown'."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return f"natshell {version('natshell')}"
+    except PackageNotFoundError:
+        return "natshell (unknown version — not installed as package)"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="natshell",
         description="NatShell — Natural language shell interface for Linux",
+    )
+    parser.add_argument(
+        "--version",
+        "-V",
+        action="version",
+        version=_get_version(),
     )
     parser.add_argument(
         "--config",

@@ -89,15 +89,17 @@ class TestSaveLoad:
 
 class TestLoadEdgeCases:
     def test_load_nonexistent_returns_none(self, mgr: SessionManager) -> None:
-        assert mgr.load("nonexistent-id") is None
+        # Use a valid-format hex ID that doesn't exist on disk
+        assert mgr.load("00000000000000000000000000000000") is None
 
     def test_load_corrupt_file_returns_none(
         self, mgr: SessionManager, session_dir: Path
     ) -> None:
         session_dir.mkdir(parents=True, exist_ok=True)
-        bad = session_dir / "bad.json"
+        sid = "00000000000000000000000000000bad"
+        bad = session_dir / f"{sid}.json"
         bad.write_text("not valid json {{{")
-        assert mgr.load("bad") is None
+        assert mgr.load(sid) is None
 
 
 # ── list_sessions ─────────────────────────────────────────────────────
@@ -150,7 +152,7 @@ class TestDelete:
         assert not (session_dir / f"{sid}.json").exists()
 
     def test_delete_nonexistent_returns_false(self, mgr: SessionManager) -> None:
-        assert mgr.delete("no-such-id") is False
+        assert mgr.delete("00000000000000000000000000000000") is False
 
     def test_delete_then_load_returns_none(self, mgr: SessionManager) -> None:
         sid = mgr.save(SAMPLE_MESSAGES)
@@ -189,3 +191,42 @@ class TestAutoName:
         data = mgr.load(sid)
         assert data is not None
         assert data["name"] == "My Custom Name"
+
+
+# ── Security ──────────────────────────────────────────────────────────
+
+
+class TestSessionSecurity:
+    def test_path_traversal_rejected_save(self, mgr: SessionManager) -> None:
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.save(SAMPLE_MESSAGES, session_id="../../etc/passwd")
+
+    def test_path_traversal_rejected_load(self, mgr: SessionManager) -> None:
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.load("../../etc/passwd")
+
+    def test_path_traversal_rejected_delete(self, mgr: SessionManager) -> None:
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.delete("../../etc/passwd")
+
+    def test_non_hex_id_rejected(self, mgr: SessionManager) -> None:
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.save(SAMPLE_MESSAGES, session_id="not-a-valid-session-id!!")
+
+    def test_valid_uuid_hex_accepted(self, mgr: SessionManager) -> None:
+        sid = mgr.save(SAMPLE_MESSAGES, session_id="abcdef0123456789abcdef0123456789")
+        assert sid == "abcdef0123456789abcdef0123456789"
+        assert mgr.load(sid) is not None
+
+    def test_oversized_session_raises(self, session_dir: Path) -> None:
+        small_mgr = SessionManager(session_dir=session_dir, max_size=100)
+        big_messages = [{"role": "user", "content": "x" * 200}]
+        with pytest.raises(RuntimeError, match="Session too large"):
+            small_mgr.save(big_messages)
+
+    def test_directory_permissions_are_0o700(
+        self, mgr: SessionManager, session_dir: Path
+    ) -> None:
+        mgr.save(SAMPLE_MESSAGES)
+        mode = session_dir.stat().st_mode & 0o777
+        assert mode == 0o700

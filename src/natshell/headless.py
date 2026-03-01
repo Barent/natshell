@@ -37,7 +37,6 @@ async def run_headless(
         _err(f"[declined — use --danger-fast to auto-approve] {tool_call.name}")
         return False
 
-    had_response = False
     had_error = False
 
     async for event in agent.handle_user_message(
@@ -48,7 +47,6 @@ async def run_headless(
             case EventType.RESPONSE:
                 # Final text → stdout (pipeable)
                 print(event.data, flush=True)
-                had_response = True
 
             case EventType.TOOL_RESULT:
                 # Tool output → stderr for debugging
@@ -81,7 +79,7 @@ async def run_headless(
                     wall = event.metrics.get("total_wall_ms", 0)
                     _err(f"[stats] {steps} steps in {wall}ms")
 
-    if had_error and not had_response:
+    if had_error:
         return 1
     return 0
 

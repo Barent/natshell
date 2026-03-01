@@ -203,3 +203,23 @@ class TestSingleton:
         assert len(mgr._history) > 0
         reset_backup_manager()
         assert len(mgr._history) == 0
+
+
+# ─── Security ────────────────────────────────────────────────────────────────
+
+
+class TestBackupSecurity:
+    def test_symlink_returns_none(self, manager, tmp_path):
+        real_file = tmp_path / "real.txt"
+        real_file.write_text("secret data")
+        link = tmp_path / "link.txt"
+        link.symlink_to(real_file)
+        result = manager.backup(link)
+        assert result is None
+
+    def test_backup_directory_permissions_0o700(self, manager, tmp_path):
+        src = tmp_path / "test.txt"
+        src.write_text("data")
+        manager.backup(src)
+        mode = manager._backup_dir.stat().st_mode & 0o777
+        assert mode == 0o700

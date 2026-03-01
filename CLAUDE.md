@@ -10,7 +10,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - **Inference**: Bundled llama.cpp via llama-cpp-python, with optional Ollama or remote API fallback. Runtime engine swapping supported.
 - **TUI**: Textual framework with custom widgets, command palette, clipboard integration
 - **Safety**: Regex-based command classifier (safe/confirm/blocked) with command chaining detection, sensitive path gating, and env var filtering
-- **Tools**: execute_shell, read_file, write_file, edit_file, run_code, list_directory, search_files, natshell_help
+- **Tools**: execute_shell, read_file, write_file, edit_file, run_code, list_directory, search_files, git_tool, natshell_help
 
 ## Key Design Decisions
 
@@ -29,13 +29,25 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 11. Context window adaptive scaling — max_tokens, max_steps, output truncation, and read_file limits all auto-scale with n_ctx (4K→256K tiers). See `_effective_*` methods in loop.py. Read_file tiers: 200/500/1000/2000/3000/4000 lines for <16K/16K/32K/64K/128K/256K contexts.
 12. Auto-timeout detection for long-running commands — pattern-based minimum timeouts (`execute_shell.py` `_LONG_RUNNING_PATTERNS`) ensure nmap, apt install, make, etc. get adequate time even when the LLM doesn't set a timeout.
 13. Plan generation and execution — `/plan` generates structured markdown plans; `/exeplan run` executes them step-by-step with dedicated agent budgets. Plan parser in `agent/plan.py`.
+16. Headless mode — `--headless "prompt"` runs a single-shot agent invocation with response to stdout and diagnostics to stderr. `--danger-fast` auto-approves confirmations. Exit code 1 on any error.
+17. Session persistence — conversations are saved as JSON in `~/.local/share/natshell/sessions/`. Session IDs are validated as 32-char hex (UUID) to prevent path traversal. Size-limited to 10 MB by default.
+18. Plugin system — custom tools are loaded from `~/.config/natshell/plugins/*.py`. Each plugin's `register(registry)` function adds tools to the tool registry at startup.
+19. MCP server mode — `--mcp` exposes all tools via JSON-RPC over stdin/stdout. Safety mode is configurable via `[mcp]` config section.
+20. Backup & undo — `BackupManager` creates timestamped file snapshots before edits. `/undo` restores the most recent backup. Symlinks are refused (security). Directory permissions are 0o700.
 
 ## Modules
 
 ### Core
 - `src/natshell/__main__.py` — CLI entry point with argparse, model download, engine wiring, GPU check
-- `src/natshell/app.py` — Textual TUI application with slash commands, confirmation dialogs, sudo prompts, model switching. `/plan` generates a PLAN.md via the agent loop with a specialized prompt, then previews it; feeds into `/exeplan run PLAN.md`.
+- `src/natshell/app.py` — Textual TUI application with confirmation dialogs, sudo prompts, model switching
+- `src/natshell/commands.py` — Slash command dispatch (refactored from app.py): `/plan`, `/exeplan`, `/undo`, `/save`, `/load`, `/sessions`, `/compact`, `/keys`, etc.
 - `src/natshell/config.py` — TOML config loading with defaults, env var API key support (`NATSHELL_API_KEY`), file permission warnings, engine preference persistence (`EngineConfig`, `save_engine_preference()`)
+- `src/natshell/backup.py` — Pre-edit backup system with timestamped snapshots, undo support, per-file pruning, symlink rejection, 0o700 directory permissions
+- `src/natshell/headless.py` — Non-interactive single-shot CLI mode (`--headless`). Response to stdout, diagnostics to stderr. `--danger-fast` auto-approves confirmations.
+- `src/natshell/session.py` — Conversation session persistence (save/load/delete/list). Session ID validation (32-char hex), size limits (10 MB default), 0o700 directory permissions.
+- `src/natshell/mcp_server.py` — MCP server mode (`--mcp`). Exposes all tools via JSON-RPC over stdin/stdout.
+- `src/natshell/plugins.py` — Plugin system for custom tools. Loads `register(registry)` from `~/.config/natshell/plugins/*.py`.
+- `src/natshell/model_manager.py` — Model discovery, download management, and switching logic
 
 ### Agent
 - `src/natshell/agent/loop.py` — ReAct agent loop with safety classification, sudo password retry, engine fallback, edit failure tracking with escalating warnings and completion guard
@@ -43,6 +55,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/agent/context.py` — System context gathering (CPU, RAM, disk, network, services, containers, tools) with per-platform commands
 - `src/natshell/agent/context_manager.py` — Token budget management, auto-trimming of older messages, extractive summarization for `/compact`
 - `src/natshell/agent/plan.py` — Markdown plan parser, extracts `PlanStep` objects from H2 headings
+- `src/natshell/agent/plan_executor.py` — Step-by-step plan execution engine with dedicated agent budgets per step
 
 ### Inference
 - `src/natshell/inference/engine.py` — Protocol types: `CompletionResult`, `ToolCall`, `EngineInfo`
@@ -51,7 +64,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/inference/ollama.py` — Ollama server ping, model listing, URL normalization
 
 ### Tools
-- `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (8 tools)
+- `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (9 tools)
 - `src/natshell/tools/execute_shell.py` — Shell execution with sudo password caching (5-min timeout), sensitive env var filtering, output truncation, process group isolation, auto-timeout patterns for long-running commands (default 60s)
 - `src/natshell/tools/read_file.py` — File reading with line limits, `offset` and `limit` parameters, actionable truncation warning with offset hint
 - `src/natshell/tools/write_file.py` — File writing (always requires confirmation)
@@ -60,6 +73,8 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/tools/run_code.py` — Execute code snippets in 10 languages (python, javascript, bash, ruby, perl, php, c, cpp, rust, go). Handles temp file creation, compilation, execution, and cleanup. Always requires confirmation.
 - `src/natshell/tools/list_directory.py` — Directory listing with sizes, types, hidden file toggle
 - `src/natshell/tools/search_files.py` — Text search (grep) and file search (find)
+- `src/natshell/tools/git_tool.py` — Structured git operations (status, diff, log, branch, commit, stash). Read-only ops are safe; mutating ops require confirmation. Blocks dangerous commit flags (--amend, --author=, --date=).
+- `src/natshell/tools/limits.py` — Context-aware output truncation limits, centralizes scaling logic
 - `src/natshell/tools/natshell_help.py` — Self-documentation tool with static topics (overview, commands, tools, models, troubleshooting) and dynamic topics (config, config_reference, safety). Accepts injected `SafetyConfig` for live safety pattern reporting.
 
 ### Safety
@@ -69,6 +84,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/ui/widgets.py` — Custom Textual widgets: HistoryInput (shell-like up/down arrow input history with draft save/restore), LogoBanner, CopyableMessage (UserMessage, AssistantMessage, PlanningMessage, BlockedMessage, SystemMessage, HelpMessage), CommandBlock, ThinkingIndicator, ConfirmScreen, SudoPasswordScreen, PlanStepDivider, PlanOverviewMessage, PlanSummaryMessage, RunStatsMessage. Rich markup escaping (`_escape()`) on all untrusted content.
 - `src/natshell/ui/commands.py` — Command palette provider for local model switching
 - `src/natshell/ui/clipboard.py` — Cross-platform clipboard: macOS (pbcopy), WSL (clip.exe), Wayland (wl-copy), X11 (xclip/xsel), OSC52 fallback
+- `src/natshell/ui/escape.py` — Rich markup escaping utilities (extracted from widgets.py)
 - `src/natshell/ui/styles.tcss` — Textual CSS stylesheet
 
 ### Utilities
@@ -88,6 +104,14 @@ These security features were added in the security refactor:
 7. **Sudo regex correctness** — `_SUDO_RE.sub()` uses `count=1` to only replace the first `sudo` occurrence
 8. **Config permissions warning** — Warns if config file containing an API key has permissive permissions (world/group readable)
 9. **Log redaction** — Sudo password plumbing is redacted from verbose log output
+10. **Session ID validation** — Session IDs must be 32-char lowercase hex (UUID format); path traversal attempts are rejected with `ValueError`
+11. **Session size limits** — Serialized session JSON is checked against a configurable max size (default 10 MB) before writing
+12. **Session directory permissions** — Session directory is `chmod 0o700` on creation to prevent other users from reading conversation history
+13. **Backup directory permissions** — Backup directory is `chmod 0o700` on creation; backups may contain sensitive file content
+14. **Backup symlink rejection** — `BackupManager.backup()` refuses to back up symlinks to prevent silent exfiltration of sensitive targets
+15. **Git commit flag restrictions** — `git_tool` blocks `--amend`, `--author=`, `--date=`, `--reset-author`, `--allow-empty-message` for commit operations; users can use `execute_shell` for these (which goes through the safety classifier)
+16. **Plugin sandboxing** — Plugins are loaded from a dedicated directory with explicit `register()` entry points; no implicit code execution
+17. **MCP safety modes** — MCP server respects the same safety classifier as the TUI; configurable via `[mcp]` config section
 
 ## Tech Stack
 
@@ -113,7 +137,7 @@ Context size is auto-detected from model filename (4B → 4096, 8B → 8192) whe
 
 ## Testing
 
-Run tests with `pytest` (393 tests across 16 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
+Run tests with `pytest` (641+ tests across 28 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
 
 Test files:
 - `test_agent.py` — Agent loop and event handling, edit failure completion guard
@@ -133,6 +157,17 @@ Test files:
 - `test_context_manager.py` — ContextManager token budgeting and trimming
 - `test_plan_parser.py` — Plan markdown parsing
 - `test_plan_execution.py` — Plan step execution flow
+- `test_backup.py` — Backup creation, undo, pruning, symlink rejection, dir permissions
+- `test_sessions.py` — Session save/load/delete, path traversal prevention, size limits
+- `test_headless.py` — Headless mode operation, confirmation handling, exit codes
+- `test_git_tool.py` — Git tool operations, safety classification, commit flag restrictions
+- `test_plugins.py` — Plugin loading and registration
+- `test_mcp_server.py` — MCP server protocol handling
+- `test_prompt_cache.py` — Prompt caching behavior
+- `test_widgets.py` — TUI widget rendering
+- `test_commands.py` — Slash command dispatch
+- `test_gpu.py` — GPU detection
+- `test_context.py` — System context gathering
 
 ## Cross-Platform Notes
 
