@@ -4,6 +4,12 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.4] - 2026-02-28
+
+### Fixed
+
+- Fix ruff lint: line length violation in plan execution prompt builder
+
 ## [0.1.3] - 2026-02-28
 
 ### Improved
