@@ -103,7 +103,12 @@ async def read_file(
         content = "\n".join(lines)
         if truncated:
             remaining = total - (start + len(lines))
-            content += f"\n... [{remaining} more lines]"
+            next_offset = start + len(lines) + 1  # 1-based
+            content += (
+                f"\n\n⚠ FILE TRUNCATED — {remaining} lines remaining."
+                f" Use read_file with offset={next_offset} to see the rest."
+                f" ALWAYS read the entire file before editing."
+            )
         if start > 0:
             content = f"[starting at line {offset}]\n" + content
         return ToolResult(output=content, truncated=truncated)

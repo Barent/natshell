@@ -175,13 +175,13 @@ class AgentLoop:
         if n_ctx >= 262144:
             return 4000
         elif n_ctx >= 131072:
-            return 2000
+            return 3000
         elif n_ctx >= 65536:
-            return 1000
+            return 2000
         elif n_ctx >= 32768:
-            return 500
+            return 1000
         elif n_ctx >= 16384:
-            return 300
+            return 500
         return 200
 
     def _setup_context_manager(self) -> None:

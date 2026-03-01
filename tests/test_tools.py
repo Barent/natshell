@@ -132,7 +132,9 @@ class TestReadFile:
         try:
             result = await read_file(path, max_lines=10)
             assert result.truncated
-            assert "more lines" in result.output
+            assert "FILE TRUNCATED" in result.output
+            assert "offset=11" in result.output
+            assert "ALWAYS read the entire file before editing" in result.output
         finally:
             os.unlink(path)
 

@@ -559,21 +559,21 @@ class TestReadFileLinesScaling:
         agent = self._make_loop()
         assert agent._effective_read_file_lines(4096) == 200
 
-    def test_16k_context_300(self):
+    def test_16k_context_500(self):
         agent = self._make_loop()
-        assert agent._effective_read_file_lines(16384) == 300
+        assert agent._effective_read_file_lines(16384) == 500
 
-    def test_32k_context_500(self):
+    def test_32k_context_1000(self):
         agent = self._make_loop()
-        assert agent._effective_read_file_lines(32768) == 500
+        assert agent._effective_read_file_lines(32768) == 1000
 
-    def test_64k_context_1000(self):
+    def test_64k_context_2000(self):
         agent = self._make_loop()
-        assert agent._effective_read_file_lines(65536) == 1000
+        assert agent._effective_read_file_lines(65536) == 2000
 
-    def test_128k_context_2000(self):
+    def test_128k_context_3000(self):
         agent = self._make_loop()
-        assert agent._effective_read_file_lines(131072) == 2000
+        assert agent._effective_read_file_lines(131072) == 3000
 
     def test_262k_context_4000(self):
         agent = self._make_loop()

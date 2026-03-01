@@ -38,6 +38,24 @@ class TestEditFile:
         finally:
             os.unlink(path)
 
+    async def test_old_text_not_found_preview_200_lines(self):
+        """Error preview should include up to 200 lines of file content."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            for i in range(300):
+                f.write(f"line {i}\n")
+            path = f.name
+        try:
+            result = await edit_file(path, "nonexistent text", "replacement")
+            assert result.exit_code == 1
+            # Line 199 (0-indexed) should be in the preview
+            assert "line 199" in result.error
+            # Line 200 (0-indexed) should NOT be in the preview
+            assert "line 200" not in result.error
+            # Should show remaining count
+            assert "100 more lines" in result.error
+        finally:
+            os.unlink(path)
+
     async def test_old_text_matches_multiple(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("abc\nabc\nabc\n")
