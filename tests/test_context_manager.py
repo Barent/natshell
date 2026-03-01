@@ -211,7 +211,7 @@ class TestSummary:
         """Summary includes truncated user messages."""
         cm = ContextManager(context_budget=10000)
         dropped = [_user("What is the weather like today?")]
-        summary = cm._build_summary(dropped)
+        summary = cm.build_summary(dropped)
         assert "User asked:" in summary
         assert "weather" in summary
 
@@ -222,7 +222,7 @@ class TestSummary:
             _tool_call_msg("execute_shell", {"command": "nmap -sn 192.168.1.0/24"}),
             _tool_result("Exit code: 0\nHost is up"),
         ]
-        summary = cm._build_summary(dropped)
+        summary = cm.build_summary(dropped)
         assert "Ran: nmap" in summary
         assert "Exit code: 0" in summary
 
@@ -230,21 +230,21 @@ class TestSummary:
         """Summary includes non-shell tool names."""
         cm = ContextManager(context_budget=10000)
         dropped = [_tool_call_msg("read_file", {"path": "/etc/hosts"})]
-        summary = cm._build_summary(dropped)
+        summary = cm.build_summary(dropped)
         assert "Called: read_file" in summary
 
     def test_summary_capped_at_500_chars(self):
         """Summary output is capped at 500 characters."""
         cm = ContextManager(context_budget=10000)
         dropped = [_user("x" * 200) for _ in range(30)]
-        summary = cm._build_summary(dropped)
+        summary = cm.build_summary(dropped)
         assert len(summary) <= 503  # 500 + "..."
 
     def test_summary_max_15_facts(self):
         """Summary includes at most 15 facts."""
         cm = ContextManager(context_budget=10000)
         dropped = [_user(f"question {i}") for i in range(30)]
-        summary = cm._build_summary(dropped)
+        summary = cm.build_summary(dropped)
         lines = [line for line in summary.split("\n") if line.startswith("- ")]
         assert len(lines) <= 15
 

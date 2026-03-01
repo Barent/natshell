@@ -466,3 +466,50 @@ class AgentLoop:
             self.messages = [self.messages[0]]
         else:
             self.messages = []
+
+    def compact_history(self) -> dict[str, Any]:
+        """Compact conversation history, keeping system prompt and last 2 messages.
+
+        Returns a stats dict with compaction results.
+        """
+        if len(self.messages) <= 3:
+            return {"compacted": False}
+
+        cm = self._context_manager
+        before_msgs = len(self.messages)
+        before_tokens = cm.estimate_tokens(self.messages) if cm else 0
+
+        system = self.messages[0]
+
+        # Collect non-system messages, keep last 2
+        rest = self.messages[1:]
+        last_2 = rest[-2:]
+        dropped = rest[:-2]
+
+        # Build extractive summary
+        summary = ""
+        if cm and dropped:
+            summary = cm.build_summary(dropped)
+
+        summary_msg: dict[str, Any] = {
+            "role": "system",
+            "content": (
+                f"[Context compacted: {len(dropped)} messages replaced with summary.\n"
+                f"{summary}\n"
+                "Recent context follows.]"
+            ),
+        }
+
+        self.messages = [system, summary_msg] + last_2
+
+        after_msgs = len(self.messages)
+        after_tokens = cm.estimate_tokens(self.messages) if cm else 0
+
+        return {
+            "compacted": True,
+            "before_msgs": before_msgs,
+            "after_msgs": after_msgs,
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "summary": summary,
+        }

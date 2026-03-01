@@ -172,6 +172,7 @@ def _build_plan_prompt(description: str, directory_tree: str) -> str:
 SLASH_COMMANDS = [
     ("/help", "Show available commands"),
     ("/clear", "Clear chat and model context"),
+    ("/compact", "Compact context, keeping key facts"),
     ("/cmd", "Execute a shell command directly"),
     ("/exeplan", "Preview or execute a multi-step plan"),
     ("/plan", "Generate a multi-step plan from a description"),
@@ -407,6 +408,8 @@ class NatShellApp(App):
                 self._show_help(conversation)
             case "/clear":
                 self.action_clear_chat()
+            case "/compact":
+                self._compact_chat(conversation)
             case "/cmd":
                 if not args:
                     conversation.mount(SystemMessage("Usage: /cmd <command>"))
@@ -725,6 +728,7 @@ class NatShellApp(App):
             "[bold]Available Commands[/]\n\n"
             "  [bold cyan]/help[/]                  Show this help message\n"
             "  [bold cyan]/clear[/]                 Clear chat and model context\n"
+            "  [bold cyan]/compact[/]               Compact context, keeping key facts\n"
             "  [bold cyan]/cmd <command>[/]         Execute a shell command directly\n"
             "  [bold cyan]/exeplan <file>[/]        Preview a multi-step plan\n"
             "  [bold cyan]/exeplan run <file>[/]    Execute all plan steps\n"
@@ -1142,3 +1146,20 @@ class NatShellApp(App):
         conversation.mount(Static("[dim]Chat cleared. Type a new request.[/]\n"))
         self.agent.clear_history()
         self.query_one("#user-input", HistoryInput).clear_history()
+
+    def _compact_chat(self, conversation: ScrollableContainer) -> None:
+        """Compact conversation context, keeping key facts."""
+        stats = self.agent.compact_history()
+        if not stats["compacted"]:
+            conversation.mount(SystemMessage("Nothing to compact — conversation is too short."))
+            return
+
+        conversation.remove_children()
+        summary_lines = [
+            "[bold]Context compacted[/]\n",
+            f"  Messages: {stats['before_msgs']} \u2192 {stats['after_msgs']}",
+            f"  Tokens:   ~{stats['before_tokens']} \u2192 ~{stats['after_tokens']}",
+        ]
+        if stats["summary"]:
+            summary_lines.append(f"\n[dim]Preserved facts:[/]\n{_escape(stats['summary'])}")
+        conversation.mount(SystemMessage("\n".join(summary_lines)))

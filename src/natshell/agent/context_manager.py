@@ -158,7 +158,7 @@ class ContextManager:
         logger.info("Context trimming: dropped %d messages to fit budget", n_dropped)
 
         # Build summary marker
-        summary_text = self._build_summary(dropped)
+        summary_text = self.build_summary(dropped)
         summary_msg: dict[str, Any] = {
             "role": "system",
             "content": (
@@ -175,7 +175,7 @@ class ContextManager:
     # Extractive summary
     # ------------------------------------------------------------------
 
-    def _build_summary(self, dropped_messages: list[dict[str, Any]]) -> str:
+    def build_summary(self, dropped_messages: list[dict[str, Any]]) -> str:
         """Build a compact extractive summary of dropped messages."""
         facts: list[str] = []
         for msg in dropped_messages:

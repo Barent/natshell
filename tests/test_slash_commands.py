@@ -68,11 +68,16 @@ class TestSlashDispatch:
         parts = "/history".split(maxsplit=1)
         assert parts[0].lower() == "/history"
 
+    def test_compact_recognized(self):
+        parts = "/compact".split(maxsplit=1)
+        assert parts[0].lower() == "/compact"
+
     def test_unknown_command(self):
         parts = "/foo".split(maxsplit=1)
         assert parts[0].lower() not in {
             "/help",
             "/clear",
+            "/compact",
             "/cmd",
             "/exeplan",
             "/plan",
@@ -203,11 +208,12 @@ class TestAutocomplete:
         assert "/history" in matches
         assert len(matches) == 2
 
-    def test_slash_c_matches_clear_and_cmd(self):
+    def test_slash_c_matches_clear_cmd_compact(self):
         matches = self._filter("/c")
         assert "/clear" in matches
         assert "/cmd" in matches
-        assert len(matches) == 2
+        assert "/compact" in matches
+        assert len(matches) == 3
 
     def test_slash_m_matches_model(self):
         matches = self._filter("/m")
@@ -306,3 +312,80 @@ class TestPlanPrompt:
 
         prompt = _build_plan_prompt("anything", "dir/")
         assert "preamble" in prompt.lower()
+
+
+# ─── /compact history ──────────────────────────────────────────────────────
+
+
+class TestCompactHistory:
+    """Test the compact_history method on AgentLoop."""
+
+    def test_compact_too_short(self):
+        """Conversations with <=3 messages return not compacted."""
+        agent = _make_agent()
+        # Only system prompt → 1 message
+        result = agent.compact_history()
+        assert result["compacted"] is False
+
+        # Add 2 more → 3 total, still too short
+        agent.messages.append({"role": "user", "content": "hello"})
+        agent.messages.append({"role": "assistant", "content": "hi"})
+        result = agent.compact_history()
+        assert result["compacted"] is False
+
+    def test_compact_keeps_system_and_recent(self):
+        """After compacting, messages are: system, summary, last 2."""
+        agent = _make_agent()
+        for i in range(10):
+            agent.messages.append({"role": "user", "content": f"question {i}"})
+            agent.messages.append({"role": "assistant", "content": f"answer {i}"})
+
+        result = agent.compact_history()
+        assert result["compacted"] is True
+
+        # Structure: system + summary + last 2
+        assert len(agent.messages) == 4
+        assert agent.messages[0]["role"] == "system"
+        assert agent.messages[1]["role"] == "system"
+        assert "[Context compacted:" in agent.messages[1]["content"]
+        # Last 2 are the most recent user/assistant pair
+        assert agent.messages[2]["content"] == "question 9"
+        assert agent.messages[3]["content"] == "answer 9"
+
+    def test_compact_summary_included(self):
+        """Summary message contains facts from dropped messages."""
+        agent = _make_agent()
+        agent.messages.append({"role": "user", "content": "what is the weather?"})
+        agent.messages.append({"role": "assistant", "content": "let me check"})
+        agent.messages.append({"role": "user", "content": "thanks"})
+        agent.messages.append({"role": "assistant", "content": "you're welcome"})
+
+        result = agent.compact_history()
+        assert result["compacted"] is True
+        assert "User asked:" in result["summary"]
+        assert "weather" in result["summary"]
+
+    def test_compact_preserves_system_prompt(self):
+        """System prompt is unchanged after compaction."""
+        agent = _make_agent()
+        original_system = agent.messages[0].copy()
+        for i in range(5):
+            agent.messages.append({"role": "user", "content": f"q{i}"})
+            agent.messages.append({"role": "assistant", "content": f"a{i}"})
+
+        agent.compact_history()
+        assert agent.messages[0] == original_system
+
+    def test_compact_returns_stats(self):
+        """Stats dict has all expected keys."""
+        agent = _make_agent()
+        for i in range(10):
+            agent.messages.append({"role": "user", "content": f"question number {i} " * 20})
+            agent.messages.append({"role": "assistant", "content": f"answer number {i} " * 20})
+
+        result = agent.compact_history()
+        assert result["compacted"] is True
+        for key in ("before_msgs", "after_msgs", "before_tokens", "after_tokens", "summary"):
+            assert key in result
+        assert result["before_msgs"] > result["after_msgs"]
+        assert result["before_tokens"] > result["after_tokens"]
