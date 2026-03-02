@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NatShell — Your Terminal, Unchained</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --cyan: #00ffff;
+  --teal: #00ccaa;
+  --green: #00ff88;
+  --gold: #ffcc00;
+  --bg-deep: #060a10;
+  --bg-card: #0c1018;
+  --bg-card-hover: #101820;
+  --border: #1a2a3a;
+  --text: #c8d6e5;
+  --text-dim: #5a7088;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Outfit', sans-serif;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.7;
+  overflow-x: hidden;
+}
+
+/* ── Animated background grid ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(rgba(0,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,255,0.015) 1px, transparent 1px);
+  background-size: 60px 60px;
+  z-index: -2;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(ellipse at 30% 20%, rgba(0,204,170,0.06) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 80%, rgba(0,255,255,0.04) 0%, transparent 50%);
+  z-index: -1;
+  animation: drift 20s ease-in-out infinite alternate;
+}
+
+@keyframes drift {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  100% { transform: translate(-30px, 20px) rotate(2deg); }
+}
+
+/* ── Section wrapper ── */
+section { padding: 100px 24px; max-width: 1100px; margin: 0 auto; }
+
+/* ── Hero ── */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding-top: 60px;
+  position: relative;
+}
+
+.hero-logo {
+  width: 96px;
+  height: 96px;
+  margin-bottom: 32px;
+  animation: float 4s ease-in-out infinite;
+  filter: drop-shadow(0 0 24px rgba(0,255,255,0.3));
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.hero h1 {
+  font-family: var(--font-sans);
+  font-size: clamp(3rem, 7vw, 5.5rem);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  margin-bottom: 8px;
+}
+
+.hero h1 .nat {
+  color: #fff;
+}
+
+.hero h1 .shell {
+  background: linear-gradient(135deg, var(--cyan), var(--teal), var(--green));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-tagline {
+  font-size: clamp(1.1rem, 2.5vw, 1.5rem);
+  font-weight: 300;
+  color: var(--text-dim);
+  margin-bottom: 40px;
+  max-width: 600px;
+}
+
+.hero-tagline em {
+  color: var(--cyan);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.hero-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 48px;
+}
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 6px 16px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: rgba(0,255,255,0.04);
+  color: var(--teal);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.badge::before {
+  content: '●';
+  margin-right: 6px;
+  font-size: 0.5rem;
+  vertical-align: middle;
+}
+
+.hero-terminal {
+  width: 100%;
+  max-width: 720px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(8,14,22,0.9);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  text-align: left;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 60px rgba(0,255,255,0.04);
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 18px;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-dot { width: 11px; height: 11px; border-radius: 50%; }
+.terminal-dot:nth-child(1) { background: #ff5f57; }
+.terminal-dot:nth-child(2) { background: #ffbd2e; }
+.terminal-dot:nth-child(3) { background: #28c840; }
+
+.terminal-title {
+  flex: 1;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-right: 40px;
+}
+
+.terminal-body {
+  padding: 24px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.9;
+}
+
+.terminal-body .prompt {
+  color: var(--green);
+}
+
+.terminal-body .command {
+  color: #fff;
+}
+
+.terminal-body .output {
+  color: var(--text-dim);
+  display: block;
+  margin: 8px 0 18px 0;
+  border-left: 2px solid var(--border);
+  padding-left: 14px;
+}
+
+.terminal-body .cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: var(--cyan);
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* ── Stats bar ── */
+.stats-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 48px;
+  padding: 60px 24px;
+  max-width: 900px;
+  margin: 0 auto;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.stat { text-align: center; }
+
+.stat-number {
+  font-family: var(--font-mono);
+  font-size: 2.4rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--cyan), var(--green));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 4px;
+}
+
+/* ── Use-case cards ── */
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--teal);
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 16px;
+  letter-spacing: -0.02em;
+}
+
+.section-desc {
+  color: var(--text-dim);
+  max-width: 600px;
+  margin-bottom: 56px;
+  font-size: 1.05rem;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 28px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--teal), transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.card:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(0,204,170,0.3);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+}
+
+.card:hover::before { opacity: 1; }
+
+.card-icon {
+  font-size: 1.6rem;
+  margin-bottom: 16px;
+  display: inline-block;
+}
+
+.card h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.card p {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.card code {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  background: rgba(0,255,255,0.06);
+  color: var(--cyan);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+/* ── Code example section ── */
+.code-showcase {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-top: 56px;
+}
+
+.code-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.code-tab {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 14px 22px;
+  color: var(--text-dim);
+  border: none;
+  background: none;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.code-tab:hover { color: var(--text); }
+.code-tab.active {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+}
+
+.code-panel {
+  padding: 28px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.9;
+  display: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.code-panel.active { display: block; }
+
+.code-panel .comment { color: #3d5a6e; }
+.code-panel .cmd { color: var(--green); }
+.code-panel .str { color: var(--gold); }
+.code-panel .flag { color: var(--cyan); }
+
+/* ── Comparison ── */
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 48px;
+}
+
+@media (max-width: 700px) {
+  .compare-grid { grid-template-columns: 1fr; }
+}
+
+.compare-card {
+  border-radius: 14px;
+  padding: 36px 30px;
+  border: 1px solid var(--border);
+}
+
+.compare-card.others {
+  background: rgba(255,255,255,0.01);
+}
+
+.compare-card.natshell {
+  background: linear-gradient(135deg, rgba(0,204,170,0.06), rgba(0,255,255,0.03));
+  border-color: rgba(0,204,170,0.25);
+}
+
+.compare-card h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 20px;
+}
+
+.compare-card h3 .dim { color: var(--text-dim); font-weight: 400; }
+
+.compare-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compare-list li {
+  font-size: 0.9rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+}
+
+.compare-list .icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  margin-top: 2px;
+}
+
+.others .icon {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-dim);
+}
+
+.natshell .icon {
+  background: rgba(0,255,255,0.12);
+  color: var(--cyan);
+}
+
+/* ── Audience section ── */
+.audience-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 36px;
+}
+
+.audience-chip {
+  padding: 10px 22px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text);
+  background: rgba(0,255,255,0.02);
+  transition: all 0.25s;
+}
+
+.audience-chip:hover {
+  border-color: var(--teal);
+  background: rgba(0,255,255,0.06);
+  color: #fff;
+}
+
+.audience-chip .emoji { margin-right: 6px; }
+
+/* ── CTA ── */
+.cta-section {
+  text-align: center;
+  padding: 120px 24px;
+}
+
+.cta-section .hero-logo {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 24px;
+}
+
+.cta-section h2 {
+  font-size: clamp(2rem, 4.5vw, 3.2rem);
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 16px;
+  letter-spacing: -0.02em;
+}
+
+.cta-section p {
+  color: var(--text-dim);
+  font-size: 1.05rem;
+  max-width: 520px;
+  margin: 0 auto 40px;
+}
+
+.cta-install {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  padding: 16px 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(0,204,170,0.15), rgba(0,255,255,0.08));
+  border: 1px solid rgba(0,204,170,0.35);
+  color: var(--cyan);
+  transition: all 0.3s;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.cta-install:hover {
+  background: linear-gradient(135deg, rgba(0,204,170,0.25), rgba(0,255,255,0.15));
+  border-color: var(--cyan);
+  box-shadow: 0 0 30px rgba(0,255,255,0.12);
+  transform: translateY(-2px);
+}
+
+.cta-install .dollar { color: var(--text-dim); margin-right: 4px; }
+
+/* ── Footer ── */
+footer {
+  text-align: center;
+  padding: 40px 24px;
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* ── Animations ── */
+.fade-in {
+  opacity: 0;
+  transform: translateY(24px);
+  animation: fadeUp 0.7s ease forwards;
+}
+
+@keyframes fadeUp {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.delay-1 { animation-delay: 0.1s; }
+.delay-2 { animation-delay: 0.2s; }
+.delay-3 { animation-delay: 0.3s; }
+.delay-4 { animation-delay: 0.4s; }
+.delay-5 { animation-delay: 0.5s; }
+.delay-6 { animation-delay: 0.6s; }
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  section { padding: 64px 18px; }
+  .stats-bar { gap: 32px; }
+  .card-grid { grid-template-columns: 1fr; }
+  .terminal-body { font-size: 0.75rem; padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ════════════════ HERO ════════════════ -->
+<section class="hero">
+  <svg class="hero-logo fade-in" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+        <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <rect x="26" y="46" width="12" height="14" rx="1" fill="#1a1a2e"/>
+    <rect x="28" y="48" width="8" height="10" rx="1" fill="#2a2a4a"/>
+    <polygon points="32,22 12,48 52,48" fill="#00aa88" filter="url(#glow)"/>
+    <polygon points="32,16 8,42 56,42" fill="#00ccaa" filter="url(#glow)"/>
+    <polygon points="32,8 4,38 60,38" fill="#00ffff" filter="url(#glow)"/>
+    <polygon points="32,10 18,32 28,32" fill="#66ffff" opacity="0.5"/>
+    <g fill="#ffcc00" filter="url(#glow)"><circle cx="8" cy="10" r="2"/><circle cx="8" cy="10" r="1" fill="#ffffaa"/></g>
+    <g fill="#ffcc00" filter="url(#glow)"><circle cx="56" cy="16" r="1.5"/></g>
+    <circle cx="4" cy="28" r="1" fill="#00ff88"/>
+    <circle cx="58" cy="30" r="1" fill="#00ff88"/>
+    <circle cx="12" cy="4" r="1" fill="#ffffff"/>
+    <circle cx="50" cy="6" r="0.8" fill="#ffffff"/>
+    <circle cx="20" cy="4" r="0.5" fill="#66ffff"/>
+    <circle cx="44" cy="2" r="0.5" fill="#66ffff"/>
+  </svg>
+
+  <h1 class="fade-in delay-1"><span class="nat">Nat</span><span class="shell">Shell</span></h1>
+  <p class="hero-tagline fade-in delay-2">Your terminal speaks English now.<br>Run it <em>entirely offline</em>.</p>
+
+  <div class="hero-badges fade-in delay-3">
+    <span class="badge">Local-First</span>
+    <span class="badge">No API Keys</span>
+    <span class="badge">Agentic</span>
+    <span class="badge">Unix-Pipeable</span>
+    <span class="badge">MCP Server</span>
+  </div>
+
+  <div class="hero-terminal fade-in delay-4">
+    <div class="terminal-bar">
+      <div class="terminal-dot"></div>
+      <div class="terminal-dot"></div>
+      <div class="terminal-dot"></div>
+      <span class="terminal-title">natshell — bash</span>
+    </div>
+    <div class="terminal-body">
+      <span class="prompt">❯ </span><span class="command">Something is slow between this machine and 10.0.1.50.</span><br>
+      <span class="command">&nbsp; Run traceroute, check for packet loss with mtr, look at</span><br>
+      <span class="command">&nbsp; interface errors, and tell me where the problem is.</span>
+      <span class="output">⠋ Planning… 4 tools queued<br>✓ traceroute completed — 14 hops, 3ms avg<br>✓ mtr analysis — 0.2% loss at hop 7 (10.0.1.1)<br>✓ interface stats — no errors on eth0<br>✓ ss bandwidth audit — clean<br><br><span style="color:#fff">⚡ Bottleneck identified:</span> hop 7 (your gateway at 10.0.1.1) is<br>introducing 0.2% packet loss under load. Likely a congested<br>or misconfigured switch port. Check duplex settings.</span>
+      <span class="prompt">❯ </span><span class="cursor"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ STATS ════════════════ -->
+<div class="stats-bar fade-in">
+  <div class="stat">
+    <div class="stat-number">9</div>
+    <div class="stat-label">Built-in Tools</div>
+  </div>
+  <div class="stat">
+    <div class="stat-number">75</div>
+    <div class="stat-label">Max Agent Steps</div>
+  </div>
+  <div class="stat">
+    <div class="stat-number">0</div>
+    <div class="stat-label">API Keys Required</div>
+  </div>
+  <div class="stat">
+    <div class="stat-number">100%</div>
+    <div class="stat-label">Offline Capable</div>
+  </div>
+</div>
+
+<!-- ════════════════ USE CASES ════════════════ -->
+<section>
+  <div class="section-label fade-in">What can you do?</div>
+  <h2 class="section-title fade-in delay-1">Write English. Get results.</h2>
+  <p class="section-desc fade-in delay-2">NatShell isn't a chat wrapper — it's an autonomous agent with real tools that reasons, acts, observes, and iterates until the job is done.</p>
+
+  <div class="card-grid">
+    <div class="card fade-in delay-1">
+      <div class="card-icon">🔧</div>
+      <h3>Scripting & Automation</h3>
+      <p>Cron-powered health reports, CI/CD failure analysis, log forensics after an incident. Use <code>--headless</code> to run NatShell from cron jobs, git hooks, or pipelines — it's a fully non-interactive Unix citizen.</p>
+    </div>
+    <div class="card fade-in delay-2">
+      <div class="card-icon">💻</div>
+      <h3>Development Workflows</h3>
+      <p>Scaffold entire projects by example, perform codebase-wide refactors with diffs, run automated code review before merges. NatShell reads your code, understands patterns, and replicates them.</p>
+    </div>
+    <div class="card fade-in delay-3">
+      <div class="card-icon">🖥️</div>
+      <h3>System Administration</h3>
+      <p>Provision servers, troubleshoot network issues, audit firewall rules — all in natural language. NatShell cross-references running services with iptables rules and flags mismatches automatically.</p>
+    </div>
+    <div class="card fade-in delay-4">
+      <div class="card-icon">🔗</div>
+      <h3>Pipeable Unix Citizen</h3>
+      <p>Pipe logs in, get structured CSV out. Feed a <code>git diff</code> and get release notes. NatShell reads from stdin and writes to stdout like any good Unix tool — except it understands what the data means.</p>
+    </div>
+    <div class="card fade-in delay-5">
+      <div class="card-icon">🧭</div>
+      <h3>Exploration & Learning</h3>
+      <p>Just cloned a repo with zero docs? Ask NatShell to trace the execution path and draw an ASCII dependency diagram. Explore a 500MB CSV without loading it all into memory.</p>
+    </div>
+    <div class="card fade-in delay-6">
+      <div class="card-icon">🧩</div>
+      <h3>MCP Server & Plugins</h3>
+      <p>Run <code>natshell --mcp</code> to turn your machine into a tool backend for Claude Desktop, Cursor, or any MCP-compatible agent. Extend with custom plugins for databases, APIs, k8s, and more.</p>
+    </div>
+  </div>
+
+  <!-- ── Code examples ── -->
+  <div class="code-showcase fade-in">
+    <div class="code-tabs">
+      <button class="code-tab active" onclick="showTab(0)">cron job</button>
+      <button class="code-tab" onclick="showTab(1)">CI / CD</button>
+      <button class="code-tab" onclick="showTab(2)">pipeline</button>
+      <button class="code-tab" onclick="showTab(3)">watchdog</button>
+    </div>
+
+    <div class="code-panel active"><span class="comment"># Daily health check, emailed to you at 8 AM</span>
+<span class="cmd">0 8 * * *</span> natshell <span class="flag">--headless</span> <span class="str">"Check disk usage, memory, failed systemd
+services, and any containers that restarted in the last
+24 hours. Summarize anything concerning."</span> \
+  2>/dev/null | mail -s <span class="str">"$(hostname) daily report"</span> admin@example.com</div>
+
+    <div class="code-panel"><span class="comment"># GitHub Actions step — analyze test failures in plain English</span>
+natshell <span class="flag">--headless --danger-fast</span> <span class="str">"Run pytest. If any tests fail,
+read the failing test files and the source they test,
+then explain the root cause of each failure and
+suggest fixes."</span> > test-analysis.md</div>
+
+    <div class="code-panel"><span class="comment"># Parse unstructured auth logs into structured data</span>
+<span class="cmd">cat</span> /var/log/auth.log | natshell <span class="flag">--headless</span> \
+  <span class="str">"Read stdin. Extract all failed SSH login attempts,
+output as CSV with columns: timestamp, username,
+source_ip, port"</span></div>
+
+    <div class="code-panel"><span class="comment"># Self-healing infrastructure — every 5 minutes</span>
+<span class="cmd">*/5 * * * *</span> natshell <span class="flag">--headless --danger-fast</span> \
+  <span class="str">"Check if the docker container 'webapp' is healthy.
+If it's unhealthy or stopped, restart it and send a
+message to the #alerts webhook at $WEBHOOK_URL
+with what happened."</span> 2>> /var/log/watchdog.log</div>
+  </div>
+</section>
+
+<!-- ════════════════ COMPARISON ════════════════ -->
+<section>
+  <div class="section-label fade-in">Why NatShell?</div>
+  <h2 class="section-title fade-in delay-1">Not just another AI TUI.</h2>
+
+  <div class="compare-grid fade-in delay-2">
+    <div class="compare-card others">
+      <h3>Typical AI TUIs <span class="dim">— chat wrappers</span></h3>
+      <ul class="compare-list">
+        <li><span class="icon">→</span> Send prompt to cloud API, display response</li>
+        <li><span class="icon">→</span> Maybe copy code to clipboard</li>
+        <li><span class="icon">→</span> Maybe run a single command you approve</li>
+        <li><span class="icon">→</span> Require API keys & internet</li>
+        <li><span class="icon">→</span> Interactive-only — can't pipe or cron</li>
+      </ul>
+    </div>
+    <div class="compare-card natshell">
+      <h3>NatShell <span class="dim">— agentic engine</span></h3>
+      <ul class="compare-list">
+        <li><span class="icon">✓</span> Agentic loop — reason, act, observe, iterate (up to 75 steps)</li>
+        <li><span class="icon">✓</span> 9 structured tools the model calls directly</li>
+        <li><span class="icon">✓</span> Deterministic regex safety classifier — not "ask the LLM"</li>
+        <li><span class="icon">✓</span> 100% local — bundled LLM, zero network dependency</li>
+        <li><span class="icon">✓</span> Headless mode — fully pipeable, cronneable, scriptable</li>
+        <li><span class="icon">✓</span> MCP server — serve as a tool backend for other AI systems</li>
+        <li><span class="icon">✓</span> Multi-step plans with dedicated budgets per step</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════ AUDIENCE ════════════════ -->
+<section>
+  <div class="section-label fade-in">Who is this for?</div>
+  <h2 class="section-title fade-in delay-1">If you live in the terminal, this is for you.</h2>
+  <p class="section-desc fade-in delay-2">NatShell meets you where you already work — no context-switching, no browser tabs, no cloud dependencies.</p>
+
+  <div class="audience-strip fade-in delay-3">
+    <span class="audience-chip"><span class="emoji">⌨️</span> Developers</span>
+    <span class="audience-chip"><span class="emoji">🎓</span> Students</span>
+    <span class="audience-chip"><span class="emoji">🔬</span> Researchers</span>
+    <span class="audience-chip"><span class="emoji">🛡️</span> SysAdmins</span>
+    <span class="audience-chip"><span class="emoji">☁️</span> DevOps Engineers</span>
+    <span class="audience-chip"><span class="emoji">🔒</span> Security Pros</span>
+    <span class="audience-chip"><span class="emoji">📊</span> Data Scientists</span>
+    <span class="audience-chip"><span class="emoji">🏠</span> Homelab Enthusiasts</span>
+  </div>
+</section>
+
+<!-- ════════════════ CTA ════════════════ -->
+<section class="cta-section">
+  <svg class="hero-logo fade-in" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+        <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <rect x="26" y="46" width="12" height="14" rx="1" fill="#1a1a2e"/>
+    <rect x="28" y="48" width="8" height="10" rx="1" fill="#2a2a4a"/>
+    <polygon points="32,22 12,48 52,48" fill="#00aa88" filter="url(#glow2)"/>
+    <polygon points="32,16 8,42 56,42" fill="#00ccaa" filter="url(#glow2)"/>
+    <polygon points="32,8 4,38 60,38" fill="#00ffff" filter="url(#glow2)"/>
+    <polygon points="32,10 18,32 28,32" fill="#66ffff" opacity="0.5"/>
+    <g fill="#ffcc00" filter="url(#glow2)"><circle cx="8" cy="10" r="2"/><circle cx="8" cy="10" r="1" fill="#ffffaa"/></g>
+  </svg>
+  <h2 class="fade-in delay-1">Stop Googling commands.<br>Start talking to your machine.</h2>
+  <p class="fade-in delay-2">A 4B parameter LLM runs on your hardware. No API keys. No cloud. No excuses.</p>
+  <a class="cta-install fade-in delay-3" href="#"><span class="dollar">$</span> pip install natshell</a>
+</section>
+
+<footer>
+  <p>NatShell — Local AI for your terminal. Built for people who ship.</p>
+</footer>
+
+<script>
+function showTab(index) {
+  document.querySelectorAll('.code-tab').forEach((t, i) => t.classList.toggle('active', i === index));
+  document.querySelectorAll('.code-panel').forEach((p, i) => p.classList.toggle('active', i === index));
+}
+
+// Intersection Observer for scroll animations
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.style.animationPlayState = 'running';
+      observer.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.fade-in').forEach(el => {
+  el.style.animationPlayState = 'paused';
+  observer.observe(el);
+});
+
+// Make hero animations play immediately
+document.querySelectorAll('.hero .fade-in').forEach(el => {
+  el.style.animationPlayState = 'running';
+});
+</script>
+</body>
+</html>
