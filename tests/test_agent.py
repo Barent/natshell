@@ -6,7 +6,7 @@ import json
 from unittest.mock import AsyncMock
 
 from natshell.agent.context import SystemContext
-from natshell.agent.loop import AgentLoop, EventType, _is_plan_request
+from natshell.agent.loop import AgentLoop, EventType, _is_analysis_request, _is_plan_request
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 from natshell.inference.local import (
@@ -1149,8 +1149,8 @@ class TestStepBudgetAwareness:
         all_content = "\n".join(m["content"] for m in tool_msgs)
         assert "URGENT" in all_content
 
-    async def test_no_budget_info_below_50pct(self):
-        """Below 50% of budget, no step info should appear."""
+    async def test_no_budget_pct_below_50pct(self):
+        """Below 50% of budget, no percentage-based step info should appear."""
         responses = [
             CompletionResult(
                 tool_calls=[
@@ -1164,9 +1164,27 @@ class TestStepBudgetAwareness:
         await _collect_events(agent, "do stuff")
 
         tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
-        # Step 1 out of 10 = 10% — no budget info
+        # Step 1 out of 10 = 10% — no "N/M steps used" info
         for msg in tool_msgs:
             assert "steps used" not in msg["content"]
+
+    async def test_early_budget_hint_on_first_step(self):
+        """First tool result should include a budget hint."""
+        responses = [
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="1", name="execute_shell", arguments={"command": "echo hi"})
+                ],
+            ),
+            CompletionResult(content="Done."),
+        ]
+
+        agent = _make_agent(responses, max_steps=10)
+        await _collect_events(agent, "do stuff")
+
+        tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+        assert len(tool_msgs) >= 1
+        assert "Budget: 10 steps available" in tool_msgs[0]["content"]
 
 
 # ─── Edit failure guidance ───────────────────────────────────────────────────
@@ -1406,3 +1424,124 @@ class TestLocalContextOverflow:
         error_events = [e for e in events if e.type == EventType.ERROR]
         assert any("compacted" in e.data.lower() for e in error_events)
         assert EventType.RESPONSE in types
+
+
+# ─── Analysis request detection ───────────────────────────────────────────────
+
+
+class TestAnalysisRequestDetection:
+    def test_review_code(self):
+        assert _is_analysis_request("review the code in src/natshell/safety/")
+
+    def test_security_audit(self):
+        assert _is_analysis_request("do a security audit of the codebase")
+
+    def test_analyze_codebase(self):
+        assert _is_analysis_request("analyze this codebase for issues")
+
+    def test_examine_implementation(self):
+        assert _is_analysis_request("examine the implementation of the agent loop")
+
+    def test_inspect_security(self):
+        assert _is_analysis_request("inspect the security module for vulnerabilities")
+
+    def test_audit_repository(self):
+        assert _is_analysis_request("audit this repository")
+
+    def test_review_pr(self):
+        assert _is_analysis_request("review the PR for correctness")
+
+    def test_review_diff(self):
+        assert _is_analysis_request("review the diff before merging")
+
+    def test_code_review_phrase(self):
+        assert _is_analysis_request("do a code review")
+
+    def test_security_analysis_phrase(self):
+        assert _is_analysis_request("perform a security analysis")
+
+    def test_codebase_audit_phrase(self):
+        assert _is_analysis_request("run a codebase audit")
+
+    def test_review_module(self):
+        assert _is_analysis_request("review the module for edge cases")
+
+    # Negative cases
+    def test_not_review_dinner(self):
+        assert not _is_analysis_request("review my dinner plans")
+
+    def test_not_analyze_disk(self):
+        assert not _is_analysis_request("analyze disk usage")
+
+    def test_not_examine_network(self):
+        assert not _is_analysis_request("examine network traffic")
+
+    def test_not_plain_fix(self):
+        assert not _is_analysis_request("fix the bug in main.py")
+
+
+class TestAnalysisIntentInjection:
+    async def test_analysis_request_injects_system_message(self):
+        """When user asks for a review, an analysis mode system message should be injected."""
+        agent = _make_agent(
+            [CompletionResult(content="Here are my findings...")],
+        )
+        await _collect_events(agent, "review the code in src/natshell/safety/")
+
+        system_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "Analysis mode" in m.get("content", "")
+        ]
+        assert len(system_msgs) == 1
+        assert "Verify every finding" in system_msgs[0]["content"]
+
+    async def test_non_analysis_request_no_system_message(self):
+        """Normal requests should not inject an analysis system message."""
+        agent = _make_agent(
+            [CompletionResult(content="Done!")],
+        )
+        await _collect_events(agent, "fix the bug in main.py")
+
+        system_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "Analysis mode" in m.get("content", "")
+        ]
+        assert len(system_msgs) == 0
+
+    async def test_analysis_and_plan_coexist(self):
+        """A request to plan a review should trigger both injections."""
+        agent = _make_agent(
+            [CompletionResult(content="Here is the plan for the review...")],
+        )
+        await _collect_events(agent, "create a plan to review the code")
+
+        plan_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "Planning mode" in m.get("content", "")
+        ]
+        analysis_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "Analysis mode" in m.get("content", "")
+        ]
+        assert len(plan_msgs) == 1
+        assert len(analysis_msgs) == 1
+
+
+# ─── System prompt analysis section ──────────────────────────────────────────
+
+
+class TestSystemPromptAnalysisSection:
+    def test_system_prompt_contains_analysis_section(self):
+        """The system prompt should include the Analysis & Review section."""
+        from natshell.agent.system_prompt import build_system_prompt
+
+        prompt = build_system_prompt(
+            SystemContext(
+                hostname="testhost",
+                distro="Test",
+                kernel="6.0",
+                username="tester",
+            )
+        )
+        assert "## Analysis & Review" in prompt
+        assert "Trace data flows" in prompt

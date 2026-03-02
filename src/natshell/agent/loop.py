@@ -39,6 +39,18 @@ def _is_plan_request(text: str) -> bool:
     return bool(_PLAN_REQUEST_RE.search(text))
 
 
+_ANALYSIS_REQUEST_RE = re.compile(
+    r"\b(?:review|audit|analyze|examine|inspect)\b.{0,40}\b(?:code|codebase|security|module|implementation|PR|pull\s*request|diff|repository|repo)\b"
+    r"|\b(?:code|security|codebase)\s+(?:review|audit|analysis)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_analysis_request(text: str) -> bool:
+    """Detect if the user is asking for a code review, audit, or analysis."""
+    return bool(_ANALYSIS_REQUEST_RE.search(text))
+
+
 class EventType(Enum):
     THINKING = "thinking"
     PLANNING = "planning"  # Model's text before tool calls
@@ -292,6 +304,19 @@ class AgentLoop:
                     "[Planning mode] The user is asking you to plan. "
                     "Describe your approach in text FIRST. Do not modify files "
                     "or run commands until the user approves the plan."
+                ),
+            })
+
+        # Inject analysis guidance when user asks for a review/audit/analysis
+        if _is_analysis_request(user_input):
+            self.messages.append({
+                "role": "system",
+                "content": (
+                    "[Analysis mode] The user is asking for a code review or analysis. "
+                    "Read configuration and safety-critical files first. "
+                    "Trace data flows — do not stop at function signatures. "
+                    "Verify every finding against actual code before reporting it. "
+                    "Use your full step budget for thorough analysis."
                 ),
             })
 
@@ -589,6 +614,11 @@ class AgentLoop:
                     elif pct_used >= 0.50:
                         result_content += (
                             f"\n\n[{steps_used}/{max_steps} steps used]"
+                        )
+                    elif steps_used == 1:
+                        result_content += (
+                            f"\n\n[Budget: {max_steps} steps available"
+                            " \u2014 plan your approach before diving in]"
                         )
 
                     # Append exchange to conversation history
