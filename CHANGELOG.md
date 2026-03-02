@@ -4,6 +4,41 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.21] - 2026-03-01
+
+### Added
+
+- Add safe `n_ctx = 32768` default to `[ollama]` config section
+- Update documentation: model preset table in README, mention 8B option in installer
+
+### Fixed
+
+- Fix stale auto-scaling tier comments in config.default.toml (missing 256K tier)
+
+## [0.1.20] - 2026-03-01
+
+### Fixed
+
+- Fix stale auto-scaling comments in default config to include 256K context tier values
+
+## [0.1.19] - 2026-03-01
+
+### Fixed
+
+- Fix plan executor not stopping after step completion — executor now correctly exits after the last step
+
+## [0.1.18] - 2026-03-01
+
+### Fixed
+
+- Fix `[ollama] n_ctx` config being silently ignored — context size from Ollama config section is now properly applied
+
+## [0.1.17] - 2026-03-01
+
+### Fixed
+
+- Fix remote model disconnecting on context overflow — `ContextOverflowError` is now caught and reported as a user-facing message instead of triggering engine fallback
+
 ## [0.1.16] - 2026-03-01
 
 ### Fixed

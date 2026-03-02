@@ -4,7 +4,7 @@
 
 Natural language shell interface for Linux, macOS, and WSL — a local-first agentic TUI powered by a bundled LLM.
 
-Type requests in plain English and NatShell plans and executes shell commands to fulfill them, using a ReAct-style agent loop with a small local model (Qwen3-4B via llama.cpp). Supports optional remote inference via Ollama or any OpenAI-compatible API.
+Type requests in plain English and NatShell plans and executes shell commands to fulfill them, using a ReAct-style agent loop with a bundled local model via llama.cpp. Supports optional remote inference via Ollama or any OpenAI-compatible API.
 
 ## Install
 
@@ -23,6 +23,17 @@ bash install.sh
 ```
 
 The installer handles everything — Python venv, GPU detection (Vulkan/Metal/CPU), llama.cpp build, model download, and Ollama configuration. No sudo required. Missing system dependencies (C++ compiler, clipboard tools, Vulkan headers, etc.) are detected and offered for install automatically.
+
+**Model options during install:**
+
+| Preset | Model | Size | Best for |
+|--------|-------|------|----------|
+| Light | Qwen3-4B (Q4_K_M) | ~2.5 GB | Low RAM systems, fast responses |
+| Standard | Qwen3-8B (Q4_K_M) | ~5 GB | Better reasoning and code quality |
+| Both | 4B + 8B | ~7.5 GB | Switch between them at runtime |
+| Remote only | Ollama server | 0 GB | Offload to a remote machine |
+
+The 8B model is significantly more capable for multi-step tasks, code editing, and complex reasoning. Choose Standard if your system has at least 8 GB RAM (or a GPU with 6+ GB VRAM).
 
 ### Development setup
 
@@ -57,7 +68,7 @@ natshell --mcp                    # Start as MCP server (stdin/stdout JSON-RPC)
 NatShell uses a ReAct-style agent loop — the model reasons about your request, calls tools (shell commands, file operations, etc.), observes results, and iterates until the task is complete. Up to 15 tool calls per request by default.
 
 ### Inference Backends
-- **Local**: Bundled llama.cpp via llama-cpp-python. Default model is Qwen3-4B (Q4_K_M, ~2.5 GB), auto-downloaded on first run.
+- **Local**: Bundled llama.cpp via llama-cpp-python. Two model tiers: Qwen3-4B (~2.5 GB, light) and Qwen3-8B (~5 GB, standard). Selected during install, auto-downloaded on first run.
 - **Remote**: Any OpenAI-compatible API — Ollama, vLLM, LM Studio, etc.
 - **Fallback**: If the remote server is unreachable, NatShell automatically falls back to the local model.
 - **Runtime switching**: Switch models on the fly with `/model` commands without restarting.
@@ -246,7 +257,7 @@ src/natshell/
 
 ```bash
 source .venv/bin/activate
-pytest                    # Run tests (641+ tests)
+pytest                    # Run tests (669 tests)
 ruff check src/ tests/    # Lint
 ```
 

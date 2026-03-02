@@ -137,7 +137,7 @@ Context size is auto-detected from model filename (4B → 4096, 8B → 8192) whe
 
 ## Testing
 
-Run tests with `pytest` (641+ tests across 28 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
+Run tests with `pytest` (669 tests across 28 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
 
 Test files:
 - `test_agent.py` — Agent loop and event handling, edit failure completion guard
