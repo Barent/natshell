@@ -44,9 +44,9 @@ def _infer_context_size(model_path: str) -> int:
     Falls back to 4096 if no pattern is found.
     """
     name = Path(model_path).name.lower()
-    # Mistral Nemo supports 128K; 32K is safe for 16 GB RAM systems
+    # Mistral Nemo supports 128K; 12K fits comfortably in 8 GB VRAM
     if "mistral" in name and "nemo" in name:
-        return 32768
+        return 12288
     match = re.search(r"(\d+(?:\.\d+)?)b", name)
     if match:
         param_billions = float(match.group(1))
