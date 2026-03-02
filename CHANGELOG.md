@@ -4,6 +4,57 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.28] - 2026-03-02
+
+### Added
+
+- Mistral Nemo 12B (Q4_K_M) as third local model tier ("Enhanced") with 128K context window
+- Dual-parser tool calling: Qwen3 (`<tool_call>` XML) and Mistral (`[TOOL_CALLS]` JSON array) with auto-detection from model filename
+- Installer now offers Light (Qwen3-4B), Standard (Qwen3-8B), and Enhanced (Mistral Nemo 12B) presets
+
+## [0.1.27] - 2026-03-02
+
+### Fixed
+
+- Fix lint failures — import sorting, unused variables, line length in app.py, test_agent.py, test_fetch_url.py
+
+## [0.1.26] - 2026-03-02
+
+### Added
+
+- `fetch_url` tool: fetch web content with SSRF protection (private IP blocking), 1 MB response cap, 60s timeout, GET-only
+- Plan-aware tool filtering: agent loop detects plan requests and restricts tools during plan generation
+- Pre-flight compaction: force context compaction when estimated tokens exceed context window
+- Tool schema filtering: `get_tool_schemas(allowed=...)` for selective tool exposure
+
+## [0.1.25] - 2026-03-02
+
+### Improved
+
+- Repetitive read detection: warn after reading the same file 3+ times without modifying it
+- Step budget awareness: inject info at 50%, warning at 75%, urgent alert at 90% of max_steps
+- Updated edit failure warnings: guide toward write_file on repeated failures, STOP directive at 3+ failures
+- System prompt: add compile-check guidance, directory awareness, stronger edit recovery rules
+
+## [0.1.24] - 2026-03-01
+
+### Added
+
+- Configuration profiles (`/profile` command): named presets that bundle ollama/remote/engine settings, switchable at runtime
+
+## [0.1.23] - 2026-03-01
+
+### Added
+
+- `--log-file` flag for real-time error capture to a specified log file
+
+## [0.1.22] - 2026-03-01
+
+### Documentation
+
+- Add project landing page (`docs/index.html`) with GitHub Pages support
+- Update documentation for 8B model visibility in installer
+
 ## [0.1.21] - 2026-03-01
 
 ### Added

@@ -29,11 +29,11 @@ The installer handles everything — Python venv, GPU detection (Vulkan/Metal/CP
 | Preset | Model | Size | Best for |
 |--------|-------|------|----------|
 | Light | Qwen3-4B (Q4_K_M) | ~2.5 GB | Low RAM systems, fast responses |
-| Standard | Qwen3-8B (Q4_K_M) | ~5 GB | Better reasoning and code quality |
-| Both | 4B + 8B | ~7.5 GB | Switch between them at runtime |
+| Standard | Qwen3-8B (Q4_K_M) | ~5 GB | General purpose, better reasoning |
+| Enhanced | Mistral Nemo 12B (Q4_K_M) | ~7.5 GB | Best quality, 128K context |
 | Remote only | Ollama server | 0 GB | Offload to a remote machine |
 
-The 8B model is significantly more capable for multi-step tasks, code editing, and complex reasoning. Choose Standard if your system has at least 8 GB RAM (or a GPU with 6+ GB VRAM).
+Mistral Nemo 12B is recommended for most systems with 16+ GB RAM (or a GPU with 8+ GB VRAM). It offers the best reasoning quality and supports 128K context windows.
 
 ### Development setup
 
@@ -68,7 +68,7 @@ natshell --mcp                    # Start as MCP server (stdin/stdout JSON-RPC)
 NatShell uses a ReAct-style agent loop — the model reasons about your request, calls tools (shell commands, file operations, etc.), observes results, and iterates until the task is complete. Up to 15 tool calls per request by default.
 
 ### Inference Backends
-- **Local**: Bundled llama.cpp via llama-cpp-python. Two model tiers: Qwen3-4B (~2.5 GB, light) and Qwen3-8B (~5 GB, standard). Selected during install, auto-downloaded on first run.
+- **Local**: Bundled llama.cpp via llama-cpp-python. Three model tiers: Qwen3-4B (~2.5 GB, light), Qwen3-8B (~5 GB, standard), and Mistral Nemo 12B (~7.5 GB, enhanced). Selected during install, auto-downloaded on first run.
 - **Remote**: Any OpenAI-compatible API — Ollama, vLLM, LM Studio, etc.
 - **Fallback**: If the remote server is unreachable, NatShell automatically falls back to the local model.
 - **Runtime switching**: Switch models on the fly with `/model` commands without restarting.
@@ -80,7 +80,7 @@ NatShell uses a ReAct-style agent loop — the model reasons about your request,
 - Prints helpful reinstall instructions if GPU support is missing
 
 ### Tools
-The agent has access to 9 tools:
+The agent has access to 10 tools:
 - **execute_shell** — Run any shell command via bash
 - **read_file** — Read file contents
 - **write_file** — Write or append to files (always requires confirmation)
@@ -90,6 +90,7 @@ The agent has access to 9 tools:
 - **search_files** — Search file contents (grep) or find files by name
 - **git_tool** — Structured git operations (status, diff, log, branch, commit, stash)
 - **natshell_help** — Look up NatShell documentation by topic
+- **fetch_url** — Fetch URL contents (blocks private/internal IPs for SSRF protection)
 
 ### TUI Commands
 
@@ -243,6 +244,8 @@ src/natshell/
 │   ├── list_directory.py    # Directory listing
 │   ├── search_files.py      # Text/file search
 │   ├── git_tool.py          # Structured git operations
+│   ├── fetch_url.py         # URL fetching with SSRF protection
+│   ├── file_tracker.py      # File read state tracking for edit safety
 │   ├── limits.py            # Context-aware output truncation limits
 │   └── natshell_help.py     # Self-documentation by topic
 └── ui/
@@ -257,7 +260,7 @@ src/natshell/
 
 ```bash
 source .venv/bin/activate
-pytest                    # Run tests (669 tests)
+pytest                    # Run tests (765+ tests)
 ruff check src/ tests/    # Lint
 ```
 
