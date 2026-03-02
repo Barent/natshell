@@ -401,9 +401,9 @@ def _ensure_model(config) -> str:
         print("No model available. Use --model or --remote to specify one.")
         sys.exit(1)
 
-    try:
-        from huggingface_hub import hf_hub_download
+    from huggingface_hub import hf_hub_download
 
+    try:
         print("Downloading from HuggingFace...")
         path = hf_hub_download(
             repo_id=config.model.hf_repo,
@@ -413,10 +413,6 @@ def _ensure_model(config) -> str:
         print(f"Model saved to: {path}")
         return path
 
-    except ImportError:
-        print("huggingface-hub is required for model download.")
-        print("Install it: pip install huggingface-hub")
-        sys.exit(1)
     except Exception as e:
         print(f"Download failed: {e}")
         sys.exit(1)
