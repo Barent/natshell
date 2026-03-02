@@ -95,36 +95,41 @@ def _make_addrinfo(ip: str, family=2):
     return [(family, 1, 6, "", (ip, 80))]
 
 
+_PATCH_DNS = "natshell.tools.fetch_url.socket.getaddrinfo"
+_PATCH_CLIENT = "natshell.tools.fetch_url.httpx.AsyncClient"
+_PUBLIC_DNS = _make_addrinfo("93.184.216.34")
+
+
 class TestSsrfBlocking:
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("127.0.0.1"))
+    @patch(_PATCH_DNS, return_value=_make_addrinfo("127.0.0.1"))
     async def test_blocks_localhost(self, mock_dns):
         result = await fetch_url("http://localhost/test")
         assert result.exit_code == 1
         assert "private" in result.error.lower() or "blocked" in result.error.lower()
 
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("10.0.0.1"))
+    @patch(_PATCH_DNS, return_value=_make_addrinfo("10.0.0.1"))
     async def test_blocks_rfc1918_10(self, mock_dns):
         result = await fetch_url("http://internal.corp/api")
         assert result.exit_code == 1
         assert "private" in result.error.lower() or "blocked" in result.error.lower()
 
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("172.16.0.1"))
+    @patch(_PATCH_DNS, return_value=_make_addrinfo("172.16.0.1"))
     async def test_blocks_rfc1918_172(self, mock_dns):
         result = await fetch_url("http://internal.corp/api")
         assert result.exit_code == 1
 
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("192.168.1.1"))
+    @patch(_PATCH_DNS, return_value=_make_addrinfo("192.168.1.1"))
     async def test_blocks_rfc1918_192(self, mock_dns):
         result = await fetch_url("http://router.local/admin")
         assert result.exit_code == 1
 
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("169.254.169.254"))
+    @patch(_PATCH_DNS, return_value=_make_addrinfo("169.254.169.254"))
     async def test_blocks_metadata_endpoint(self, mock_dns):
         result = await fetch_url("http://169.254.169.254/latest/meta-data/")
         assert result.exit_code == 1
 
     @patch(
-        "natshell.tools.fetch_url.socket.getaddrinfo",
+        _PATCH_DNS,
         return_value=[(10, 1, 6, "", ("::1", 80, 0, 0))],
     )
     async def test_blocks_ipv6_loopback(self, mock_dns):
@@ -153,8 +158,8 @@ def _mock_response(
 
 
 class TestFetchSuccess:
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("93.184.216.34"))
-    @patch("natshell.tools.fetch_url.httpx.AsyncClient")
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
     async def test_fetch_public_url(self, mock_client_cls, mock_dns):
         mock_client = AsyncMock()
         mock_client.get.return_value = _mock_response(
@@ -168,8 +173,8 @@ class TestFetchSuccess:
         assert "Example Domain" in result.output
         assert "200" in result.output
 
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("93.184.216.34"))
-    @patch("natshell.tools.fetch_url.httpx.AsyncClient")
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
     async def test_json_response(self, mock_client_cls, mock_dns):
         mock_client = AsyncMock()
         mock_client.get.return_value = _mock_response(
@@ -189,8 +194,8 @@ class TestFetchSuccess:
 
 
 class TestTimeout:
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("93.184.216.34"))
-    @patch("natshell.tools.fetch_url.httpx.AsyncClient")
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
     async def test_timeout_error(self, mock_client_cls, mock_dns):
         mock_client = AsyncMock()
         mock_client.get.side_effect = httpx.TimeoutException("timed out")
@@ -217,8 +222,8 @@ class TestTimeout:
 
 
 class TestTruncation:
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("93.184.216.34"))
-    @patch("natshell.tools.fetch_url.httpx.AsyncClient")
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
     async def test_large_response_truncated(self, mock_client_cls, mock_dns):
         large_text = "x" * 10000
         mock_client = AsyncMock()
@@ -240,8 +245,8 @@ class TestTruncation:
 
 
 class TestBinaryContent:
-    @patch("natshell.tools.fetch_url.socket.getaddrinfo", return_value=_make_addrinfo("93.184.216.34"))
-    @patch("natshell.tools.fetch_url.httpx.AsyncClient")
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
     async def test_binary_not_dumped(self, mock_client_cls, mock_dns):
         mock_client = AsyncMock()
         mock_client.get.return_value = _mock_response(

@@ -919,7 +919,7 @@ class TestRepetitiveReadDetection:
                 safety_mode="yolo",
             )
 
-            events = await _collect_events(agent, "read the file")
+            await _collect_events(agent, "read the file")
 
             # Find tool messages in the conversation history for the 3rd read
             tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
@@ -977,7 +977,7 @@ class TestRepetitiveReadDetection:
                 safety_mode="yolo",
             )
 
-            events = await _collect_events(agent, "update the file")
+            await _collect_events(agent, "update the file")
 
             # The read after the write should be count=1, so no warning
             tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
@@ -1015,7 +1015,7 @@ class TestRepetitiveReadDetection:
                 safety_mode="yolo",
             )
 
-            events = await _collect_events(agent, "read the file")
+            await _collect_events(agent, "read the file")
 
             tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
             for msg in tool_msgs:
@@ -1041,7 +1041,7 @@ class TestStepBudgetAwareness:
         ] + [CompletionResult(content="Done.")]
 
         agent = _make_agent(responses, max_steps=10)
-        events = await _collect_events(agent, "do stuff")
+        await _collect_events(agent, "do stuff")
 
         # Context manager may trim older messages, so check any surviving tool msg
         tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
@@ -1060,7 +1060,7 @@ class TestStepBudgetAwareness:
         ] + [CompletionResult(content="Done.")]
 
         agent = _make_agent(responses, max_steps=10)
-        events = await _collect_events(agent, "do stuff")
+        await _collect_events(agent, "do stuff")
 
         tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
         all_content = "\n".join(m["content"] for m in tool_msgs)
@@ -1078,7 +1078,7 @@ class TestStepBudgetAwareness:
         ]
 
         agent = _make_agent(responses, max_steps=10)
-        events = await _collect_events(agent, "do stuff")
+        await _collect_events(agent, "do stuff")
 
         tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
         # Step 1 out of 10 = 10% — no budget info
@@ -1138,11 +1138,10 @@ class TestEditFailureGuidance:
                 safety_mode="yolo",
             )
 
-            events = await _collect_events(agent, "edit the file")
+            await _collect_events(agent, "edit the file")
 
             tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
             # 2nd edit failure should mention write_file
-            edit_msgs = [m for m in tool_msgs if "edit" in m.get("tool_call_id", "2")]
             # Check the last tool message before the response
             assert "write_file" in tool_msgs[-1]["content"]
         finally:
@@ -1210,7 +1209,7 @@ class TestEditFailureGuidance:
                 safety_mode="yolo",
             )
 
-            events = await _collect_events(agent, "edit the file")
+            await _collect_events(agent, "edit the file")
 
             tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
             # 3rd edit failure should say "STOP using edit_file"
@@ -1269,7 +1268,7 @@ class TestPlanningIntentInjection:
         agent = _make_agent(
             [CompletionResult(content="Here is my plan...")],
         )
-        events = await _collect_events(agent, "create a plan for updating the API")
+        await _collect_events(agent, "create a plan for updating the API")
 
         # Check that a planning mode system message was injected
         system_msgs = [
@@ -1284,7 +1283,7 @@ class TestPlanningIntentInjection:
         agent = _make_agent(
             [CompletionResult(content="Done!")],
         )
-        events = await _collect_events(agent, "fix the bug in main.py")
+        await _collect_events(agent, "fix the bug in main.py")
 
         system_msgs = [
             m for m in agent.messages

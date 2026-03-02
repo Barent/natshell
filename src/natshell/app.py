@@ -21,7 +21,6 @@ from natshell.agent.plan_executor import (
     _build_step_prompt,
     _shallow_tree,
 )
-from natshell.tools.registry import PLAN_SAFE_TOOLS
 from natshell.commands import (
     compact_chat,
     handle_undo,
@@ -55,6 +54,7 @@ from natshell.tools.execute_shell import (
     needs_sudo_password,
     set_sudo_password,
 )
+from natshell.tools.registry import PLAN_SAFE_TOOLS
 from natshell.ui import clipboard
 from natshell.ui.commands import MODELS_DIR, ModelSwitchProvider
 from natshell.ui.widgets import (
