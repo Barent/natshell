@@ -195,7 +195,17 @@ class LocalEngine:
         }
 
         # llama-cpp-python's create_chat_completion is synchronous
-        response = await asyncio.to_thread(self.llm.create_chat_completion, **kwargs)
+        try:
+            response = await asyncio.to_thread(self.llm.create_chat_completion, **kwargs)
+        except ValueError as e:
+            err_str = str(e).lower()
+            if "context window" in err_str or "exceed" in err_str:
+                from natshell.inference.remote import ContextOverflowError
+
+                raise ContextOverflowError(
+                    f"Prompt exceeds local model context window ({self.n_ctx} tokens): {e}"
+                ) from e
+            raise
 
         return self._parse_response(response)
 

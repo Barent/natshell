@@ -149,5 +149,8 @@ class SafetyClassifier:
             # Unknown operation — let the tool handle the error, but confirm
             return Risk.CONFIRM
 
+        if tool_name == "fetch_url":
+            return Risk.SAFE
+
         # list_directory, search_files are always safe
         return Risk.SAFE

@@ -10,7 +10,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - **Inference**: Bundled llama.cpp via llama-cpp-python, with optional Ollama or remote API fallback. Runtime engine swapping supported.
 - **TUI**: Textual framework with custom widgets, command palette, clipboard integration
 - **Safety**: Regex-based command classifier (safe/confirm/blocked) with command chaining detection, sensitive path gating, and env var filtering
-- **Tools**: execute_shell, read_file, write_file, edit_file, run_code, list_directory, search_files, git_tool, natshell_help
+- **Tools**: execute_shell, read_file, write_file, edit_file, run_code, list_directory, search_files, git_tool, natshell_help, fetch_url
 
 ## Key Design Decisions
 
@@ -64,7 +64,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/inference/ollama.py` — Ollama server ping, model listing, URL normalization
 
 ### Tools
-- `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (9 tools)
+- `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (10 tools)
 - `src/natshell/tools/execute_shell.py` — Shell execution with sudo password caching (5-min timeout), sensitive env var filtering, output truncation, process group isolation, auto-timeout patterns for long-running commands (default 60s)
 - `src/natshell/tools/read_file.py` — File reading with line limits, `offset` and `limit` parameters, actionable truncation warning with offset hint
 - `src/natshell/tools/write_file.py` — File writing (always requires confirmation)
@@ -76,6 +76,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/tools/git_tool.py` — Structured git operations (status, diff, log, branch, commit, stash). Read-only ops are safe; mutating ops require confirmation. Blocks dangerous commit flags (--amend, --author=, --date=).
 - `src/natshell/tools/limits.py` — Context-aware output truncation limits, centralizes scaling logic
 - `src/natshell/tools/natshell_help.py` — Self-documentation tool with static topics (overview, commands, tools, models, troubleshooting) and dynamic topics (config, config_reference, safety). Accepts injected `SafetyConfig` for live safety pattern reporting.
+- `src/natshell/tools/fetch_url.py` — Fetch URL contents with SSRF protection (private IP blocking), response size cap (1 MB), timeout limits, GET-only. Classified as SAFE.
 
 ### Safety
 - `src/natshell/safety/classifier.py` — Command risk classifier. Splits chained commands (`&&`, `||`, `;`, `&`, `|`) and classifies each sub-command. Detects subshell/backtick expansion. Sensitive file path gating for read_file. Three modes: confirm (default), warn, yolo.
@@ -146,6 +147,7 @@ Test files:
 - `test_file_tracker.py` — FileReadTracker state tracking and path resolution
 - `test_coding_tools.py` — edit_file and run_code tool tests (includes fuzzy match, start_line/end_line, tracker integration)
 - `test_natshell_help.py` — natshell_help static/dynamic topic tests
+- `test_fetch_url.py` — fetch_url tool tests (SSRF blocking, scheme validation, truncation, binary handling)
 - `test_history_input.py` — HistoryInput widget history navigation
 - `test_engine_preference.py` — Engine preference persistence and loading
 - `test_clipboard.py` — Clipboard backends

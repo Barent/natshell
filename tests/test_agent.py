@@ -6,7 +6,7 @@ import json
 from unittest.mock import AsyncMock
 
 from natshell.agent.context import SystemContext
-from natshell.agent.loop import AgentLoop, EventType
+from natshell.agent.loop import AgentLoop, EventType, _is_plan_request
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 from natshell.inference.local import _THINK_RE, _TOOL_CALL_RE
@@ -1218,3 +1218,109 @@ class TestEditFailureGuidance:
         finally:
             os.unlink(path)
             reset_tracker()
+
+
+# ─── Planning intent detection ────────────────────────────────────────────────
+
+
+class TestPlanRequestDetection:
+    def test_create_a_plan(self):
+        assert _is_plan_request("create a plan for the migration")
+
+    def test_write_a_plan(self):
+        assert _is_plan_request("write a plan to update the API")
+
+    def test_make_a_plan(self):
+        assert _is_plan_request("make a plan for refactoring")
+
+    def test_draft_plan(self):
+        assert _is_plan_request("draft a plan for the new feature")
+
+    def test_update_plan(self):
+        assert _is_plan_request("update the plan for deployment")
+
+    def test_build_a_plan(self):
+        assert _is_plan_request("build a plan for the CI pipeline")
+
+    def test_plan_to_update(self):
+        assert _is_plan_request("plan to update the database schema")
+
+    def test_plan_for_migration(self):
+        assert _is_plan_request("plan for migrating to v2")
+
+    def test_plan_how_to(self):
+        assert _is_plan_request("plan how to restructure the codebase")
+
+    def test_not_plan_go_home(self):
+        """Casual use of 'plan' should not trigger."""
+        assert not _is_plan_request("I plan to go home later")
+
+    def test_not_plain_statement(self):
+        assert not _is_plan_request("fix the bug in main.py")
+
+    def test_not_execute_plan(self):
+        """Running a plan is not asking to create one."""
+        assert not _is_plan_request("execute the plan now")
+
+
+class TestPlanningIntentInjection:
+    async def test_plan_request_injects_system_message(self):
+        """When user asks to plan, a system message should be injected."""
+        agent = _make_agent(
+            [CompletionResult(content="Here is my plan...")],
+        )
+        events = await _collect_events(agent, "create a plan for updating the API")
+
+        # Check that a planning mode system message was injected
+        system_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "Planning mode" in m.get("content", "")
+        ]
+        assert len(system_msgs) == 1
+        assert "Do not modify files" in system_msgs[0]["content"]
+
+    async def test_non_plan_request_no_system_message(self):
+        """Normal requests should not inject a planning system message."""
+        agent = _make_agent(
+            [CompletionResult(content="Done!")],
+        )
+        events = await _collect_events(agent, "fix the bug in main.py")
+
+        system_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "Planning mode" in m.get("content", "")
+        ]
+        assert len(system_msgs) == 0
+
+
+# ─── ContextOverflowError from local engine ──────────────────────────────────
+
+
+class TestLocalContextOverflow:
+    async def test_local_valueerror_becomes_context_overflow(self):
+        """ValueError with 'context window' should become ContextOverflowError."""
+        from natshell.inference.remote import ContextOverflowError
+
+        agent = _make_agent([])
+
+        # Seed enough history to allow compaction
+        agent.messages.append({"role": "user", "content": "first question"})
+        agent.messages.append({"role": "assistant", "content": "first answer"})
+        agent.messages.append({"role": "user", "content": "second question"})
+        agent.messages.append({"role": "assistant", "content": "second answer"})
+
+        # Simulate a ContextOverflowError (as local.py would raise)
+        agent.engine.chat_completion = AsyncMock(
+            side_effect=[
+                ContextOverflowError("Prompt exceeds local model context window (4096 tokens)"),
+                CompletionResult(content="Recovered after compaction."),
+            ]
+        )
+
+        events = await _collect_events(agent, "another question")
+        types = [e.type for e in events]
+
+        # Should recover via compaction
+        error_events = [e for e in events if e.type == EventType.ERROR]
+        assert any("compacted" in e.data.lower() for e in error_events)
+        assert EventType.RESPONSE in types

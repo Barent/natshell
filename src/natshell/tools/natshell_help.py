@@ -57,7 +57,8 @@ _STATIC_TOPICS: dict[str, str] = {
         "  write_file     — Write/append to a file (always requires confirmation)\n"
         "  list_directory — List directory contents with sizes and types\n"
         "  search_files   — Text search (grep) or file search (find) in a directory\n"
-        "  natshell_help  — Look up NatShell documentation by topic (this tool)"
+        "  natshell_help  — Look up NatShell documentation by topic (this tool)\n"
+        "  fetch_url     — Fetch a URL and return its content (blocks private/internal IPs)"
     ),
     "models": (
         "Model configuration:\n"

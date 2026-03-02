@@ -59,7 +59,7 @@ temperature = 0.3
 #   Shell output: 4k/8k/12k/16k/32k/64k chars for 4k/16k/32k/64k/128k/256k contexts.
 #   File read: 200/500/1000/2000/3000/4000 lines for <16k/16k/32k/64k/128k/256k contexts.
 max_tokens = 2048
-# Extra context tokens to reserve beyond max_tokens (0 = auto ~400 tokens).
+# Extra context tokens to reserve beyond max_tokens (0 = auto ~800 tokens).
 # Increase if you add many custom safety patterns or use verbose tool outputs.
 # context_reserve = 0
 

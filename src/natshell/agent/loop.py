@@ -26,6 +26,18 @@ from natshell.tools.registry import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
 
+_PLAN_REQUEST_RE = re.compile(
+    r"\b(?:create|write|make|draft|update|build)\b.{0,30}\bplan\b"
+    r"|\bplan\b.{0,30}\b(?:for|how|what)\b"
+    r"|\bplan\s+to\s+(?:update|fix|refactor|migrate|implement|add|remove|change|deploy|install|configure|set\s*up|build|create|upgrade)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_plan_request(text: str) -> bool:
+    """Detect if the user is asking the model to create/write a plan."""
+    return bool(_PLAN_REQUEST_RE.search(text))
+
 
 class EventType(Enum):
     THINKING = "thinking"
@@ -235,7 +247,7 @@ class AgentLoop:
             )
 
         response_reserve = self._max_tokens
-        tool_reserve = self.config.context_reserve or 400
+        tool_reserve = self.config.context_reserve or 800
         budget = n_ctx - response_reserve - tool_reserve
         budget = max(budget, 1024)  # minimum viable budget
 
@@ -254,6 +266,7 @@ class AgentLoop:
         user_input: str,
         confirm_callback=None,
         password_callback=None,
+        tool_filter: set[str] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """
         Process a user message through the full agent loop.
@@ -267,8 +280,20 @@ class AgentLoop:
                             safety mode is 'confirm'.
             password_callback: An async callable that takes a ToolCall and returns
                             the sudo password (str) or None if cancelled.
+            tool_filter: If provided, only expose these tools to the model.
         """
         self.messages.append({"role": "user", "content": user_input})
+
+        # Inject planning mode reminder when user asks for a plan
+        if _is_plan_request(user_input):
+            self.messages.append({
+                "role": "system",
+                "content": (
+                    "[Planning mode] The user is asking you to plan. "
+                    "Describe your approach in text FIRST. Do not modify files "
+                    "or run commands until the user approves the plan."
+                ),
+            })
 
         # Reset edit failure tracking for this run
         self._edit_failures = 0
@@ -294,12 +319,24 @@ class AgentLoop:
             if self._context_manager:
                 self.messages = self._context_manager.trim_messages(self.messages)
 
+            # Pre-flight check: force compaction if estimated tokens already exceed context
+            if self._context_manager:
+                estimated = self._context_manager.estimate_tokens(self.messages)
+                try:
+                    n_ctx_pf = self.engine.engine_info().n_ctx or 0
+                except (AttributeError, TypeError):
+                    n_ctx_pf = 0
+                if n_ctx_pf > 0 and estimated + self._max_tokens > n_ctx_pf:
+                    stats = self.compact_history()
+                    if stats.get("compacted"):
+                        self.messages = self._context_manager.trim_messages(self.messages)
+
             # Get model response
             try:
                 t0 = time.monotonic()
                 result = await self.engine.chat_completion(
                     messages=self.messages,
-                    tools=self.tools.get_tool_schemas(),
+                    tools=self.tools.get_tool_schemas(allowed=tool_filter),
                     temperature=self.config.temperature,
                     max_tokens=self._max_tokens,
                 )

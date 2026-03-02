@@ -21,6 +21,7 @@ from natshell.agent.plan_executor import (
     _build_step_prompt,
     _shallow_tree,
 )
+from natshell.tools.registry import PLAN_SAFE_TOOLS
 from natshell.commands import (
     compact_chat,
     handle_undo,
@@ -483,6 +484,7 @@ class NatShellApp(App):
                 prompt,
                 confirm_callback=confirm_cb,
                 password_callback=password_callback,
+                tool_filter=PLAN_SAFE_TOOLS,
             ):
                 self._render_agent_event(event, conversation, thinking_ref)
 

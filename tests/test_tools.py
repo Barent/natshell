@@ -271,7 +271,7 @@ class TestRegistry:
     def test_get_tool_schemas(self):
         registry = create_default_registry()
         schemas = registry.get_tool_schemas()
-        assert len(schemas) == 9
+        assert len(schemas) == 10
         for schema in schemas:
             assert schema["type"] == "function"
             assert "function" in schema
@@ -356,3 +356,56 @@ class TestEnvVarFiltering:
         monkeypatch.setenv("REDIS_URL", "redis://secret")
         result = await execute_shell('echo "REDIS=$REDIS_URL"')
         assert "redis://secret" not in result.output
+
+
+# ─── Tool schema filtering ───────────────────────────────────────────────────
+
+
+class TestToolSchemaFiltering:
+    def test_allowed_filters_schemas(self):
+        """get_tool_schemas(allowed=...) should only return matching tools."""
+        registry = create_default_registry()
+        schemas = registry.get_tool_schemas(allowed={"read_file", "list_directory"})
+        names = {s["function"]["name"] for s in schemas}
+        assert names == {"read_file", "list_directory"}
+
+    def test_allowed_none_returns_all(self):
+        """get_tool_schemas(allowed=None) should return all tools."""
+        registry = create_default_registry()
+        all_schemas = registry.get_tool_schemas()
+        none_schemas = registry.get_tool_schemas(allowed=None)
+        assert len(all_schemas) == len(none_schemas)
+
+    def test_allowed_empty_returns_none(self):
+        """get_tool_schemas(allowed=set()) should return no tools."""
+        registry = create_default_registry()
+        schemas = registry.get_tool_schemas(allowed=set())
+        assert len(schemas) == 0
+
+    def test_plan_safe_tools_excludes_destructive(self):
+        """PLAN_SAFE_TOOLS should not include execute_shell, edit_file, or run_code."""
+        from natshell.tools.registry import PLAN_SAFE_TOOLS
+
+        assert "execute_shell" not in PLAN_SAFE_TOOLS
+        assert "edit_file" not in PLAN_SAFE_TOOLS
+        assert "run_code" not in PLAN_SAFE_TOOLS
+
+    def test_plan_safe_tools_includes_read_tools(self):
+        """PLAN_SAFE_TOOLS should include read-only tools and write_file."""
+        from natshell.tools.registry import PLAN_SAFE_TOOLS
+
+        assert "read_file" in PLAN_SAFE_TOOLS
+        assert "list_directory" in PLAN_SAFE_TOOLS
+        assert "search_files" in PLAN_SAFE_TOOLS
+        assert "write_file" in PLAN_SAFE_TOOLS
+        assert "git_tool" in PLAN_SAFE_TOOLS
+        assert "natshell_help" in PLAN_SAFE_TOOLS
+
+    def test_plan_safe_tools_filters_correctly(self):
+        """Using PLAN_SAFE_TOOLS with get_tool_schemas produces the right subset."""
+        from natshell.tools.registry import PLAN_SAFE_TOOLS
+
+        registry = create_default_registry()
+        schemas = registry.get_tool_schemas(allowed=PLAN_SAFE_TOOLS)
+        names = {s["function"]["name"] for s in schemas}
+        assert names == PLAN_SAFE_TOOLS

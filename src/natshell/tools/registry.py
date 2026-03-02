@@ -10,6 +10,17 @@ from natshell.tools.limits import ToolLimits
 
 logger = logging.getLogger(__name__)
 
+# Tools that are safe to use during plan generation (read-only + write_file for PLAN.md)
+PLAN_SAFE_TOOLS: set[str] = {
+    "read_file",
+    "list_directory",
+    "search_files",
+    "natshell_help",
+    "write_file",
+    "git_tool",
+    "fetch_url",
+}
+
 
 @dataclass
 class ToolResult:
@@ -62,10 +73,16 @@ class ToolRegistry:
         self._definitions[definition.name] = definition
         logger.debug(f"Registered tool: {definition.name}")
 
-    def get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Generate OpenAI-compatible tool schemas for the LLM."""
+    def get_tool_schemas(self, allowed: set[str] | None = None) -> list[dict[str, Any]]:
+        """Generate OpenAI-compatible tool schemas for the LLM.
+
+        Args:
+            allowed: If provided, only include tools whose names are in this set.
+        """
         schemas = []
         for defn in self._definitions.values():
+            if allowed is not None and defn.name not in allowed:
+                continue
             schemas.append(
                 {
                     "type": "function",
@@ -162,6 +179,8 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.edit_file import edit_file
     from natshell.tools.execute_shell import DEFINITION as EXEC_DEF
     from natshell.tools.execute_shell import execute_shell
+    from natshell.tools.fetch_url import DEFINITION as FETCH_URL_DEF
+    from natshell.tools.fetch_url import fetch_url
     from natshell.tools.git_tool import DEFINITION as GIT_DEF
     from natshell.tools.git_tool import git_tool
     from natshell.tools.list_directory import DEFINITION as LIST_DEF
@@ -187,4 +206,5 @@ def create_default_registry() -> ToolRegistry:
     registry.register(RUN_CODE_DEF, run_code)
     registry.register(GIT_DEF, git_tool)
     registry.register(HELP_DEF, natshell_help)
+    registry.register(FETCH_URL_DEF, fetch_url)
     return registry

@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from natshell.agent.plan import Plan, parse_plan_file, parse_plan_text
-from natshell.agent.plan_executor import _build_step_prompt, _shallow_tree
+from natshell.agent.plan_executor import _build_plan_prompt, _build_step_prompt, _shallow_tree
 
 # ─── _build_step_prompt ──────────────────────────────────────────────────────
 
@@ -196,6 +196,32 @@ class TestPlanMaxSteps:
         config = AgentConfig(max_steps=10, plan_max_steps=30)
         assert config.max_steps == 10
         assert config.plan_max_steps == 30
+
+
+# ─── /exeplan in SLASH_COMMANDS ──────────────────────────────────────────────
+
+
+# ─── _build_plan_prompt ──────────────────────────────────────────────────────
+
+
+class TestBuildPlanPrompt:
+    def test_contains_prohibition_text(self):
+        """Plan prompt should contain tool restriction text."""
+        prompt = _build_plan_prompt("build a REST API", "project/\n  src/\n  package.json")
+        assert "Do NOT run shell commands with execute_shell" in prompt
+        assert "Do NOT modify existing files with edit_file" in prompt
+        assert "Do NOT execute code with run_code" in prompt
+        assert "ONLY use read_file, list_directory, search_files, and git_tool" in prompt
+        assert "write_file to create PLAN.md" in prompt
+
+    def test_contains_user_description(self):
+        prompt = _build_plan_prompt("build a REST API", "project/")
+        assert "build a REST API" in prompt
+
+    def test_contains_directory_tree(self):
+        tree = "project/\n  src/\n  Makefile"
+        prompt = _build_plan_prompt("test", tree)
+        assert "Makefile" in prompt
 
 
 # ─── /exeplan in SLASH_COMMANDS ──────────────────────────────────────────────
