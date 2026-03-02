@@ -111,6 +111,8 @@ class AgentLoop:
         self._edit_failures: int = 0
         self._edit_successes: int = 0
         self._completion_warning_sent: bool = False
+        # Repetitive read detection
+        self._read_counts: dict[str, int] = {}
         # Context overflow recovery guard
         self._context_recovery_attempted: bool = False
 
@@ -192,6 +194,11 @@ class AgentLoop:
             return 500
         return 200
 
+    @staticmethod
+    def _resolve_path(path: str) -> str:
+        """Canonicalize a path for tracking (mirrors file_tracker)."""
+        return str(Path(path).expanduser().resolve())
+
     def _setup_context_manager(self) -> None:
         """Create a ContextManager sized to the current engine's context window."""
         try:
@@ -267,6 +274,7 @@ class AgentLoop:
         self._edit_failures = 0
         self._edit_successes = 0
         self._completion_warning_sent = False
+        self._read_counts = {}
         self._context_recovery_attempted = False
 
         # Cumulative stats for this run
@@ -485,8 +493,32 @@ class AgentLoop:
                         tool_result=tool_result,
                     )
 
-                    # Build result content with escalating warnings on repeated failures
+                    # Build result content with warnings
                     result_content = tool_result.to_message_content()
+
+                    # Repetitive read detection
+                    if tool_call.name == "read_file":
+                        read_path = tool_call.arguments.get("path", "")
+                        if read_path:
+                            resolved = self._resolve_path(read_path)
+                            self._read_counts[resolved] = self._read_counts.get(resolved, 0) + 1
+                            count = self._read_counts[resolved]
+                            if count >= 3:
+                                result_content += (
+                                    f"\n\n\u26a0 You have read this file {count} times "
+                                    "without modifying it. Stop re-reading and use the "
+                                    "information you already have to make changes. "
+                                    "If edit_file is failing, use write_file instead."
+                                )
+
+                    # Reset read count when write/edit succeeds on a path
+                    if tool_call.name in ("edit_file", "write_file") and tool_result.exit_code == 0:
+                        write_path = tool_call.arguments.get("path", "")
+                        if write_path:
+                            resolved = self._resolve_path(write_path)
+                            self._read_counts.pop(resolved, None)
+
+                    # Escalating warnings on repeated edit failures
                     if (
                         tool_call.name == "edit_file"
                         and tool_result.exit_code != 0
@@ -494,14 +526,33 @@ class AgentLoop:
                         if self._edit_failures >= 3:
                             result_content += (
                                 "\n\n\u26a0 REPEATED EDIT FAILURES (3+). "
-                                "Stop and re-read the file with read_file "
-                                "before any more edits."
+                                "STOP using edit_file for this file. "
+                                "Use write_file to rewrite the entire file instead."
                             )
                         elif self._edit_failures >= 2:
                             result_content += (
-                                "\n\n\u26a0 Multiple edit failures. "
-                                "Re-read the file before retrying."
+                                "\n\n\u26a0 Multiple edit failures. Try: "
+                                "(1) use the closest match shown above as your old_text, or "
+                                "(2) use write_file to rewrite the entire file instead."
                             )
+
+                    # Step budget awareness
+                    pct_used = steps_used / max_steps
+                    if pct_used >= 0.90:
+                        remaining = max_steps - steps_used
+                        result_content += (
+                            f"\n\n\u26a0 URGENT: [{steps_used}/{max_steps} steps used"
+                            f" \u2014 only {remaining} steps left. Finish NOW.]"
+                        )
+                    elif pct_used >= 0.75:
+                        result_content += (
+                            f"\n\n\u26a0 [{steps_used}/{max_steps} steps used"
+                            " \u2014 wrap up soon]"
+                        )
+                    elif pct_used >= 0.50:
+                        result_content += (
+                            f"\n\n[{steps_used}/{max_steps} steps used]"
+                        )
 
                     # Append exchange to conversation history
                     self._append_tool_exchange(tool_call, result_content)
@@ -692,6 +743,7 @@ class AgentLoop:
         else:
             self.messages = []
         reset_tracker()
+        self._read_counts = {}
 
     def compact_history(self, dry_run: bool = False) -> dict[str, Any]:
         """Compact conversation history, keeping system prompt and last 2 messages.

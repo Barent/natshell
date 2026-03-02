@@ -879,3 +879,342 @@ class TestProactiveCompaction:
         events = await _collect_events(agent, "test question")
         error_events = [e for e in events if e.type == EventType.ERROR]
         assert not any("compacted" in e.data.lower() for e in error_events)
+
+
+# ─── Repetitive read detection ───────────────────────────────────────────────
+
+
+class TestRepetitiveReadDetection:
+    async def test_read_warning_after_3_reads(self):
+        """Reading the same file 3 times should trigger a warning."""
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("hello world\n")
+            path = f.name
+
+        try:
+            agent = _make_agent(
+                [
+                    # 3 reads of the same file, then a text response
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="1", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="2", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="3", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(content="Done reading."),
+                ],
+                max_steps=5,
+                safety_mode="yolo",
+            )
+
+            events = await _collect_events(agent, "read the file")
+
+            # Find tool messages in the conversation history for the 3rd read
+            tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+            assert len(tool_msgs) == 3
+            # The 3rd read's tool message should contain the warning
+            assert "3 times" in tool_msgs[2]["content"]
+            assert "write_file" in tool_msgs[2]["content"]
+        finally:
+            os.unlink(path)
+
+    async def test_read_count_resets_after_write(self):
+        """Writing to a file should reset its read counter."""
+        import os
+        import tempfile
+
+        from natshell.tools.file_tracker import reset_tracker
+
+        reset_tracker()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("original content\n")
+            path = f.name
+
+        try:
+            agent = _make_agent(
+                [
+                    # 2 reads, then a write, then 1 more read
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="1", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="2", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="3",
+                                name="write_file",
+                                arguments={"path": path, "content": "new content\n"},
+                            )
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="4", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(content="Done."),
+                ],
+                max_steps=6,
+                safety_mode="yolo",
+            )
+
+            events = await _collect_events(agent, "update the file")
+
+            # The read after the write should be count=1, so no warning
+            tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+            # Last tool message is the 4th (read after write) — should NOT have warning
+            assert "times" not in tool_msgs[-1]["content"]
+        finally:
+            os.unlink(path)
+            reset_tracker()
+
+    async def test_no_warning_for_2_reads(self):
+        """Reading a file only 2 times should NOT trigger a warning."""
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("some content\n")
+            path = f.name
+
+        try:
+            agent = _make_agent(
+                [
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="1", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(id="2", name="read_file", arguments={"path": path})
+                        ],
+                    ),
+                    CompletionResult(content="Done."),
+                ],
+                max_steps=4,
+                safety_mode="yolo",
+            )
+
+            events = await _collect_events(agent, "read the file")
+
+            tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+            for msg in tool_msgs:
+                assert "times" not in msg["content"]
+        finally:
+            os.unlink(path)
+
+
+# ─── Step budget awareness ───────────────────────────────────────────────────
+
+
+class TestStepBudgetAwareness:
+    async def test_50pct_budget_info(self):
+        """At 50% of budget, info message should appear in tool messages."""
+        # max_steps=10, so step 5 = 50%
+        responses = [
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id=str(i), name="execute_shell", arguments={"command": "echo hi"})
+                ],
+            )
+            for i in range(10)
+        ] + [CompletionResult(content="Done.")]
+
+        agent = _make_agent(responses, max_steps=10)
+        events = await _collect_events(agent, "do stuff")
+
+        # Context manager may trim older messages, so check any surviving tool msg
+        tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+        all_content = "\n".join(m["content"] for m in tool_msgs)
+        assert "steps used" in all_content
+
+    async def test_90pct_urgent_warning(self):
+        """At 90% of budget, URGENT warning should appear."""
+        responses = [
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id=str(i), name="execute_shell", arguments={"command": "echo hi"})
+                ],
+            )
+            for i in range(10)
+        ] + [CompletionResult(content="Done.")]
+
+        agent = _make_agent(responses, max_steps=10)
+        events = await _collect_events(agent, "do stuff")
+
+        tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+        all_content = "\n".join(m["content"] for m in tool_msgs)
+        assert "URGENT" in all_content
+
+    async def test_no_budget_info_below_50pct(self):
+        """Below 50% of budget, no step info should appear."""
+        responses = [
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="1", name="execute_shell", arguments={"command": "echo hi"})
+                ],
+            ),
+            CompletionResult(content="Done."),
+        ]
+
+        agent = _make_agent(responses, max_steps=10)
+        events = await _collect_events(agent, "do stuff")
+
+        tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+        # Step 1 out of 10 = 10% — no budget info
+        for msg in tool_msgs:
+            assert "steps used" not in msg["content"]
+
+
+# ─── Edit failure guidance ───────────────────────────────────────────────────
+
+
+class TestEditFailureGuidance:
+    async def test_edit_failure_suggests_write_file(self):
+        """After 2 failed edits, warning should mention write_file."""
+        import os
+        import tempfile
+
+        from natshell.tools.file_tracker import reset_tracker
+
+        reset_tracker()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("real content\n")
+            path = f.name
+
+        try:
+            agent = _make_agent(
+                [
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="1",
+                                name="edit_file",
+                                arguments={
+                                    "path": path,
+                                    "old_text": "nonexistent",
+                                    "new_text": "replacement",
+                                },
+                            )
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="2",
+                                name="edit_file",
+                                arguments={
+                                    "path": path,
+                                    "old_text": "also nonexistent",
+                                    "new_text": "replacement",
+                                },
+                            )
+                        ],
+                    ),
+                    CompletionResult(content="Let me try write_file."),
+                ],
+                max_steps=5,
+                safety_mode="yolo",
+            )
+
+            events = await _collect_events(agent, "edit the file")
+
+            tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+            # 2nd edit failure should mention write_file
+            edit_msgs = [m for m in tool_msgs if "edit" in m.get("tool_call_id", "2")]
+            # Check the last tool message before the response
+            assert "write_file" in tool_msgs[-1]["content"]
+        finally:
+            os.unlink(path)
+            reset_tracker()
+
+    async def test_3_edit_failures_stop_directive(self):
+        """After 3 failed edits, warning should say STOP."""
+        import os
+        import tempfile
+
+        from natshell.tools.file_tracker import reset_tracker
+
+        reset_tracker()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("real content\n")
+            path = f.name
+
+        try:
+            agent = _make_agent(
+                [
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="1",
+                                name="edit_file",
+                                arguments={
+                                    "path": path,
+                                    "old_text": "nonexistent1",
+                                    "new_text": "replacement",
+                                },
+                            )
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="2",
+                                name="edit_file",
+                                arguments={
+                                    "path": path,
+                                    "old_text": "nonexistent2",
+                                    "new_text": "replacement",
+                                },
+                            )
+                        ],
+                    ),
+                    CompletionResult(
+                        tool_calls=[
+                            ToolCall(
+                                id="3",
+                                name="edit_file",
+                                arguments={
+                                    "path": path,
+                                    "old_text": "nonexistent3",
+                                    "new_text": "replacement",
+                                },
+                            )
+                        ],
+                    ),
+                    CompletionResult(content="Let me try write_file."),
+                ],
+                max_steps=5,
+                safety_mode="yolo",
+            )
+
+            events = await _collect_events(agent, "edit the file")
+
+            tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+            # 3rd edit failure should say "STOP using edit_file"
+            assert "STOP using edit_file" in tool_msgs[-1]["content"]
+        finally:
+            os.unlink(path)
+            reset_tracker()
