@@ -557,13 +557,13 @@ echo ""
 echo "  Select a model preset:"
 echo ""
 echo "    1) Light       — Qwen3-4B        (~2.5 GB, low RAM)"
-echo "    2) Standard    — Qwen3-8B        (~5 GB, general purpose)"
-echo "    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context) ★ Recommended"
+echo "    2) Standard    — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
+echo "    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context)"
 echo "    4) Remote only — use an Ollama server (no local download)"
 echo "    5) Skip        — configure later"
 echo ""
-read -rp "  Choice [3]: " model_choice
-model_choice="${model_choice:-3}"
+read -rp "  Choice [2]: " model_choice
+model_choice="${model_choice:-2}"
 
 DOWNLOAD_MODEL=false
 SETUP_OLLAMA=false
@@ -598,12 +598,12 @@ case "$model_choice" in
         info "Skipping setup. Run 'natshell' later to configure."
         ;;
     *)
-        warn "Invalid choice '$model_choice', defaulting to Enhanced preset"
-        model_choice=3
+        warn "Invalid choice '$model_choice', defaulting to Standard preset"
+        model_choice=2
         DOWNLOAD_MODEL=true
         WRITE_MODEL_CONFIG=true
-        HF_REPO="bartowski/Mistral-Nemo-Instruct-2407-GGUF"
-        HF_FILE="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
+        HF_REPO="Qwen/Qwen3-8B-GGUF"
+        HF_FILE="Qwen3-8B-Q4_K_M.gguf"
         ;;
 esac
 
