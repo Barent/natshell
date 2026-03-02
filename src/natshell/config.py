@@ -78,6 +78,24 @@ class McpConfig:
 
 
 @dataclass
+class ProfileConfig:
+    """A named configuration profile that can override settings across sections."""
+    # Ollama/remote
+    ollama_model: str = ""      # → ollama.default_model
+    ollama_url: str = ""        # → ollama.url
+    remote_url: str = ""        # → remote.url
+    remote_model: str = ""      # → remote.model
+    api_key: str = ""           # → remote.api_key
+    # Context and inference
+    n_ctx: int = 0              # → ollama.n_ctx or remote.n_ctx
+    temperature: float = 0.0    # → agent.temperature (0.0 = don't override)
+    # Engine
+    engine: str = ""            # → engine.preferred ("local"/"remote")
+    # Local model
+    n_gpu_layers: int = -2      # → model.n_gpu_layers (-2 = don't override)
+
+
+@dataclass
 class NatShellConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
@@ -88,6 +106,7 @@ class NatShellConfig:
     backup: BackupConfig = field(default_factory=BackupConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
     mcp: McpConfig = field(default_factory=McpConfig)
+    profiles: dict[str, ProfileConfig] = field(default_factory=dict)
 
 
 def load_config(config_path: str | Path | None = None) -> NatShellConfig:
@@ -186,6 +205,15 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
         for key, value in data["mcp"].items():
             if hasattr(config.mcp, key):
                 setattr(config.mcp, key, value)
+
+    if "profiles" in data:
+        for name, profile_data in data["profiles"].items():
+            if isinstance(profile_data, dict):
+                profile = ProfileConfig()
+                for key, value in profile_data.items():
+                    if hasattr(profile, key):
+                        setattr(profile, key, value)
+                config.profiles[name] = profile
 
 
 def save_ollama_default(model_name: str, url: str | None = None) -> Path:
@@ -371,3 +399,39 @@ def save_engine_preference(preferred: str) -> Path:
 
     config_path.write_text("".join(lines))
     return config_path
+
+
+def list_profiles(config: NatShellConfig) -> list[str]:
+    """Return available profile names."""
+    return sorted(config.profiles.keys())
+
+
+def apply_profile(config: NatShellConfig, name: str) -> None:
+    """Apply a named profile to the config, overriding only non-default values.
+
+    Raises KeyError if the profile name is not found.
+    """
+    if name not in config.profiles:
+        raise KeyError(f"Unknown profile: {name}")
+
+    profile = config.profiles[name]
+
+    if profile.ollama_model:
+        config.ollama.default_model = profile.ollama_model
+    if profile.ollama_url:
+        config.ollama.url = profile.ollama_url
+    if profile.remote_url:
+        config.remote.url = profile.remote_url
+    if profile.remote_model:
+        config.remote.model = profile.remote_model
+    if profile.api_key:
+        config.remote.api_key = profile.api_key
+    if profile.n_ctx:
+        config.ollama.n_ctx = profile.n_ctx
+        config.remote.n_ctx = profile.n_ctx
+    if profile.temperature:
+        config.agent.temperature = profile.temperature
+    if profile.engine:
+        config.engine.preferred = profile.engine
+    if profile.n_gpu_layers != -2:
+        config.model.n_gpu_layers = profile.n_gpu_layers

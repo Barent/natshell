@@ -29,6 +29,8 @@ from natshell.commands import (
 )
 from natshell.config import (
     NatShellConfig,
+    apply_profile,
+    list_profiles,
     save_engine_preference,
     save_model_config,
     save_ollama_default,
@@ -106,6 +108,8 @@ SLASH_COMMANDS = [
     ("/model switch", "Switch to a different local model"),
     ("/model local", "Switch back to local model"),
     ("/model default", "Set default remote model"),
+    ("/profile", "List configuration profiles"),
+    ("/profile", "Apply a configuration profile"),
     ("/history", "Show conversation context size"),
     ("/keys", "Show keyboard shortcuts"),
     ("/undo", "Undo the last file edit or write"),
@@ -357,6 +361,8 @@ class NatShellApp(App):
                     )
                 else:
                     self._handle_plan_command(args, conversation)
+            case "/profile":
+                await self._handle_profile_command(args, conversation)
             case "/model":
                 await self._handle_model_command(args, conversation)
             case "/history":
@@ -930,6 +936,83 @@ class NatShellApp(App):
         info = self.agent.engine.engine_info()
         text = set_default_model(model_name, self._config, info)
         conversation.mount(SystemMessage(text))
+
+    # ─── /profile ──────────────────────────────────────────────────────
+
+    async def _handle_profile_command(
+        self, args: str, conversation: ScrollableContainer
+    ) -> None:
+        """Dispatch /profile subcommands."""
+        name = args.strip()
+
+        if not name:
+            # List available profiles
+            names = list_profiles(self._config)
+            if not names:
+                conversation.mount(
+                    SystemMessage(
+                        "No profiles configured.\n"
+                        "Add [profiles.<name>] sections to "
+                        "~/.config/natshell/config.toml"
+                    )
+                )
+                return
+            lines = ["[bold]Available Profiles[/]\n"]
+            for n in names:
+                p = self._config.profiles[n]
+                # Build a short summary of what the profile sets
+                parts: list[str] = []
+                if p.ollama_model:
+                    parts.append(p.ollama_model)
+                elif p.remote_model:
+                    parts.append(p.remote_model)
+                if p.engine:
+                    parts.append(f"engine={p.engine}")
+                if p.n_ctx:
+                    parts.append(f"n_ctx={p.n_ctx}")
+                summary = ", ".join(parts) if parts else "(empty)"
+                lines.append(f"  [bold cyan]{n}[/]  [dim]{summary}[/]")
+            lines.append("\n[dim]Use /profile <name> to apply.[/]")
+            conversation.mount(SystemMessage("\n".join(lines)))
+            return
+
+        # Apply a named profile
+        try:
+            apply_profile(self._config, name)
+        except KeyError:
+            available = ", ".join(list_profiles(self._config)) or "(none)"
+            conversation.mount(
+                SystemMessage(
+                    f"Unknown profile: [bold]{_escape(name)}[/]\n"
+                    f"Available: {available}"
+                )
+            )
+            return
+
+        profile = self._config.profiles[name]
+
+        # Swap engine if the profile specifies a remote model
+        if profile.ollama_model:
+            await self._model_use(profile.ollama_model, conversation)
+        elif profile.remote_model and profile.remote_url:
+            await self._model_use(profile.remote_model, conversation)
+        elif profile.engine == "local":
+            await self._model_switch_local(conversation)
+        else:
+            # No engine swap needed — just report the change
+            parts: list[str] = []
+            if profile.n_ctx:
+                parts.append(f"n_ctx={profile.n_ctx}")
+            if profile.temperature:
+                parts.append(f"temperature={profile.temperature}")
+            if profile.n_gpu_layers != -2:
+                parts.append(f"n_gpu_layers={profile.n_gpu_layers}")
+            detail = ", ".join(parts) if parts else "applied"
+            conversation.mount(
+                SystemMessage(
+                    f"Profile [bold]{_escape(name)}[/] applied ({detail})"
+                )
+            )
 
     def _show_history_info(self, conversation: ScrollableContainer) -> None:
         """Show conversation context size and context window usage."""

@@ -120,3 +120,50 @@ max_per_file = 10
 [ui]
 # Theme: "dark" or "light"
 theme = "dark"
+
+# ─── Configuration Profiles ─────────────────────────────────────────
+# Uncomment and adjust any profile below, or define your own [profiles.*]
+# sections. Switch at runtime with /profile <name>.
+#
+# Each profile can override: ollama_model, ollama_url, remote_url,
+# remote_model, api_key, n_ctx, temperature, engine, n_gpu_layers.
+# Only the keys you specify are changed — everything else stays as-is.
+
+# --- Ollama on localhost, small model, low resource usage ---
+# [profiles.lite]
+# ollama_model = "qwen3:4b"
+# n_ctx = 8192
+# temperature = 0.3
+
+# --- Ollama on localhost, mid-range model ---
+# [profiles.balanced]
+# ollama_model = "qwen3:14b"
+# n_ctx = 32768
+# temperature = 0.3
+
+# --- Ollama large coding model (MoE, needs 24+ GB RAM) ---
+# [profiles.coder]
+# ollama_model = "qwen3-coder:30b"
+# n_ctx = 131072
+# temperature = 0.3
+
+# --- Ollama large coding model, max context (needs 32+ GB RAM) ---
+# [profiles.coder-max]
+# ollama_model = "qwen3-coder:30b-256k"
+# n_ctx = 262144
+# temperature = 0.3
+
+# --- Remote OpenAI-compatible API ---
+# [profiles.remote-api]
+# remote_url = "https://api.example.com/v1"
+# remote_model = "gpt-4o"
+# api_key = ""
+# n_ctx = 128000
+# temperature = 0.3
+
+# --- Local-only, CPU, minimal ---
+# [profiles.local-cpu]
+# engine = "local"
+# n_gpu_layers = 0
+# n_ctx = 4096
+# temperature = 0.3
