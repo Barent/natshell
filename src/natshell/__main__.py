@@ -74,6 +74,12 @@ def main() -> None:
         help="Enable verbose logging",
     )
     parser.add_argument(
+        "--log-file",
+        metavar="PATH",
+        help="Write all log messages (DEBUG level) to a file. "
+        "Useful for real-time monitoring with tail -f.",
+    )
+    parser.add_argument(
         "--headless",
         metavar="PROMPT",
         help="Run a single prompt without the TUI and exit. "
@@ -97,6 +103,15 @@ def main() -> None:
     # Setup logging
     level = logging.DEBUG if args.verbose else logging.WARNING
     logging.basicConfig(level=level, format="%(name)s: %(message)s")
+
+    if args.log_file:
+        file_handler = logging.FileHandler(args.log_file, encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        logging.getLogger().addHandler(file_handler)
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # Handle self-update
     if args.update:
