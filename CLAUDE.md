@@ -17,7 +17,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 1. `execute_shell` runs commands via `bash -c` with the user's real environment — this is intentional, not a sandbox
 2. The safety classifier is pattern-based (fast, deterministic), NOT LLM-based
 3. System context is gathered once at startup and injected into the system prompt
-4. Local inference uses `llama-cpp-python` — tool definitions are injected as plain text (not llama-cpp-python's built-in tool format) because Qwen3 outputs `<tool_call>` XML tags that are parsed manually
+4. Local inference uses `llama-cpp-python` — tool definitions are injected as plain text (not llama-cpp-python's built-in tool format). Qwen3 outputs `<tool_call>` XML tags; Mistral outputs `[TOOL_CALLS]` JSON arrays — both are parsed in `_parse_response()` with model family auto-detection
 5. The agent loop is async — local inference calls are wrapped in `asyncio.to_thread()` to avoid blocking the TUI
 6. Output from commands is truncated to ~4000 chars to fit context windows (auto-scales to 64K for 256K context windows)
 14. Truncation safety — when `read_file` truncates, it emits `⚠ FILE TRUNCATED` with the exact offset to continue reading. The `FileReadTracker` (`file_tracker.py`) enforces that `edit_file` blocks edits on partially-read files. `edit_file` error previews show 200 lines (not 50) so the model can self-correct.
@@ -125,9 +125,14 @@ These security features were added in the security refactor:
 
 ## Model
 
-Default: Qwen3-4B Q4_K_M GGUF (~2.5GB). Supports tool calling natively via `<tool_call>` XML tags.
-Auto-downloaded on first run to `~/.local/share/natshell/models/`
-Context size is auto-detected from model filename (4B → 4096, 8B → 8192) when `n_ctx = 0`.
+Three local model tiers:
+- **Light**: Qwen3-4B Q4_K_M (~2.5 GB) — tool calling via `<tool_call>` XML tags
+- **Standard**: Qwen3-8B Q4_K_M (~5 GB) — tool calling via `<tool_call>` XML tags
+- **Enhanced**: Mistral Nemo 12B Q4_K_M (~7.5 GB, 128K context) — tool calling via `[TOOL_CALLS]` JSON array
+
+Default: Qwen3-4B, auto-downloaded on first run to `~/.local/share/natshell/models/`
+Model family is auto-detected from filename (`_detect_model_family()` in `local.py`): "mistral" → `[TOOL_CALLS]` parser, "qwen" → `<tool_call>` parser.
+Context size is auto-detected from model filename (4B → 4096, 8B → 8192, Mistral Nemo → 32768) when `n_ctx = 0`.
 
 ## Key Files Reference
 

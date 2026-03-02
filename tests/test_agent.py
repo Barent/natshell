@@ -9,7 +9,13 @@ from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop, EventType, _is_plan_request
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
-from natshell.inference.local import _THINK_RE, _TOOL_CALL_RE
+from natshell.inference.local import (
+    _MISTRAL_TOOL_CALLS_RE,
+    _THINK_RE,
+    _TOOL_CALL_RE,
+    _detect_model_family,
+    _infer_context_size,
+)
 from natshell.safety.classifier import SafetyClassifier
 from natshell.tools.registry import create_default_registry
 
@@ -434,6 +440,83 @@ class TestQwen3Parsing:
         assert len(matches) == 1
         parsed = json.loads(matches[0])
         assert parsed["name"] == "execute_shell"
+
+
+# ─── Mistral [TOOL_CALLS] parsing ─────────────────────────────────────────────
+
+
+class TestMistralParsing:
+    def test_mistral_tool_calls_regex_matches(self):
+        text = '[TOOL_CALLS] [{"name": "execute_shell", "arguments": {"command": "ls"}}]'
+        match = _MISTRAL_TOOL_CALLS_RE.search(text)
+        assert match is not None
+        calls = json.loads(match.group(1))
+        assert len(calls) == 1
+        assert calls[0]["name"] == "execute_shell"
+        assert calls[0]["arguments"]["command"] == "ls"
+
+    def test_mistral_tool_calls_multiple_tools(self):
+        text = (
+            '[TOOL_CALLS] [{"name": "execute_shell", "arguments": {"command": "ls"}},'
+            ' {"name": "read_file", "arguments": {"path": "/tmp/test.txt"}}]'
+        )
+        match = _MISTRAL_TOOL_CALLS_RE.search(text)
+        assert match is not None
+        calls = json.loads(match.group(1))
+        assert len(calls) == 2
+        assert calls[0]["name"] == "execute_shell"
+        assert calls[1]["name"] == "read_file"
+
+    def test_mistral_tool_calls_with_text_prefix(self):
+        text = (
+            'Let me check that for you.\n'
+            '[TOOL_CALLS] [{"name": "execute_shell", "arguments": {"command": "whoami"}}]'
+        )
+        match = _MISTRAL_TOOL_CALLS_RE.search(text)
+        assert match is not None
+        calls = json.loads(match.group(1))
+        assert calls[0]["name"] == "execute_shell"
+
+    def test_mistral_tool_calls_multiline(self):
+        text = (
+            '[TOOL_CALLS]\n'
+            '[{"name": "execute_shell", "arguments": {"command": "uname -r"}}]'
+        )
+        match = _MISTRAL_TOOL_CALLS_RE.search(text)
+        assert match is not None
+        calls = json.loads(match.group(1))
+        assert calls[0]["arguments"]["command"] == "uname -r"
+
+
+# ─── Model family detection ──────────────────────────────────────────────────
+
+
+class TestModelFamilyDetection:
+    def test_qwen3_4b(self):
+        assert _detect_model_family("Qwen3-4B-Q4_K_M.gguf") == "qwen"
+
+    def test_qwen3_8b(self):
+        assert _detect_model_family("Qwen3-8B-Q4_K_M.gguf") == "qwen"
+
+    def test_mistral_nemo(self):
+        assert _detect_model_family("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf") == "mistral"
+
+    def test_unknown_model_defaults_to_qwen(self):
+        assert _detect_model_family("some-random-model.gguf") == "qwen"
+
+
+# ─── Context size override ───────────────────────────────────────────────────
+
+
+class TestContextSizeOverride:
+    def test_mistral_nemo_returns_32768(self):
+        assert _infer_context_size("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf") == 32768
+
+    def test_qwen3_4b_returns_4096(self):
+        assert _infer_context_size("Qwen3-4B-Q4_K_M.gguf") == 4096
+
+    def test_qwen3_8b_returns_8192(self):
+        assert _infer_context_size("Qwen3-8B-Q4_K_M.gguf") == 8192
 
 
 # ─── max_tokens auto-scaling ────────────────────────────────────────────────

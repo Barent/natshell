@@ -161,6 +161,12 @@ theme = "dark"
 # n_ctx = 128000
 # temperature = 0.3
 
+# --- Mistral Nemo 12B, local or Ollama (128K context, needs 16+ GB RAM) ---
+# [profiles.mistral-nemo]
+# ollama_model = "mistral-nemo"
+# n_ctx = 131072
+# temperature = 0.3
+
 # --- Local-only, CPU, minimal ---
 # [profiles.local-cpu]
 # engine = "local"

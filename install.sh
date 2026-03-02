@@ -556,17 +556,16 @@ echo "  ─── NatShell Setup ───"
 echo ""
 echo "  Select a model preset:"
 echo ""
-echo "    1) Light    — Qwen3-4B  (~2.5 GB, low RAM)"
-echo "    2) Standard — Qwen3-8B  (~5 GB, better quality)"
-echo "    3) Both     — download Light + Standard (~7.5 GB)"
+echo "    1) Light       — Qwen3-4B        (~2.5 GB, low RAM)"
+echo "    2) Standard    — Qwen3-8B        (~5 GB, general purpose)"
+echo "    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context) ★ Recommended"
 echo "    4) Remote only — use an Ollama server (no local download)"
-echo "    5) Skip — configure later"
+echo "    5) Skip        — configure later"
 echo ""
-read -rp "  Choice [1]: " model_choice
-model_choice="${model_choice:-1}"
+read -rp "  Choice [3]: " model_choice
+model_choice="${model_choice:-3}"
 
 DOWNLOAD_MODEL=false
-DOWNLOAD_BOTH=false
 SETUP_OLLAMA=false
 WRITE_MODEL_CONFIG=false
 HF_REPO=""
@@ -585,11 +584,11 @@ case "$model_choice" in
         HF_FILE="Qwen3-8B-Q4_K_M.gguf"
         ;;
     3)
-        info "Both models selected (Qwen3-4B + Qwen3-8B)"
-        DOWNLOAD_BOTH=true
+        info "Enhanced preset selected (Mistral Nemo 12B)"
+        DOWNLOAD_MODEL=true
         WRITE_MODEL_CONFIG=true
-        HF_REPO="Qwen/Qwen3-8B-GGUF"
-        HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+        HF_REPO="bartowski/Mistral-Nemo-Instruct-2407-GGUF"
+        HF_FILE="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
         ;;
     4)
         info "Remote only — skipping local model download"
@@ -599,9 +598,12 @@ case "$model_choice" in
         info "Skipping setup. Run 'natshell' later to configure."
         ;;
     *)
-        warn "Invalid choice '$model_choice', defaulting to Light preset"
-        model_choice=1
+        warn "Invalid choice '$model_choice', defaulting to Enhanced preset"
+        model_choice=3
         DOWNLOAD_MODEL=true
+        WRITE_MODEL_CONFIG=true
+        HF_REPO="bartowski/Mistral-Nemo-Instruct-2407-GGUF"
+        HF_FILE="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
         ;;
 esac
 
@@ -717,23 +719,7 @@ fi
 
 # ─── Model Download ──────────────────────────────────────────────────────────
 
-if [[ "$DOWNLOAD_BOTH" == true ]]; then
-    echo ""
-    info "Downloading Light model (Qwen3-4B)..."
-    "$VENV_DIR/bin/python" -c "
-from huggingface_hub import hf_hub_download
-from pathlib import Path
-model_dir = Path.home() / '.local' / 'share' / 'natshell' / 'models'
-model_dir.mkdir(parents=True, exist_ok=True)
-hf_hub_download(repo_id='Qwen/Qwen3-4B-GGUF', filename='Qwen3-4B-Q4_K_M.gguf', local_dir=str(model_dir))
-print('Done.')
-"
-    ok "Light model downloaded"
-
-    info "Downloading Standard model (Qwen3-8B)..."
-    "$SYMLINK" --download
-    ok "Standard model downloaded"
-elif [[ "$DOWNLOAD_MODEL" == true ]]; then
+if [[ "$DOWNLOAD_MODEL" == true ]]; then
     echo ""
     info "Downloading model..."
     "$SYMLINK" --download

@@ -382,10 +382,19 @@ def _ensure_model(config) -> str:
     if target.exists():
         return str(target)
 
+    # Estimate download size from filename
+    fname = config.model.hf_file.lower()
+    if "mistral" in fname and "nemo" in fname:
+        size_hint = "~7.5 GB"
+    elif "8b" in fname:
+        size_hint = "~5 GB"
+    else:
+        size_hint = "~2.5 GB"
+
     # Prompt user
     print("\nNo local model found.")
     print(f"Download {config.model.hf_file} from {config.model.hf_repo}?")
-    print("This is approximately 2.5 GB.\n")
+    print(f"This is approximately {size_hint}.\n")
 
     response = input("Download now? [Y/n]: ").strip().lower()
     if response and response != "y":

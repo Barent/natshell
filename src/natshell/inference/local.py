@@ -17,10 +17,23 @@ logger = logging.getLogger(__name__)
 
 # Regex to match <tool_call>{"name": ..., "arguments": ...}</tool_call> blocks
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+# Regex to match [TOOL_CALLS] JSON array (Mistral style)
+_MISTRAL_TOOL_CALLS_RE = re.compile(r"\[TOOL_CALLS\]\s*(\[.*?\])", re.DOTALL)
 # Regex to match <think>...</think> blocks (including empty ones)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 # Regex to match unclosed <think> blocks (truncated responses)
 _THINK_UNCLOSED_RE = re.compile(r"<think>(?:(?!</think>).)*$", re.DOTALL)
+
+
+def _detect_model_family(model_path: str) -> str:
+    """Detect the model family from the filename.
+
+    Returns "mistral" for Mistral models, "qwen" for everything else.
+    """
+    name = Path(model_path).name.lower()
+    if "mistral" in name:
+        return "mistral"
+    return "qwen"
 
 
 def _infer_context_size(model_path: str) -> int:
@@ -31,6 +44,9 @@ def _infer_context_size(model_path: str) -> int:
     Falls back to 4096 if no pattern is found.
     """
     name = Path(model_path).name.lower()
+    # Mistral Nemo supports 128K; 32K is safe for 16 GB RAM systems
+    if "mistral" in name and "nemo" in name:
+        return 32768
     match = re.search(r"(\d+(?:\.\d+)?)b", name)
     if match:
         param_billions = float(match.group(1))
@@ -87,6 +103,45 @@ def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _format_tools_for_prompt_mistral(tools: list[dict[str, Any]]) -> str:
+    """Format tool schemas for Mistral models.
+
+    Mistral models use [TOOL_CALLS] followed by a JSON array instead of XML tags.
+    """
+    lines = [
+        "# Available Tools",
+        "",
+        "You MUST use tools to perform actions. To call a tool, output:",
+        "",
+        '[TOOL_CALLS] [{"name": "tool_name", "arguments": {"param": "value"}}]',
+        "",
+        "You can call multiple tools at once by including multiple objects in the array.",
+        "",
+    ]
+
+    for tool in tools:
+        func = tool.get("function", {})
+        name = func.get("name", "")
+        desc = func.get("description", "")
+        params = func.get("parameters", {})
+
+        lines.append(f"## {name}")
+        lines.append(desc)
+
+        props = params.get("properties", {})
+        required = params.get("required", [])
+        if props:
+            lines.append("Parameters:")
+            for pname, pdef in props.items():
+                req = " (required)" if pname in required else ""
+                pdesc = pdef.get("description", "")
+                ptype = pdef.get("type", "")
+                lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 class LocalEngine:
     """LLM inference via bundled llama.cpp (llama-cpp-python)."""
 
@@ -115,6 +170,7 @@ class LocalEngine:
                 logger.info(f"Auto-selected GPU device {resolved_gpu}")
 
         self.model_path = model_path
+        self.model_family = _detect_model_family(model_path)
         self.n_ctx = n_ctx
         self.n_gpu_layers = n_gpu_layers
         self.main_gpu = resolved_gpu
@@ -213,7 +269,10 @@ class LocalEngine:
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Inject tool definitions into the system message as plain text."""
-        tool_text = _format_tools_for_prompt(tools)
+        if self.model_family == "mistral":
+            tool_text = _format_tools_for_prompt_mistral(tools)
+        else:
+            tool_text = _format_tools_for_prompt(tools)
 
         # Shallow-copy the list and deep-copy only the system message
         messages = list(messages)
@@ -274,10 +333,35 @@ class LocalEngine:
                 except (json.JSONDecodeError, KeyError):
                     logger.warning("Failed to parse tool_call from content: %s", match.group(0))
 
-        # Strip <think> and <tool_call> tags from content
+        # Parse [TOOL_CALLS] JSON array from content (Mistral style)
+        if not tool_calls:
+            mistral_match = _MISTRAL_TOOL_CALLS_RE.search(content)
+            if mistral_match:
+                try:
+                    calls = json.loads(mistral_match.group(1))
+                    for call in calls:
+                        name = call.get("name", "")
+                        arguments = call.get("arguments", {})
+                        if isinstance(arguments, str):
+                            arguments = json.loads(arguments)
+                        tool_calls.append(
+                            ToolCall(
+                                id=str(uuid.uuid4())[:8],
+                                name=name,
+                                arguments=arguments,
+                            )
+                        )
+                except (json.JSONDecodeError, KeyError):
+                    logger.warning(
+                        "Failed to parse [TOOL_CALLS] from content: %s",
+                        mistral_match.group(0),
+                    )
+
+        # Strip <think>, <tool_call>, and [TOOL_CALLS] blocks from content
         content = _THINK_RE.sub("", content)
         content = _THINK_UNCLOSED_RE.sub("", content)  # handle truncated think blocks
         content = _TOOL_CALL_RE.sub("", content)
+        content = _MISTRAL_TOOL_CALLS_RE.sub("", content)
         content = content.strip() or None
 
         usage = response.get("usage", {})
