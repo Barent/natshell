@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from rich.console import Group
+from rich.text import Text
+
 from natshell.inference.engine import ToolCall
 from natshell.ui.widgets import (
+    AssistantMessage,
+    PlanningMessage,
     _color_diff,
     _escape,
     _format_tool_detail,
@@ -145,3 +150,44 @@ class TestColorDiff:
         assert "[red]" not in result
         assert "[green]" not in result
         assert "[cyan]" not in result
+
+
+# ─── Syntax highlighting integration ────────────────────────────────────────
+
+
+class TestAssistantMessageHighlighting:
+    def test_plain_text_backward_compat(self):
+        """AssistantMessage without code blocks still produces a renderable."""
+        msg = AssistantMessage("Hello world")
+        assert msg._raw_text == "Hello world"
+        # Should be a Text (fast path, no fences)
+        assert isinstance(msg._formatted, Text)
+
+    def test_code_block_produces_group(self):
+        text = 'Here is code:\n```python\nprint("hi")\n```\nDone.'
+        msg = AssistantMessage(text)
+        assert msg._raw_text == text
+        assert isinstance(msg._formatted, Group)
+
+    def test_raw_text_preserved_for_copy(self):
+        text = '```python\nx = 1\n```'
+        msg = AssistantMessage(text)
+        assert msg._raw_text == text
+        assert msg.copyable_text == text
+
+    def test_metrics_suffix_included(self):
+        msg = AssistantMessage("Hello", metrics={"tokens_per_sec": 10.0})
+        # Should still render without error
+        assert msg._raw_text == "Hello"
+
+
+class TestPlanningMessageHighlighting:
+    def test_plain_text(self):
+        msg = PlanningMessage("thinking about it")
+        assert isinstance(msg._formatted, Text)
+
+    def test_code_block_renders(self):
+        text = 'I will run:\n```bash\nls -la\n```'
+        msg = PlanningMessage(text)
+        assert msg._raw_text == text
+        assert isinstance(msg._formatted, Group)

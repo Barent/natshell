@@ -13,8 +13,12 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
+from rich.console import RenderableType
+
 from natshell.inference.engine import ToolCall
+from natshell.ui.code_fence import parse_code_fences
 from natshell.ui.escape import escape_markup as _escape
+from natshell.ui.syntax_render import render_segments
 
 
 class HistoryInput(Input):
@@ -269,7 +273,7 @@ class LogoBanner(Horizontal):
 class CopyableMessage(Horizontal):
     """Base for message widgets with a copy button."""
 
-    def __init__(self, formatted: str, raw_text: str) -> None:
+    def __init__(self, formatted: str | RenderableType, raw_text: str) -> None:
         super().__init__()
         self._formatted = formatted
         self._raw_text = raw_text
@@ -316,11 +320,17 @@ class AssistantMessage(CopyableMessage):
     """A text response from the assistant."""
 
     def __init__(self, text: str, metrics: dict[str, Any] | None = None) -> None:
-        formatted = f"[bold green]NatShell:[/] {_escape(text)}"
+        suffix = ""
         if metrics:
             metrics_line = _format_metrics(metrics)
             if metrics_line:
-                formatted += f"\n[dim]{metrics_line}[/]"
+                suffix = f"\n[dim]{metrics_line}[/]"
+        segments = parse_code_fences(text)
+        formatted = render_segments(
+            segments,
+            prefix_markup="[bold green]NatShell:[/] ",
+            suffix_markup=suffix,
+        )
         super().__init__(formatted, text)
 
 
@@ -328,7 +338,9 @@ class PlanningMessage(CopyableMessage):
     """The assistant's planning/reasoning text before tool calls."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"[dim italic]{_escape(text)}[/]", text)
+        segments = parse_code_fences(text)
+        formatted = render_segments(segments, text_style="dim italic")
+        super().__init__(formatted, text)
 
 
 class CommandBlock(Vertical):
