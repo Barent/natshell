@@ -57,7 +57,18 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Create GitHub Release (if needed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes || true
+
       - name: Upload assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --clobber
+        run: |
+          # Delete existing assets first to avoid 422 "already exists" errors
+          for f in dist/*; do
+            name="$(basename "$f")"
+            gh release delete-asset "${{ github.ref_name }}" "$name" --repo "${{ github.repository }}" --yes 2>/dev/null || true
+          done
+          gh release upload "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}"
