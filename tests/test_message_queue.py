@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock
-
-import pytest
 
 from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop, EventType
@@ -81,7 +78,7 @@ class TestEnqueueAndDrain:
 
 class TestQueuedMessagesInjected:
     async def test_queued_messages_injected_between_steps(self):
-        """Messages enqueued mid-run appear in conversation history and yield QUEUED_MESSAGE events."""
+        """Enqueued messages appear in history and yield QUEUED_MESSAGE events."""
         # Step 1: model calls a tool, step 2: model responds with text
         responses = [
             CompletionResult(

@@ -6,15 +6,14 @@ import difflib
 from pathlib import Path
 from typing import Any
 
+from rich.console import RenderableType
+from rich.syntax import Syntax
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
-
-from rich.console import RenderableType
-from rich.syntax import Syntax
 
 from natshell.inference.engine import ToolCall
 from natshell.ui.code_fence import parse_code_fences
