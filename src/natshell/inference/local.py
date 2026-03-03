@@ -63,22 +63,36 @@ def _infer_context_size(model_path: str) -> int:
     return 4096
 
 
-def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
+def _format_tools_for_prompt(
+    tools: list[dict[str, Any]], *, compact: bool = False
+) -> str:
     """Format tool schemas as plain text for injection into the system prompt.
 
     This is used instead of llama-cpp-python's built-in tool handling because
     Qwen3 models don't follow the chatml-function-calling response format.
+
+    Args:
+        tools: Tool schemas in OpenAI-compatible format.
+        compact: When True, use abbreviated descriptions and parameter lists
+            to reduce token usage on small context windows (≤16K).
     """
-    lines = [
-        "# Available Tools",
-        "",
-        "You MUST use tools to perform actions. To call a tool, output:",
-        "",
-        "<tool_call>",
-        '{"name": "tool_name", "arguments": {"param": "value"}}',
-        "</tool_call>",
-        "",
-    ]
+    if compact:
+        lines = [
+            "# Available Tools",
+            'Call a tool: <tool_call>{"name": "...", "arguments": {...}}</tool_call>',
+            "",
+        ]
+    else:
+        lines = [
+            "# Available Tools",
+            "",
+            "You MUST use tools to perform actions. To call a tool, output:",
+            "",
+            "<tool_call>",
+            '{"name": "tool_name", "arguments": {"param": "value"}}',
+            "</tool_call>",
+            "",
+        ]
 
     for tool in tools:
         func = tool.get("function", {})
@@ -87,37 +101,66 @@ def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
         params = func.get("parameters", {})
 
         lines.append(f"## {name}")
-        lines.append(desc)
+        if compact:
+            # First sentence only
+            first_sentence = desc.split(". ")[0]
+            if not first_sentence.endswith("."):
+                first_sentence += "."
+            lines.append(first_sentence)
+        else:
+            lines.append(desc)
 
         props = params.get("properties", {})
         required = params.get("required", [])
         if props:
-            lines.append("Parameters:")
+            if not compact:
+                lines.append("Parameters:")
             for pname, pdef in props.items():
-                req = " (required)" if pname in required else ""
-                pdesc = pdef.get("description", "")
+                req = ", required" if pname in required else ""
                 ptype = pdef.get("type", "")
-                lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
+                if compact:
+                    enum_vals = pdef.get("enum")
+                    if enum_vals:
+                        enum_str = "|".join(str(v) for v in enum_vals)
+                        lines.append(f"- {pname} ({enum_str}{req})")
+                    else:
+                        lines.append(f"- {pname} ({ptype}{req})")
+                else:
+                    pdesc = pdef.get("description", "")
+                    lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
         lines.append("")
 
     return "\n".join(lines)
 
 
-def _format_tools_for_prompt_mistral(tools: list[dict[str, Any]]) -> str:
+def _format_tools_for_prompt_mistral(
+    tools: list[dict[str, Any]], *, compact: bool = False
+) -> str:
     """Format tool schemas for Mistral models.
 
     Mistral models use [TOOL_CALLS] followed by a JSON array instead of XML tags.
+
+    Args:
+        tools: Tool schemas in OpenAI-compatible format.
+        compact: When True, use abbreviated descriptions and parameter lists.
     """
-    lines = [
-        "# Available Tools",
-        "",
-        "You MUST use tools to perform actions. To call a tool, output:",
-        "",
-        '[TOOL_CALLS] [{"name": "tool_name", "arguments": {"param": "value"}}]',
-        "",
-        "You can call multiple tools at once by including multiple objects in the array.",
-        "",
-    ]
+    if compact:
+        lines = [
+            "# Available Tools",
+            'Call a tool: [TOOL_CALLS] [{"name": "...", "arguments": {...}}]',
+            "",
+        ]
+    else:
+        lines = [
+            "# Available Tools",
+            "",
+            "You MUST use tools to perform actions. To call a tool, output:",
+            "",
+            '[TOOL_CALLS] [{"name": "tool_name", "arguments": {"param": "value"}}]',
+            "",
+            "You can call multiple tools at once by including multiple objects in the array.",
+            "",
+        ]
 
     for tool in tools:
         func = tool.get("function", {})
@@ -126,17 +169,32 @@ def _format_tools_for_prompt_mistral(tools: list[dict[str, Any]]) -> str:
         params = func.get("parameters", {})
 
         lines.append(f"## {name}")
-        lines.append(desc)
+        if compact:
+            first_sentence = desc.split(". ")[0]
+            if not first_sentence.endswith("."):
+                first_sentence += "."
+            lines.append(first_sentence)
+        else:
+            lines.append(desc)
 
         props = params.get("properties", {})
         required = params.get("required", [])
         if props:
-            lines.append("Parameters:")
+            if not compact:
+                lines.append("Parameters:")
             for pname, pdef in props.items():
-                req = " (required)" if pname in required else ""
-                pdesc = pdef.get("description", "")
+                req = ", required" if pname in required else ""
                 ptype = pdef.get("type", "")
-                lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
+                if compact:
+                    enum_vals = pdef.get("enum")
+                    if enum_vals:
+                        enum_str = "|".join(str(v) for v in enum_vals)
+                        lines.append(f"- {pname} ({enum_str}{req})")
+                    else:
+                        lines.append(f"- {pname} ({ptype}{req})")
+                else:
+                    pdesc = pdef.get("description", "")
+                    lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
         lines.append("")
 
     return "\n".join(lines)
@@ -269,10 +327,11 @@ class LocalEngine:
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Inject tool definitions into the system message as plain text."""
+        compact = self.n_ctx <= 16384
         if self.model_family == "mistral":
-            tool_text = _format_tools_for_prompt_mistral(tools)
+            tool_text = _format_tools_for_prompt_mistral(tools, compact=compact)
         else:
-            tool_text = _format_tools_for_prompt(tools)
+            tool_text = _format_tools_for_prompt(tools, compact=compact)
 
         # Shallow-copy the list and deep-copy only the system message
         messages = list(messages)

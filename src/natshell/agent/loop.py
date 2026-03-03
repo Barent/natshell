@@ -296,7 +296,8 @@ class AgentLoop:
         if tool_schemas:
             from natshell.inference.local import _format_tools_for_prompt
 
-            tool_text = _format_tools_for_prompt(tool_schemas)
+            compact = n_ctx <= 16384
+            tool_text = _format_tools_for_prompt(tool_schemas, compact=compact)
             if tokenizer_fn:
                 try:
                     self._tool_token_overhead = tokenizer_fn(tool_text)

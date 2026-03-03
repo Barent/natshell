@@ -14,6 +14,8 @@ from natshell.inference.local import (
     _THINK_RE,
     _TOOL_CALL_RE,
     _detect_model_family,
+    _format_tools_for_prompt,
+    _format_tools_for_prompt_mistral,
     _infer_context_size,
 )
 from natshell.safety.classifier import SafetyClassifier
@@ -1613,3 +1615,138 @@ class TestCompactSystemPrompt:
         prompt = build_system_prompt(self._ctx(), compact=True)
         assert "## Code Editing & Development" in prompt
         assert "FILE TRUNCATED" in prompt
+
+    def test_compact_prompt_has_condensed_behavior_rules(self):
+        """Compact prompt uses 8 condensed behavior rules instead of 15."""
+        from natshell.agent.system_prompt import build_system_prompt
+
+        prompt = build_system_prompt(self._ctx(), compact=True)
+        # Should NOT have full verbose rules
+        assert "Use --dry-run flags" not in prompt
+        assert "If you don't know how to do something on this specific distro" not in prompt
+        # Should have condensed rules
+        assert "PLAN before acting" in prompt
+        assert "One command at a time" in prompt
+
+
+# ─── Compact tool formatting ────────────────────────────────────────────────
+
+
+_SAMPLE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_shell",
+            "description": "Execute a shell command on the user's system and return the output. Use this for system administration tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Maximum execution time in seconds (default 60, max 300).",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_tool",
+            "description": "Perform structured git operations. Returns clean output for common git tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["status", "diff", "log", "branch", "commit", "stash"],
+                        "description": "The git operation to perform.",
+                    },
+                    "args": {
+                        "type": "string",
+                        "description": "Additional arguments for the operation.",
+                    },
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+]
+
+
+class TestCompactToolFormatting:
+    def test_compact_output_is_shorter(self):
+        """Compact tool formatting produces significantly shorter output."""
+        full = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=False)
+        compact = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=True)
+        assert len(compact) < len(full)
+        # Should be substantially shorter (at least 30% reduction)
+        assert len(compact) < len(full) * 0.7
+
+    def test_compact_includes_enum_values(self):
+        """Compact format preserves enum values inline for parameters."""
+        compact = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=True)
+        assert "status|diff|log|branch|commit|stash" in compact
+
+    def test_compact_first_sentence_only(self):
+        """Compact format uses first sentence of description only."""
+        compact = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=True)
+        # Should have first sentence
+        assert "Execute a shell command on the user's system and return the output." in compact
+        # Should NOT have second sentence
+        assert "Use this for system administration tasks" not in compact
+
+    def test_compact_omits_param_descriptions(self):
+        """Compact format drops parameter descriptions."""
+        compact = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=True)
+        assert "The shell command to execute" not in compact
+        assert "Maximum execution time" not in compact
+
+    def test_compact_marks_required_params(self):
+        """Compact format still marks required parameters."""
+        compact = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=True)
+        assert "command (string, required)" in compact
+        assert "operation (status|diff|log|branch|commit|stash, required)" in compact
+
+    def test_compact_header_is_single_line(self):
+        """Compact format uses a 1-line tool call instruction."""
+        compact = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=True)
+        assert 'Call a tool: <tool_call>{"name": "...", "arguments": {...}}</tool_call>' in compact
+
+    def test_full_format_unchanged(self):
+        """Full format still has multi-line header and parameter descriptions."""
+        full = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=False)
+        assert "You MUST use tools to perform actions." in full
+        assert "The shell command to execute." in full
+        assert "Parameters:" in full
+
+    def test_compact_mistral_is_shorter(self):
+        """Compact Mistral tool formatting is also shorter."""
+        full = _format_tools_for_prompt_mistral(_SAMPLE_TOOLS, compact=False)
+        compact = _format_tools_for_prompt_mistral(_SAMPLE_TOOLS, compact=True)
+        assert len(compact) < len(full)
+        assert "status|diff|log|branch|commit|stash" in compact
+
+    def test_compact_mistral_header(self):
+        """Compact Mistral format uses a 1-line tool call instruction."""
+        compact = _format_tools_for_prompt_mistral(_SAMPLE_TOOLS, compact=True)
+        assert 'Call a tool: [TOOL_CALLS] [{"name": "...", "arguments": {...}}]' in compact
+
+    def test_8k_engine_uses_compact_tools(self):
+        """An 8K context agent should use compact tool formatting for budget estimation."""
+        agent = _make_agent_with_ctx(n_ctx=8192)
+        # The tool overhead should match compact formatting
+        tool_schemas = agent.tools.get_tool_schemas()
+        compact_text = _format_tools_for_prompt(tool_schemas, compact=True)
+        full_text = _format_tools_for_prompt(tool_schemas, compact=False)
+        # Compact overhead should be much smaller than full
+        compact_len = len(compact_text) // 4
+        full_len = len(full_text) // 4
+        assert compact_len < full_len
+        # The agent's stored overhead should match compact (not full)
+        assert agent._tool_token_overhead <= compact_len + 50  # small margin for tokenizer variance
