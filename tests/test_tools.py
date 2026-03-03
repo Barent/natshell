@@ -11,16 +11,18 @@ import pytest
 from natshell.tools.execute_shell import (
     _SENSITIVE_ENV_VARS,
     _SENSITIVE_SUFFIXES,
+    _SUDO_NEEDS_PW,
     _SUDO_RE,
     _min_timeout_for,
     _truncate_output,
     clear_sudo_password,
     execute_shell,
+    needs_sudo_password,
     set_sudo_password,
 )
 from natshell.tools.list_directory import list_directory
 from natshell.tools.read_file import read_file
-from natshell.tools.registry import create_default_registry
+from natshell.tools.registry import ToolResult, create_default_registry
 from natshell.tools.search_files import search_files
 from natshell.tools.write_file import write_file
 
@@ -174,6 +176,53 @@ class TestSudoPasswordInjection:
         count = len(_SUDO_RE.findall(cmd))
         # Both word-boundary matches of 'sudo' are found
         assert count == 2
+
+    def test_password_input_has_trailing_yes(self):
+        """Password input should end with 'y' lines for package manager prompts."""
+        cmd = "sudo apt install nmap"
+        count = len(_SUDO_RE.findall(cmd))
+        password = "hunter2"
+        password_input = (password + "\n") * count + "y\n" * 3
+        assert password_input == "hunter2\ny\ny\ny\n"
+
+
+# ─── sudo password detection ────────────────────────────────────────────────
+
+
+class TestSudoNeedsPassword:
+    """Test that needs_sudo_password detects all known sudo error patterns."""
+
+    def test_terminal_required(self):
+        result = ToolResult(exit_code=1, error="sudo: a terminal is required to read the password")
+        assert needs_sudo_password(result)
+
+    def test_password_required(self):
+        result = ToolResult(exit_code=1, error="sudo: a password is required")
+        assert needs_sudo_password(result)
+
+    def test_no_tty(self):
+        result = ToolResult(
+            exit_code=1,
+            error="sudo: no tty present and no askpass program specified",
+        )
+        assert needs_sudo_password(result)
+
+    def test_no_password_provided(self):
+        """Newer sudo versions emit this when stdin is /dev/null."""
+        result = ToolResult(exit_code=1, error="sudo: no password was provided")
+        assert needs_sudo_password(result)
+
+    def test_success_returns_false(self):
+        result = ToolResult(exit_code=0, error="")
+        assert not needs_sudo_password(result)
+
+    def test_unrelated_error_returns_false(self):
+        result = ToolResult(exit_code=1, error="command not found")
+        assert not needs_sudo_password(result)
+
+    def test_all_patterns_in_list(self):
+        """Sanity check that we have at least 4 patterns."""
+        assert len(_SUDO_NEEDS_PW) >= 4
 
 
 # ─── read_file ───────────────────────────────────────────────────────────────

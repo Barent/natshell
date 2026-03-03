@@ -44,6 +44,7 @@ _SUDO_NEEDS_PW = [
     "sudo: a terminal is required to read the password",
     "sudo: a password is required",
     "sudo: no tty present and no askpass program specified",
+    "sudo: no password was provided",
 ]
 
 # Environment variables that should not be exposed to LLM-executed commands
@@ -239,10 +240,14 @@ async def execute_shell(
         # "sudo apt update && sudo apt install -y nmap" need every sudo
         # to read from stdin.  Repeat the password once per occurrence
         # so each sudo -S gets a line to consume.
+        # Append trailing "y\n" lines so that interactive prompts from
+        # package managers (e.g. "Do you want to continue? [Y/n]") get
+        # auto-confirmed rather than aborting on EOF — the user already
+        # approved this command through NatShell's confirmation dialog.
         if sudo_pw and _SUDO_RE.search(command):
             sudo_count = len(_SUDO_RE.findall(command))
             command = _SUDO_RE.sub("sudo -S", command)
-            run_kwargs["input"] = (sudo_pw + "\n") * sudo_count
+            run_kwargs["input"] = (sudo_pw + "\n") * sudo_count + "y\n" * 3
         else:
             run_kwargs["stdin"] = subprocess.DEVNULL
 
