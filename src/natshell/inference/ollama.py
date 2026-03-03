@@ -43,12 +43,23 @@ def normalize_base_url(url: str) -> str:
     return url
 
 
-async def ping_server(base_url: str) -> bool:
-    """Check if a server is reachable. Returns True if we get any 200 response."""
+async def ping_server(base_url: str, api_key: str = "") -> bool:
+    """Check if a server is reachable. Returns True if we get any 200 response.
+
+    Tries the root URL first (Ollama), then /v1/models (OpenAI-compatible APIs).
+    An optional *api_key* is sent as a Bearer token for authenticated APIs.
+    """
     base_url = normalize_base_url(base_url)
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(f"{base_url}/")
+            if resp.status_code == 200:
+                return True
+            # Root may not respond 200 on non-Ollama APIs — try /v1/models
+            resp = await client.get(f"{base_url}/v1/models")
             return resp.status_code == 200
     except (
         httpx.ConnectError,

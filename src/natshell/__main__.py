@@ -182,7 +182,7 @@ def main() -> None:
         from natshell.inference.ollama import ping_server
 
         print(f"Checking remote server: {remote_url}...")
-        reachable = asyncio.run(ping_server(remote_url))
+        reachable = asyncio.run(ping_server(remote_url, api_key=remote_api_key))
 
         if reachable:
             from natshell.inference.ollama import get_model_context_length
