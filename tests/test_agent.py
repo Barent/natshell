@@ -509,8 +509,8 @@ class TestModelFamilyDetection:
 
 
 class TestContextSizeOverride:
-    def test_mistral_nemo_returns_12288(self):
-        assert _infer_context_size("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf") == 12288
+    def test_mistral_nemo_returns_8192(self):
+        assert _infer_context_size("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf") == 8192
 
     def test_qwen3_4b_returns_4096(self):
         assert _infer_context_size("Qwen3-4B-Q4_K_M.gguf") == 4096
