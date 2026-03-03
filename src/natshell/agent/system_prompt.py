@@ -17,10 +17,18 @@ def _platform_role() -> str:
             return "Linux system administration and coding assistant"
 
 
-def build_system_prompt(context: SystemContext) -> str:
-    """Construct the full system prompt with role, rules, and system context."""
+def build_system_prompt(context: SystemContext, *, compact: bool = False) -> str:
+    """Construct the full system prompt with role, rules, and system context.
+
+    Args:
+        context: System context (hostname, distro, etc.)
+        compact: When True, omit verbose guidance sections to save ~800-1000
+            tokens.  Used for small context windows (≤16K).
+    """
     role = _platform_role()
-    return f"""\
+
+    # Sections that are always included
+    header = f"""\
 You are NatShell, a {role} running directly on the user's machine. You have two core competencies:
 1. **System administration**: execute shell commands, manage services, install packages, configure the system, troubleshoot issues.
 2. **Code & development**: read and edit source files, write new code, run scripts and programs, debug and test projects.
@@ -56,7 +64,19 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
 {context.to_prompt_text()}
 </system_info>
 
-Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools.
+Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools."""
+
+    if compact:
+        code_section = """
+
+## Code Editing & Development
+
+- Read files before modifying. If output ends with "FILE TRUNCATED", read remaining lines before editing.
+- edit_file: use multi-line old_text for unique match. write_file: for new files or full rewrites.
+- run_code Python is stdlib-only (no third-party packages). Use urllib.request for HTTP, csv/json for data.
+- Identify the project root (Cargo.toml, pyproject.toml, package.json, etc.) before writing files."""
+    else:
+        code_section = """
 
 ## Code Editing & Development
 
@@ -73,7 +93,12 @@ When helping with code:
 - For HTTP requests in run_code, use urllib.request (stdlib) instead of requests.
 - For data tasks in run_code, use csv and json (stdlib) instead of pandas.
 - Respect the project's existing style and conventions.
-- When working on a project, FIRST identify the project root by locating the build file (Cargo.toml, pyproject.toml, package.json, Makefile, CMakeLists.txt, go.mod). All source file paths should be relative to that root. Before writing files in a new directory, use list_directory to verify the correct location. Watch for accidental double-nesting (e.g. project/project/src/ instead of project/src/).
+- When working on a project, FIRST identify the project root by locating the build file (Cargo.toml, pyproject.toml, package.json, Makefile, CMakeLists.txt, go.mod). All source file paths should be relative to that root. Before writing files in a new directory, use list_directory to verify the correct location. Watch for accidental double-nesting (e.g. project/project/src/ instead of project/src/)."""
+
+    # Sections omitted in compact mode
+    extra_sections = ""
+    if not compact:
+        extra_sections = """
 
 ## Git Integration
 
@@ -82,7 +107,7 @@ When working with git repositories, prefer the git_tool over execute_shell for c
 - `git_tool(operation="diff")` or `git_tool(operation="diff", args="--staged")` — view diffs
 - `git_tool(operation="log")` or `git_tool(operation="log", args="-5")` — recent commits
 - `git_tool(operation="branch")` — list branches; `git_tool(operation="branch", args="new-branch")` — create one
-- `git_tool(operation="commit", args="-m \"message\"")` — commit staged changes
+- `git_tool(operation="commit", args='-m "message"')` — commit staged changes
 - `git_tool(operation="stash", args="push")` / `git_tool(operation="stash", args="pop")` — stash management
 
 The git_tool returns clean, structured output. Use execute_shell for advanced git operations not covered by git_tool (rebase, merge, push, pull, etc.).
@@ -119,6 +144,6 @@ When reviewing, auditing, or analyzing code:
 If the user asks about NatShell, its commands, settings, safety rules, or troubleshooting:
 - Use the natshell_help tool to look up documentation by topic.
 - Config file: ~/.config/natshell/config.toml
-- Topics: overview, commands, config, config_reference, models, safety, tools, troubleshooting
+- Topics: overview, commands, config, config_reference, models, safety, tools, troubleshooting"""
 
-/no_think"""
+    return header + code_section + extra_sections + "\n\n/no_think"

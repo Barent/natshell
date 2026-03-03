@@ -27,7 +27,7 @@ class ContextManager:
 
     Two token-counting modes:
     - Exact: uses the model's tokenizer via ``tokenizer_fn``
-    - Approximate: ``len(text) // 3`` (conservative for Qwen/English text)
+    - Approximate: ``len(text) // 4`` (BPE average for English text)
     """
 
     def __init__(
@@ -70,8 +70,8 @@ class ContextManager:
                     return result
             except Exception:
                 pass
-        # Fallback: ~3 chars per token (conservative for English / Qwen)
-        return max(1, len(text) // 3)
+        # Fallback: ~4 chars per token (BPE average for English text)
+        return max(1, len(text) // 4)
 
     # ------------------------------------------------------------------
     # Budget calibration from actual API token counts
@@ -81,7 +81,7 @@ class ContextManager:
         """Shrink context_budget if our estimate significantly underestimates reality.
 
         Called after each successful inference with the estimated token count
-        (from our ``len(text)//3`` heuristic) and the actual prompt_tokens
+        (from our ``len(text)//4`` heuristic) and the actual prompt_tokens
         reported by the API.  When the actual count exceeds the estimate by
         more than 15%, the budget is shrunk proportionally (floor 1024).
         """

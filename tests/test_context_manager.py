@@ -51,11 +51,11 @@ def _tool_result(content: str, tc_id: str = "tc1") -> dict:
 
 class TestTokenEstimation:
     def test_approximate_estimation(self):
-        """Fallback estimator uses len(text) // 3."""
+        """Fallback estimator uses len(text) // 4."""
         cm = ContextManager(context_budget=10000)
-        msgs = [_sys("Hello world")]  # 11 chars → ~3 tokens
+        msgs = [_sys("Hello world")]  # 11 chars → ~2 tokens
         tokens = cm.estimate_tokens(msgs)
-        assert tokens == len("Hello world") // 3
+        assert tokens == len("Hello world") // 4
 
     def test_exact_tokenizer(self):
         """When a tokenizer_fn is provided, use it."""
@@ -71,7 +71,7 @@ class TestTokenEstimation:
 
         cm = ContextManager(context_budget=10000, tokenizer_fn=bad_tokenizer)
         tokens = cm.estimate_tokens([_sys("Hello world")])
-        assert tokens == len("Hello world") // 3
+        assert tokens == len("Hello world") // 4
 
     def test_tool_call_arguments_counted(self):
         """Tool call arguments in assistant messages contribute to token count."""

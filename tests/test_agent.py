@@ -1549,3 +1549,67 @@ class TestSystemPromptAnalysisSection:
         )
         assert "## Analysis & Review" in prompt
         assert "Trace data flows" in prompt
+
+
+# ─── Compact system prompt ────────────────────────────────────────────────────
+
+
+class TestCompactSystemPrompt:
+    def _ctx(self) -> SystemContext:
+        return SystemContext(
+            hostname="testhost",
+            distro="Test",
+            kernel="6.0",
+            username="tester",
+        )
+
+    def test_8k_context_selects_compact(self):
+        """An 8K context window should produce a compact system prompt."""
+        agent = _make_agent_with_ctx(n_ctx=8192)
+        prompt = agent.messages[0]["content"]
+        # Compact mode omits these sections
+        assert "## Git Integration" not in prompt
+        assert "## Edit Failure Recovery" not in prompt
+        assert "## Task Completion" not in prompt
+        assert "## Analysis & Review" not in prompt
+        assert "## NatShell Configuration" not in prompt
+
+    def test_32k_context_selects_full(self):
+        """A 32K context window should produce the full system prompt."""
+        agent = _make_agent_with_ctx(n_ctx=32768)
+        prompt = agent.messages[0]["content"]
+        assert "## Git Integration" in prompt
+        assert "## Analysis & Review" in prompt
+        assert "## NatShell Configuration" in prompt
+
+    def test_16k_context_selects_compact(self):
+        """A 16K context window (boundary) should still use compact mode."""
+        agent = _make_agent_with_ctx(n_ctx=16384)
+        prompt = agent.messages[0]["content"]
+        assert "## Git Integration" not in prompt
+
+    def test_compact_prompt_shorter_than_full(self):
+        """Compact prompt should be at least 2000 chars shorter than full."""
+        from natshell.agent.system_prompt import build_system_prompt
+
+        ctx = self._ctx()
+        full = build_system_prompt(ctx, compact=False)
+        compact = build_system_prompt(ctx, compact=True)
+        assert len(full) - len(compact) >= 2000
+
+    def test_compact_prompt_keeps_behavior_rules(self):
+        """Compact prompt still includes Behavior Rules and /no_think."""
+        from natshell.agent.system_prompt import build_system_prompt
+
+        prompt = build_system_prompt(self._ctx(), compact=True)
+        assert "## Behavior Rules" in prompt
+        assert "/no_think" in prompt
+        assert "## System Information" in prompt
+
+    def test_compact_prompt_keeps_code_section(self):
+        """Compact prompt includes a condensed Code Editing section."""
+        from natshell.agent.system_prompt import build_system_prompt
+
+        prompt = build_system_prompt(self._ctx(), compact=True)
+        assert "## Code Editing & Development" in prompt
+        assert "FILE TRUNCATED" in prompt

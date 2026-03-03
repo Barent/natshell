@@ -146,7 +146,12 @@ class AgentLoop:
     def initialize(self, system_context: SystemContext) -> None:
         """Build the system prompt and initialize conversation."""
         self._system_context = system_context
-        system_prompt = build_system_prompt(system_context)
+        try:
+            n_ctx = self.engine.engine_info().n_ctx or 4096
+        except (AttributeError, TypeError):
+            n_ctx = 4096
+        compact = n_ctx <= 16384
+        system_prompt = build_system_prompt(system_context, compact=compact)
         self.messages = [{"role": "system", "content": system_prompt}]
         self._setup_context_manager()
 
@@ -296,9 +301,9 @@ class AgentLoop:
                 try:
                     self._tool_token_overhead = tokenizer_fn(tool_text)
                 except Exception:
-                    self._tool_token_overhead = len(tool_text) // 3
+                    self._tool_token_overhead = len(tool_text) // 4
             else:
-                self._tool_token_overhead = len(tool_text) // 3
+                self._tool_token_overhead = len(tool_text) // 4
         else:
             self._tool_token_overhead = 0
 
