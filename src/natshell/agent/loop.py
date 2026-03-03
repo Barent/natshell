@@ -142,6 +142,8 @@ class AgentLoop:
         self._context_recovery_attempted: bool = False
         # Message queue for mid-run user input
         self._message_queue: asyncio.Queue[str] = asyncio.Queue()
+        # Context-window-based tool filter (set in _setup_context_manager)
+        self._context_tool_filter: set[str] | None = None
 
     def initialize(self, system_context: SystemContext) -> None:
         """Build the system prompt and initialize conversation."""
@@ -263,6 +265,20 @@ class AgentLoop:
         self._max_tokens = self._effective_max_tokens(n_ctx)
         self._max_steps = self._effective_max_steps(n_ctx)
 
+        # Limit tool set for small context windows to reduce token overhead
+        # and improve tool selection accuracy for smaller models
+        if n_ctx <= 8192:
+            from natshell.tools.registry import SMALL_CONTEXT_TOOLS
+
+            self._context_tool_filter = SMALL_CONTEXT_TOOLS
+            logger.info(
+                "Small context window (%d tokens) — limiting to %d core tools",
+                n_ctx,
+                len(SMALL_CONTEXT_TOOLS),
+            )
+        else:
+            self._context_tool_filter = None
+
         # Scale tool limits with context window
         max_output = self._effective_max_output_chars(n_ctx)
         read_lines = self._effective_read_file_lines(n_ctx)
@@ -292,7 +308,7 @@ class AgentLoop:
             tokenizer_fn = self.engine.count_tokens
 
         # Estimate tool definition token overhead (injected into system prompt by engine)
-        tool_schemas = self.tools.get_tool_schemas()
+        tool_schemas = self.tools.get_tool_schemas(allowed=self._context_tool_filter)
         if tool_schemas:
             from natshell.inference.local import _format_tools_for_prompt
 
@@ -373,6 +389,14 @@ class AgentLoop:
                     ),
                 })
 
+        # Merge persistent context filter with per-call tool_filter
+        if self._context_tool_filter is not None and tool_filter is not None:
+            effective_filter: set[str] | None = self._context_tool_filter & tool_filter
+        elif self._context_tool_filter is not None:
+            effective_filter = self._context_tool_filter
+        else:
+            effective_filter = tool_filter
+
         # Reset edit failure tracking for this run
         self._edit_failures = 0
         self._edit_successes = 0
@@ -420,7 +444,7 @@ class AgentLoop:
                 t0 = time.monotonic()
                 result = await self.engine.chat_completion(
                     messages=self.messages,
-                    tools=self.tools.get_tool_schemas(allowed=tool_filter),
+                    tools=self.tools.get_tool_schemas(allowed=effective_filter),
                     temperature=self.config.temperature,
                     max_tokens=self._max_tokens,
                 )

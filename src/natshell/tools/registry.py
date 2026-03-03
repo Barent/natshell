@@ -21,6 +21,18 @@ PLAN_SAFE_TOOLS: set[str] = {
     "fetch_url",
 }
 
+# Core tools for small context windows (≤8192 tokens).
+# The excluded tools (search_files, git_tool, run_code, fetch_url, natshell_help)
+# are all replaceable via execute_shell.  Fewer tool definitions means less token
+# overhead and more reliable tool selection by smaller models.
+SMALL_CONTEXT_TOOLS: set[str] = {
+    "execute_shell",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_directory",
+}
+
 
 @dataclass
 class ToolResult:

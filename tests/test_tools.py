@@ -409,3 +409,33 @@ class TestToolSchemaFiltering:
         schemas = registry.get_tool_schemas(allowed=PLAN_SAFE_TOOLS)
         names = {s["function"]["name"] for s in schemas}
         assert names == PLAN_SAFE_TOOLS
+
+    def test_small_context_tools_includes_core(self):
+        """SMALL_CONTEXT_TOOLS includes the 5 essential tools."""
+        from natshell.tools.registry import SMALL_CONTEXT_TOOLS
+
+        assert "execute_shell" in SMALL_CONTEXT_TOOLS
+        assert "read_file" in SMALL_CONTEXT_TOOLS
+        assert "write_file" in SMALL_CONTEXT_TOOLS
+        assert "edit_file" in SMALL_CONTEXT_TOOLS
+        assert "list_directory" in SMALL_CONTEXT_TOOLS
+
+    def test_small_context_tools_excludes_optional(self):
+        """SMALL_CONTEXT_TOOLS excludes the 5 optional tools."""
+        from natshell.tools.registry import SMALL_CONTEXT_TOOLS
+
+        assert "search_files" not in SMALL_CONTEXT_TOOLS
+        assert "git_tool" not in SMALL_CONTEXT_TOOLS
+        assert "run_code" not in SMALL_CONTEXT_TOOLS
+        assert "fetch_url" not in SMALL_CONTEXT_TOOLS
+        assert "natshell_help" not in SMALL_CONTEXT_TOOLS
+
+    def test_small_context_tools_filters_correctly(self):
+        """Using SMALL_CONTEXT_TOOLS with get_tool_schemas produces exactly 5 schemas."""
+        from natshell.tools.registry import SMALL_CONTEXT_TOOLS
+
+        registry = create_default_registry()
+        schemas = registry.get_tool_schemas(allowed=SMALL_CONTEXT_TOOLS)
+        names = {s["function"]["name"] for s in schemas}
+        assert names == SMALL_CONTEXT_TOOLS
+        assert len(schemas) == 5

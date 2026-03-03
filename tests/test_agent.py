@@ -1821,3 +1821,44 @@ class TestSkipIntentDetection:
             if m["role"] == "system" and "[Analysis mode]" in m.get("content", "")
         ]
         assert len(system_msgs) == 0
+
+
+# ─── Small context tool filtering ────────────────────────────────────────────
+
+
+class TestSmallContextToolFilter:
+    def test_small_ctx_activates_filter(self):
+        """n_ctx=4096 should activate SMALL_CONTEXT_TOOLS filter."""
+        from natshell.tools.registry import SMALL_CONTEXT_TOOLS
+
+        agent = _make_agent_with_ctx(4096)
+        assert agent._context_tool_filter == SMALL_CONTEXT_TOOLS
+
+    def test_edge_ctx_8192_activates_filter(self):
+        """n_ctx=8192 (edge case) should activate the filter."""
+        from natshell.tools.registry import SMALL_CONTEXT_TOOLS
+
+        agent = _make_agent_with_ctx(8192)
+        assert agent._context_tool_filter == SMALL_CONTEXT_TOOLS
+
+    def test_large_ctx_no_filter(self):
+        """n_ctx=16384 should NOT activate the filter."""
+        agent = _make_agent_with_ctx(16384)
+        assert agent._context_tool_filter is None
+
+    async def test_per_call_filter_intersects_with_context_filter(self):
+        """Per-call tool_filter should intersect with the context filter."""
+        agent = _make_agent_with_ctx(4096)
+        # Per-call filter includes read_file and git_tool.
+        # git_tool is NOT in SMALL_CONTEXT_TOOLS, so the effective filter
+        # should be just {read_file}.
+        per_call = {"read_file", "git_tool"}
+        events = []
+        async for event in agent.handle_user_message("test", tool_filter=per_call):
+            events.append(event)
+
+        # Verify the engine was called with schemas filtered to the intersection
+        call_args = agent.engine.chat_completion.call_args
+        schemas = call_args.kwargs.get("tools") or call_args[1].get("tools", [])
+        schema_names = {s["function"]["name"] for s in schemas}
+        assert schema_names == {"read_file"}
