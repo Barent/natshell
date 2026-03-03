@@ -349,12 +349,13 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
         "- Do NOT run shell commands with execute_shell.",
         "- Do NOT modify existing files with edit_file.",
         "- Do NOT execute code with run_code.",
-        "- ONLY use read_file, list_directory, search_files, fetch_url,"
-        " and git_tool to examine the codebase.",
-        "- When done, use write_file to create PLAN.md and nothing else.",
+        "- For research use read_file, list_directory, search_files,",
+        "  fetch_url, and git_tool.",
+        "- Your FINAL action MUST be: call write_file to create PLAN.md.",
+        "  Do not just describe the plan in text — you must write the file.",
         "",
         "First examine the directory with list_directory. Read key source files",
         "and any project documentation (README, design docs, etc.) to understand",
-        "the codebase before writing PLAN.md.",
+        "the codebase, then call write_file to save PLAN.md.",
     ]
     return "\n".join(parts)

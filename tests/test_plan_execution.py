@@ -211,7 +211,7 @@ class TestBuildPlanPrompt:
         assert "Do NOT run shell commands with execute_shell" in prompt
         assert "Do NOT modify existing files with edit_file" in prompt
         assert "Do NOT execute code with run_code" in prompt
-        assert "ONLY use read_file, list_directory, search_files, fetch_url, and git_tool" in prompt
+        assert "For research use read_file, list_directory, search_files" in prompt
         assert "write_file to create PLAN.md" in prompt
 
     def test_contains_user_description(self):

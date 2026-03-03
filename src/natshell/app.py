@@ -257,6 +257,7 @@ class NatShellApp(App):
             EventType.TOOL_RESULT,
             EventType.RESPONSE,
             EventType.BLOCKED,
+            EventType.CONFIRM_NEEDED,
             EventType.ERROR,
         ):
             thinking.remove()
