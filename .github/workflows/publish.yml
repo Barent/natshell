@@ -57,18 +57,34 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Create GitHub Release (if needed)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes || true
-
-      - name: Upload assets to GitHub Release
+      - name: Create GitHub Release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Delete existing assets first to avoid 422 "already exists" errors
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+
+          # Create release if it doesn't already exist (retry up to 3 times for transient 5xx)
+          for i in 1 2 3; do
+            if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+              echo "Release $tag already exists"
+              break
+            fi
+            echo "Attempt $i: creating release $tag"
+            if gh release create "$tag" --repo "$repo" --title "$tag" --generate-notes; then
+              echo "Release created"
+              break
+            fi
+            sleep 5
+          done
+
+          # Verify release exists before uploading
+          gh release view "$tag" --repo "$repo" >/dev/null
+
+          # Delete existing assets to avoid 422 "already exists" errors
           for f in dist/*; do
             name="$(basename "$f")"
-            gh release delete-asset "${{ github.ref_name }}" "$name" --repo "${{ github.repository }}" --yes 2>/dev/null || true
+            gh release delete-asset "$tag" "$name" --repo "$repo" --yes 2>/dev/null || true
           done
-          gh release upload "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}"
+
+          gh release upload "$tag" dist/* --repo "$repo"
