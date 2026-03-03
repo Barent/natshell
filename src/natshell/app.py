@@ -19,6 +19,7 @@ from natshell.agent.plan import Plan, parse_plan_file
 from natshell.agent.plan_executor import (
     _build_plan_prompt,
     _build_step_prompt,
+    _effective_plan_max_steps,
     _shallow_tree,
 )
 from natshell.commands import (
@@ -494,7 +495,11 @@ class NatShellApp(App):
         # Fresh context — plan generation is self-contained
         self.agent.clear_history()
         tree = _shallow_tree(Path.cwd())
-        prompt = _build_plan_prompt(description, tree)
+        try:
+            n_ctx = self.agent.engine.engine_info().n_ctx or 4096
+        except (AttributeError, TypeError):
+            n_ctx = 4096
+        prompt = _build_plan_prompt(description, tree, n_ctx=n_ctx)
 
         try:
             async for event in self.agent.handle_user_message(
@@ -502,6 +507,7 @@ class NatShellApp(App):
                 confirm_callback=confirm_cb,
                 password_callback=password_callback,
                 tool_filter=PLAN_SAFE_TOOLS,
+                skip_intent_detection=True,
             ):
                 self._render_agent_event(event, conversation, thinking_ref)
 
@@ -617,9 +623,16 @@ class NatShellApp(App):
         confirm_cb = None if self._skip_permissions else confirm_callback
 
         completed_summaries: list[str] = []
+        completed_files: list[str] = []
         completed_count = 0
         failed_count = 0
         skipped_count = 0
+
+        # Get engine context window for scaling
+        try:
+            n_ctx = self.agent.engine.engine_info().n_ctx or 4096
+        except (AttributeError, TypeError):
+            n_ctx = 4096
 
         try:
             for step in plan.steps:
@@ -632,8 +645,8 @@ class NatShellApp(App):
                 # Clear agent history (keep system prompt) for a fresh context
                 self.agent.clear_history()
 
-                # Use higher step limit for plan execution
-                plan_max = self.agent.config.plan_max_steps
+                # Use context-aware step limit for plan execution
+                plan_max = _effective_plan_max_steps(n_ctx, self.agent.config.plan_max_steps)
                 original_max = self.agent.config.max_steps
                 self.agent.config.max_steps = plan_max
                 # Re-derive effective max_steps with the plan floor
@@ -642,12 +655,18 @@ class NatShellApp(App):
 
                 # Build focused prompt for this step
                 prompt = _build_step_prompt(
-                    step, plan, completed_summaries, max_steps=effective_max
+                    step,
+                    plan,
+                    completed_summaries,
+                    max_steps=effective_max,
+                    completed_files=completed_files or None,
+                    n_ctx=n_ctx,
                 )
 
                 # Run the agent loop for this step
                 thinking_ref: list[ThinkingIndicator | None] = [None]
                 hit_max_steps = False
+                step_files: list[str] = []
 
                 try:
                     async for event in self.agent.handle_user_message(
@@ -656,6 +675,25 @@ class NatShellApp(App):
                         password_callback=password_callback,
                     ):
                         self._render_agent_event(event, conversation, thinking_ref)
+
+                        # Track file changes for cross-step memory
+                        if (
+                            event.type == EventType.TOOL_RESULT
+                            and event.tool_call
+                            and event.tool_call.name in ("write_file", "edit_file")
+                            and event.tool_result
+                            and event.tool_result.exit_code == 0
+                        ):
+                            path = event.tool_call.arguments.get("path", "")
+                            if path:
+                                action = (
+                                    "created"
+                                    if event.tool_call.name == "write_file"
+                                    else "modified"
+                                )
+                                step_files.append(
+                                    f"{path} ({action} in step {step.number})"
+                                )
 
                         # Detect max-steps warning
                         if (
@@ -677,6 +715,9 @@ class NatShellApp(App):
                     if thinking_ref[0]:
                         thinking_ref[0].remove()
                     self.query_one(LogoBanner).stop_animation()
+
+                # Record file changes from this step
+                completed_files.extend(step_files)
 
                 # Update divider status
                 if hit_max_steps:

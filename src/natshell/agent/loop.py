@@ -327,6 +327,7 @@ class AgentLoop:
         confirm_callback=None,
         password_callback=None,
         tool_filter: set[str] | None = None,
+        skip_intent_detection: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """
         Process a user message through the full agent loop.
@@ -341,32 +342,36 @@ class AgentLoop:
             password_callback: An async callable that takes a ToolCall and returns
                             the sudo password (str) or None if cancelled.
             tool_filter: If provided, only expose these tools to the model.
+            skip_intent_detection: If True, skip plan/analysis intent injection.
+                            Used by /plan generation to prevent the planning-mode
+                            system message from conflicting with the plan prompt.
         """
         self.messages.append({"role": "user", "content": user_input})
 
-        # Inject planning mode reminder when user asks for a plan
-        if _is_plan_request(user_input):
-            self.messages.append({
-                "role": "system",
-                "content": (
-                    "[Planning mode] The user is asking you to plan. "
-                    "Describe your approach in text FIRST. Do not modify files "
-                    "or run commands until the user approves the plan."
-                ),
-            })
+        if not skip_intent_detection:
+            # Inject planning mode reminder when user asks for a plan
+            if _is_plan_request(user_input):
+                self.messages.append({
+                    "role": "system",
+                    "content": (
+                        "[Planning mode] The user is asking you to plan. "
+                        "Describe your approach in text FIRST. Do not modify files "
+                        "or run commands until the user approves the plan."
+                    ),
+                })
 
-        # Inject analysis guidance when user asks for a review/audit/analysis
-        if _is_analysis_request(user_input):
-            self.messages.append({
-                "role": "system",
-                "content": (
-                    "[Analysis mode] The user is asking for a code review or analysis. "
-                    "Read configuration and safety-critical files first. "
-                    "Trace data flows — do not stop at function signatures. "
-                    "Verify every finding against actual code before reporting it. "
-                    "Use your full step budget for thorough analysis."
-                ),
-            })
+            # Inject analysis guidance when user asks for a review/audit/analysis
+            if _is_analysis_request(user_input):
+                self.messages.append({
+                    "role": "system",
+                    "content": (
+                        "[Analysis mode] The user is asking for a code review or analysis. "
+                        "Read configuration and safety-critical files first. "
+                        "Trace data flows — do not stop at function signatures. "
+                        "Verify every finding against actual code before reporting it. "
+                        "Use your full step budget for thorough analysis."
+                    ),
+                })
 
         # Reset edit failure tracking for this run
         self._edit_failures = 0

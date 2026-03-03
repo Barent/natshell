@@ -1757,3 +1757,57 @@ class TestCompactToolFormatting:
         assert compact_len < full_len
         # The agent's stored overhead should match compact (not full)
         assert agent._tool_token_overhead <= compact_len + 50  # small margin for tokenizer variance
+
+
+# ─── skip_intent_detection ───────────────────────────────────────────────────
+
+
+class TestSkipIntentDetection:
+    """Test that skip_intent_detection=True prevents planning/analysis injections."""
+
+    @staticmethod
+    async def _collect_with_kwargs(agent, message, **kwargs):
+        events = []
+        async for event in agent.handle_user_message(message, **kwargs):
+            events.append(event)
+        return events
+
+    async def test_plan_generation_skips_intent_injection(self):
+        """With skip_intent_detection=True, no '[Planning mode]' message is injected."""
+        agent = _make_agent([
+            CompletionResult(content="I will create a plan", tool_calls=None),
+        ])
+        # This prompt would normally trigger _is_plan_request
+        prompt = "Create a plan for building a REST API and write_file PLAN.md"
+        await self._collect_with_kwargs(agent, prompt, skip_intent_detection=True)
+        system_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "[Planning mode]" in m.get("content", "")
+        ]
+        assert len(system_msgs) == 0
+
+    async def test_plan_request_without_skip_injects_planning_mode(self):
+        """Without skip_intent_detection, planning mode IS injected for plan requests."""
+        agent = _make_agent([
+            CompletionResult(content="Here's my plan", tool_calls=None),
+        ])
+        prompt = "Create a plan for building a REST API"
+        await self._collect_with_kwargs(agent, prompt, skip_intent_detection=False)
+        system_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "[Planning mode]" in m.get("content", "")
+        ]
+        assert len(system_msgs) == 1
+
+    async def test_analysis_request_skipped_with_flag(self):
+        """With skip_intent_detection=True, no '[Analysis mode]' message is injected."""
+        agent = _make_agent([
+            CompletionResult(content="Analysis complete", tool_calls=None),
+        ])
+        prompt = "Review the codebase security"
+        await self._collect_with_kwargs(agent, prompt, skip_intent_detection=True)
+        system_msgs = [
+            m for m in agent.messages
+            if m["role"] == "system" and "[Analysis mode]" in m.get("content", "")
+        ]
+        assert len(system_msgs) == 0

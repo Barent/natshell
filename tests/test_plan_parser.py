@@ -232,3 +232,94 @@ class TestParsePlanFile:
         monkeypatch.setenv("HOME", str(tmp_path))
         plan = parse_plan_file("~/plan.md")
         assert len(plan.steps) == 1
+
+
+# ─── PlanStep.mentioned_files ────────────────────────────────────────────────
+
+
+class TestMentionedFiles:
+    """Test PlanStep.mentioned_files property."""
+
+    def test_extracts_create_modify_read(self):
+        text = textwrap.dedent("""\
+            ## Set up auth
+
+            **Files**:
+            CREATE `src/auth.py`
+            MODIFY `src/app.py`
+            READ `src/config.py`
+        """)
+        plan = parse_plan_text(text)
+        files = plan.steps[0].mentioned_files
+        assert ("CREATE", "src/auth.py") in files
+        assert ("MODIFY", "src/app.py") in files
+        assert ("READ", "src/config.py") in files
+
+    def test_returns_empty_when_no_patterns(self):
+        text = textwrap.dedent("""\
+            ## Simple step
+
+            Just do something with no file markers.
+        """)
+        plan = parse_plan_text(text)
+        assert plan.steps[0].mentioned_files == []
+
+    def test_multiple_files_same_action(self):
+        text = textwrap.dedent("""\
+            ## Create files
+
+            CREATE `src/a.py`
+            CREATE `src/b.py`
+        """)
+        plan = parse_plan_text(text)
+        files = plan.steps[0].mentioned_files
+        assert len(files) == 2
+        assert files[0] == ("CREATE", "src/a.py")
+        assert files[1] == ("CREATE", "src/b.py")
+
+
+# ─── PlanStep.verification ───────────────────────────────────────────────────
+
+
+class TestVerification:
+    """Test PlanStep.verification property."""
+
+    def test_extracts_verify_line(self):
+        text = textwrap.dedent("""\
+            ## Build module
+
+            Write the code.
+
+            Verify: python -c "import mymodule"
+        """)
+        plan = parse_plan_text(text)
+        assert plan.steps[0].verification == 'python -c "import mymodule"'
+
+    def test_extracts_test_line(self):
+        text = textwrap.dedent("""\
+            ## Add tests
+
+            Write unit tests.
+
+            Test: pytest tests/test_auth.py -v
+        """)
+        plan = parse_plan_text(text)
+        assert plan.steps[0].verification == "pytest tests/test_auth.py -v"
+
+    def test_returns_none_when_absent(self):
+        text = textwrap.dedent("""\
+            ## Simple step
+
+            Just do something, no verification line.
+        """)
+        plan = parse_plan_text(text)
+        assert plan.steps[0].verification is None
+
+    def test_strips_whitespace(self):
+        text = textwrap.dedent("""\
+            ## Build
+
+            Verify:   npm test
+        """)
+        plan = parse_plan_text(text)
+        assert plan.steps[0].verification == "npm test"

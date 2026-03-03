@@ -211,7 +211,7 @@ class TestBuildPlanPrompt:
         assert "Do NOT run shell commands with execute_shell" in prompt
         assert "Do NOT modify existing files with edit_file" in prompt
         assert "Do NOT execute code with run_code" in prompt
-        assert "ONLY use read_file, list_directory, search_files, and git_tool" in prompt
+        assert "ONLY use read_file, list_directory, search_files, fetch_url, and git_tool" in prompt
         assert "write_file to create PLAN.md" in prompt
 
     def test_contains_user_description(self):
@@ -225,6 +225,153 @@ class TestBuildPlanPrompt:
 
 
 # ─── /exeplan in SLASH_COMMANDS ──────────────────────────────────────────────
+
+
+# ─── _effective_plan_max_steps ────────────────────────────────────────────────
+
+
+class TestEffectivePlanMaxSteps:
+    """Test context-aware plan step scaling."""
+
+    def test_scaling_table(self):
+        from natshell.agent.plan_executor import _effective_plan_max_steps
+
+        assert _effective_plan_max_steps(4096) == 20
+        assert _effective_plan_max_steps(8192) == 30
+        assert _effective_plan_max_steps(16384) == 35
+        assert _effective_plan_max_steps(32768) == 45
+        assert _effective_plan_max_steps(65536) == 55
+        assert _effective_plan_max_steps(131072) == 65
+        assert _effective_plan_max_steps(262144) == 65
+
+    def test_explicit_override_respected(self):
+        from natshell.agent.plan_executor import _effective_plan_max_steps
+
+        # Non-default value should be returned as-is regardless of n_ctx
+        assert _effective_plan_max_steps(262144, configured=50) == 50
+        assert _effective_plan_max_steps(4096, configured=50) == 50
+
+    def test_default_value_triggers_scaling(self):
+        from natshell.agent.plan_executor import _effective_plan_max_steps
+
+        # Default (35) should be auto-scaled
+        assert _effective_plan_max_steps(4096, configured=35) == 20
+        assert _effective_plan_max_steps(131072, configured=35) == 65
+
+
+# ─── Enhanced _build_plan_prompt ─────────────────────────────────────────────
+
+
+class TestBuildPlanPromptEnhanced:
+    """Test the enhanced plan generation prompt."""
+
+    def test_research_phase_present(self):
+        prompt = _build_plan_prompt("build an API", "project/")
+        assert "PHASE 1: RESEARCH" in prompt
+
+    def test_preamble_spec_present(self):
+        prompt = _build_plan_prompt("build an API", "project/")
+        assert "PREAMBLE SPECIFICATION" in prompt
+
+    def test_step_template_present(self):
+        prompt = _build_plan_prompt("build an API", "project/")
+        assert "STEP BODY TEMPLATE" in prompt
+        assert "**Goal**" in prompt
+        assert "**Files**" in prompt
+        assert "**Details**" in prompt
+        assert "**Depends on**" in prompt
+        assert "**Verify**" in prompt
+
+    def test_verification_guidance_present(self):
+        prompt = _build_plan_prompt("build an API", "project/")
+        assert "FINAL STEP GUIDANCE" in prompt
+
+    def test_greenfield_guidance_present(self):
+        prompt = _build_plan_prompt("build an API", "project/")
+        assert "GREENFIELD PROJECT GUIDANCE" in prompt
+
+    def test_fetch_url_mentioned(self):
+        prompt = _build_plan_prompt("build an API", "project/")
+        assert "fetch_url" in prompt
+
+    def test_compact_mode_for_small_context(self):
+        prompt = _build_plan_prompt("build an API", "project/", n_ctx=4096)
+        assert "COMPACT MODE" in prompt
+        assert "THOROUGH MODE" not in prompt
+
+    def test_thorough_mode_for_large_context(self):
+        prompt = _build_plan_prompt("build an API", "project/", n_ctx=262144)
+        assert "THOROUGH MODE" in prompt
+        assert "COMPACT MODE" not in prompt
+
+    def test_budget_hint_present(self):
+        prompt = _build_plan_prompt("build an API", "project/", n_ctx=32768)
+        assert "approximately" in prompt
+        assert "tool calls" in prompt
+
+    def test_example_step_present(self):
+        """The prompt includes a concrete example of a well-structured step."""
+        prompt = _build_plan_prompt("build an API", "project/")
+        assert "authentication middleware" in prompt
+
+
+# ─── Enhanced _build_step_prompt ─────────────────────────────────────────────
+
+
+class TestBuildStepPromptEnhanced:
+    """Test the enhanced step execution prompt with file tracking."""
+
+    def _make_plan(self) -> Plan:
+        return parse_plan_text(
+            textwrap.dedent("""\
+            # Test Plan
+
+            ## Create auth module
+
+            CREATE `src/auth.py`
+
+            ## Wire up routes
+
+            MODIFY `src/app.py`
+        """)
+        )
+
+    def test_completed_files_appear_when_nonempty(self):
+        plan = self._make_plan()
+        files = ["src/auth.py (created in step 1)"]
+        prompt = _build_step_prompt(
+            plan.steps[1], plan, [], completed_files=files
+        )
+        assert "Files created/modified by previous steps:" in prompt
+        assert "src/auth.py (created in step 1)" in prompt
+
+    def test_completed_files_absent_when_empty(self):
+        plan = self._make_plan()
+        prompt = _build_step_prompt(
+            plan.steps[0], plan, [], completed_files=[]
+        )
+        assert "Files created/modified by previous steps:" not in prompt
+
+    def test_completed_files_absent_when_none(self):
+        plan = self._make_plan()
+        prompt = _build_step_prompt(
+            plan.steps[0], plan, [], completed_files=None
+        )
+        assert "Files created/modified by previous steps:" not in prompt
+
+    def test_backward_compatible_without_completed_files(self):
+        """Calling without completed_files kwarg still works."""
+        plan = self._make_plan()
+        prompt = _build_step_prompt(plan.steps[0], plan, [])
+        assert "step 1 of 2" in prompt
+        assert "Files created/modified" not in prompt
+
+    def test_tool_guidance_present(self):
+        plan = self._make_plan()
+        prompt = _build_step_prompt(plan.steps[0], plan, [])
+        assert "write_file" in prompt
+        assert "edit_file" in prompt
+        assert "Tool usage:" in prompt
 
 
 class TestExeplanInSlashCommands:

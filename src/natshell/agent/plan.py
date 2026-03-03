@@ -7,6 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+_FILE_ACTION_RE = re.compile(
+    r"(?:^|\s)(CREATE|MODIFY|READ)\s+`([^`]+)`", re.MULTILINE
+)
+_VERIFY_RE = re.compile(r"^(?:Verify|Test):\s*(.+)$", re.MULTILINE)
+
+
 @dataclass
 class PlanStep:
     """A single step extracted from a markdown plan."""
@@ -14,6 +20,17 @@ class PlanStep:
     number: int  # 1-based
     title: str  # e.g. "Fix piece shapes in theme.cpp"
     body: str  # Full markdown body including code blocks
+
+    @property
+    def mentioned_files(self) -> list[tuple[str, str]]:
+        """Extract (action, path) pairs from CREATE/MODIFY/READ `path` patterns."""
+        return [(m.group(1), m.group(2)) for m in _FILE_ACTION_RE.finditer(self.body)]
+
+    @property
+    def verification(self) -> str | None:
+        """Extract text after 'Verify:' or 'Test:' lines, or None if absent."""
+        m = _VERIFY_RE.search(self.body)
+        return m.group(1).strip() if m else None
 
 
 @dataclass
