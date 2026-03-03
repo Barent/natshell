@@ -574,6 +574,11 @@ class AgentLoop:
 
             # Case 1: Model wants to call tools
             if result.tool_calls:
+                logger.debug(
+                    "Step %d: tool calls = %s",
+                    steps_used,
+                    [tc.name for tc in result.tool_calls],
+                )
                 # If the model also provided text (planning/reasoning), emit it
                 if result.content:
                     yield AgentEvent(type=EventType.PLANNING, data=result.content)
@@ -581,6 +586,9 @@ class AgentLoop:
                 for tool_call in result.tool_calls:
                     # Safety classification
                     risk = self.safety.classify_tool_call(tool_call.name, tool_call.arguments)
+                    logger.debug(
+                        "Tool %s classified as %s", tool_call.name, risk.name,
+                    )
 
                     if risk == Risk.BLOCKED:
                         yield AgentEvent(type=EventType.BLOCKED, tool_call=tool_call)
@@ -607,6 +615,11 @@ class AgentLoop:
                     yield AgentEvent(type=EventType.EXECUTING, tool_call=tool_call)
 
                     tool_result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    logger.debug(
+                        "Tool %s → exit_code=%s, output_len=%d",
+                        tool_call.name, tool_result.exit_code,
+                        len(tool_result.output or ""),
+                    )
 
                     # If sudo needs a password, prompt the user and retry
                     if (
@@ -800,6 +813,12 @@ class AgentLoop:
                 return
 
             # Case 3: Empty response (shouldn't happen, but handle gracefully)
+            logger.warning(
+                "Empty response from model: finish_reason=%s, "
+                "prompt_tokens=%s, completion_tokens=%s",
+                result.finish_reason, result.prompt_tokens,
+                result.completion_tokens,
+            )
             yield AgentEvent(
                 type=EventType.ERROR,
                 data="Model returned an empty response.",

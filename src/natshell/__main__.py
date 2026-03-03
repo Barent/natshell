@@ -100,9 +100,15 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Setup logging
-    level = logging.DEBUG if args.verbose else logging.WARNING
-    logging.basicConfig(level=level, format="%(name)s: %(message)s")
+    # Setup logging — nothing must reach stderr while the Textual TUI owns
+    # the terminal, because any stderr output corrupts the display.
+    is_tui = not args.headless and not args.mcp
+    root_logger = logging.getLogger()
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG if args.verbose else logging.WARNING)
+    console_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    root_logger.addHandler(console_handler)
+    root_logger.setLevel(logging.DEBUG if args.verbose else logging.WARNING)
 
     if args.log_file:
         file_handler = logging.FileHandler(args.log_file, encoding="utf-8")
@@ -110,8 +116,8 @@ def main() -> None:
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
         )
-        logging.getLogger().addHandler(file_handler)
-        logging.getLogger().setLevel(logging.DEBUG)
+        root_logger.addHandler(file_handler)
+        root_logger.setLevel(logging.DEBUG)
 
     # Handle self-update
     if args.update:
@@ -326,6 +332,9 @@ def main() -> None:
     if args.danger_fast:
         print("WARNING: --danger-fast is active. All confirmations will be skipped.")
     app = NatShellApp(agent=agent, config=config, skip_permissions=args.danger_fast)
+    # Silence the console handler before the TUI takes the terminal —
+    # ANY stderr output during Textual rendering corrupts the display.
+    console_handler.setLevel(logging.CRITICAL)
     app.run()
 
 

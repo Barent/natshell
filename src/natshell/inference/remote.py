@@ -168,8 +168,15 @@ class RemoteEngine:
 
     def _parse_response(self, data: dict) -> CompletionResult:
         """Parse OpenAI-format response."""
-        choice = data["choices"][0]
-        message = choice["message"]
+        try:
+            choice = data["choices"][0]
+            message = choice["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            logger.warning("Malformed API response: %s", exc)
+            return CompletionResult(
+                content=None, tool_calls=[], finish_reason="error",
+                prompt_tokens=0, completion_tokens=0,
+            )
         finish_reason = choice.get("finish_reason", "stop")
 
         content = message.get("content")
@@ -178,22 +185,42 @@ class RemoteEngine:
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
                 func = tc.get("function", {})
+                name = func.get("name", "")
+                if not name:
+                    logger.warning(
+                        "Skipping tool call with empty name (id=%s, args=%s)",
+                        tc.get("id", "?"), func.get("arguments", ""),
+                    )
+                    continue
                 try:
                     args = json.loads(func.get("arguments", "{}"))
                 except json.JSONDecodeError:
+                    logger.warning(
+                        "Invalid JSON in tool call arguments for %s: %s",
+                        name, func.get("arguments", ""),
+                    )
                     args = {}
 
                 tool_calls.append(
                     ToolCall(
                         id=tc.get("id", str(uuid.uuid4())[:8]),
-                        name=func.get("name", ""),
+                        name=name,
                         arguments=args,
                     )
                 )
 
+        if tool_calls:
+            logger.debug(
+                "Parsed %d tool call(s): %s",
+                len(tool_calls), [tc.name for tc in tool_calls],
+            )
+
         # Strip <think> tags from content (Qwen3 models produce these)
         if content:
+            original = content
             content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip() or None
+            if content is None and original:
+                logger.debug("Content was entirely <think> tags — stripped to None")
 
         usage = data.get("usage", {})
         return CompletionResult(
