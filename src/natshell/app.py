@@ -202,7 +202,21 @@ class NatShellApp(App):
         input_widget = self.query_one("#user-input", HistoryInput)
         user_text = input_widget.get_submit_text().strip()
         self.query_one("#slash-suggestions", Static).display = False
-        if not user_text or self._busy:
+        if not user_text:
+            return
+
+        if self._busy:
+            # Slash commands are not safe mid-run
+            if user_text.startswith("/"):
+                return
+            # Queue the message for injection between agent steps
+            input_widget.add_to_history(user_text)
+            input_widget.value = ""
+            input_widget.clear_paste()
+            conversation = self.query_one("#conversation", ScrollableContainer)
+            conversation.mount(UserMessage(user_text))
+            conversation.scroll_end()
+            self.agent.enqueue_message(user_text)
             return
 
         input_widget.add_to_history(user_text)
@@ -292,6 +306,9 @@ class NatShellApp(App):
             case EventType.RUN_STATS:
                 if event.metrics:
                     conversation.mount(RunStatsMessage(event.metrics))
+
+            case EventType.QUEUED_MESSAGE:
+                pass  # Already rendered by on_input_submitted
 
             case EventType.ERROR:
                 conversation.mount(Static(f"[bold red]Error:[/] {_escape(event.data)}"))

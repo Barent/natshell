@@ -61,6 +61,7 @@ class EventType(Enum):
     RESPONSE = "response"  # Final text response from model
     ERROR = "error"  # Something went wrong
     RUN_STATS = "run_stats"  # Cumulative stats for the full agent run
+    QUEUED_MESSAGE = "queued_message"  # User message injected mid-run
     PLAN_STEP = "plan_step"  # Plan step divider (start/update)
     PLAN_COMPLETE = "plan_complete"  # Entire plan finished
 
@@ -139,6 +140,8 @@ class AgentLoop:
         self._read_counts: dict[str, int] = {}
         # Context overflow recovery guard
         self._context_recovery_attempted: bool = False
+        # Message queue for mid-run user input
+        self._message_queue: asyncio.Queue[str] = asyncio.Queue()
 
     def initialize(self, system_context: SystemContext) -> None:
         """Build the system prompt and initialize conversation."""
@@ -217,6 +220,20 @@ class AgentLoop:
         elif n_ctx >= 16384:
             return 500
         return 200
+
+    def enqueue_message(self, text: str) -> None:
+        """Queue a user message for injection between agent steps."""
+        self._message_queue.put_nowait(text)
+
+    def _drain_queued_messages(self) -> list[str]:
+        """Drain all queued messages, returning them in order."""
+        messages: list[str] = []
+        while True:
+            try:
+                messages.append(self._message_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return messages
 
     @staticmethod
     def _resolve_path(path: str) -> str:
@@ -337,6 +354,12 @@ class AgentLoop:
         max_steps = getattr(self, "_max_steps", self.config.max_steps)
         for step in range(max_steps):
             steps_used = step + 1
+
+            # Drain queued messages from the user
+            for queued_text in self._drain_queued_messages():
+                self.messages.append({"role": "user", "content": queued_text})
+                yield AgentEvent(type=EventType.QUEUED_MESSAGE, data=queued_text)
+
             # Signal that the model is thinking
             yield AgentEvent(type=EventType.THINKING)
 
@@ -811,6 +834,12 @@ class AgentLoop:
             self.messages = []
         reset_tracker()
         self._read_counts = {}
+        # Drain any pending queued messages
+        while not self._message_queue.empty():
+            try:
+                self._message_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     def compact_history(self, dry_run: bool = False) -> dict[str, Any]:
         """Compact conversation history, keeping system prompt and last 2 messages.

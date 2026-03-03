@@ -73,6 +73,9 @@ async def run_headless(
             case EventType.CONFIRM_NEEDED:
                 pass  # Handled by _confirm_callback
 
+            case EventType.QUEUED_MESSAGE:
+                pass  # Headless is single-shot; queuing doesn't apply
+
             case EventType.RUN_STATS:
                 if event.metrics:
                     steps = event.metrics.get("steps", "?")
