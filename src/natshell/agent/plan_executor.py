@@ -181,7 +181,8 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
     else:
         parts.append("- Read the 2-3 most relevant source files for the request")
     parts += [
-        "- Read build config (package.json, pyproject.toml, Cargo.toml, etc.) to understand dependencies",
+        "- Read build config (package.json, pyproject.toml, Cargo.toml, etc.)"
+        " to understand dependencies",
         "",
         "For NEW projects (empty or near-empty directory):",
         "- list_directory to confirm the project is new/empty",
@@ -301,7 +302,8 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
         "  during research, and configuration files (.env, tsconfig.json, etc.)",
         "- Include an explicit step to install dependencies (npm install, pip install -e ., etc.)",
         "  if the plan creates a package manifest",
-        "- Embed specific version numbers and API patterns learned from fetch_url into step details",
+        "- Embed specific version numbers and API patterns learned from"
+        " fetch_url into step details",
         "  — do not rely on the model's training data (which may be outdated)",
         "",
         # ── Verification step guidance ────────────────────────────────────
@@ -347,7 +349,8 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
         "- Do NOT run shell commands with execute_shell.",
         "- Do NOT modify existing files with edit_file.",
         "- Do NOT execute code with run_code.",
-        "- ONLY use read_file, list_directory, search_files, fetch_url, and git_tool to examine the codebase.",
+        "- ONLY use read_file, list_directory, search_files, fetch_url,"
+        " and git_tool to examine the codebase.",
         "- When done, use write_file to create PLAN.md and nothing else.",
         "",
         "First examine the directory with list_directory. Read key source files",

@@ -6,7 +6,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 _FILE_ACTION_RE = re.compile(
     r"(?:^|\s)(CREATE|MODIFY|READ)\s+`([^`]+)`", re.MULTILINE
 )
