@@ -20,8 +20,6 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 4. Local inference uses `llama-cpp-python` — tool definitions are injected as plain text (not llama-cpp-python's built-in tool format). Qwen3 outputs `<tool_call>` XML tags; Mistral outputs `[TOOL_CALLS]` JSON arrays — both are parsed in `_parse_response()` with model family auto-detection
 5. The agent loop is async — local inference calls are wrapped in `asyncio.to_thread()` to avoid blocking the TUI
 6. Output from commands is truncated to ~4000 chars to fit context windows (auto-scales to 64K for 256K context windows)
-14. Truncation safety — when `read_file` truncates, it emits `⚠ FILE TRUNCATED` with the exact offset to continue reading. The `FileReadTracker` (`file_tracker.py`) enforces that `edit_file` blocks edits on partially-read files. `edit_file` error previews show 200 lines (not 50) so the model can self-correct.
-15. Edit failure tracking — the agent loop tracks `edit_file` successes/failures per run. Escalating warnings are injected after 2+ failures. A completion guard prevents the model from declaring success when all edits failed.
 7. Platform detection is centralized in `src/natshell/platform.py` (cached `lru_cache`). Use `is_macos()`, `is_wsl()`, `is_linux()` — don't scatter `sys.platform` checks
 8. GPU detection is in `src/natshell/gpu.py` (cached `lru_cache`). Tries vulkaninfo, nvidia-smi, lspci in order. Prefers discrete over integrated GPUs.
 9. The system prompt presents NatShell as both a system administration and coding assistant, with dedicated guidance for code editing (use `edit_file` for targeted changes, `write_file` for new files) and `natshell_help` for self-documentation.
@@ -29,11 +27,15 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 11. Context window adaptive scaling — max_tokens, max_steps, output truncation, and read_file limits all auto-scale with n_ctx (4K→256K tiers). See `_effective_*` methods in loop.py. Read_file tiers: 200/500/1000/2000/3000/4000 lines for <16K/16K/32K/64K/128K/256K contexts.
 12. Auto-timeout detection for long-running commands — pattern-based minimum timeouts (`execute_shell.py` `_LONG_RUNNING_PATTERNS`) ensure nmap, apt install, make, etc. get adequate time even when the LLM doesn't set a timeout.
 13. Plan generation and execution — `/plan` generates structured markdown plans; `/exeplan run` executes them step-by-step with dedicated agent budgets. Plan parser in `agent/plan.py`.
+14. Truncation safety — when `read_file` truncates, it emits `⚠ FILE TRUNCATED` with the exact offset to continue reading. The `FileReadTracker` (`file_tracker.py`) enforces that `edit_file` blocks edits on partially-read files. `edit_file` error previews show 200 lines (not 50) so the model can self-correct.
+15. Edit failure tracking — the agent loop tracks `edit_file` successes/failures per run. Escalating warnings are injected after 2+ failures. A completion guard prevents the model from declaring success when all edits failed.
 16. Headless mode — `--headless "prompt"` runs a single-shot agent invocation with response to stdout and diagnostics to stderr. `--danger-fast` auto-approves confirmations. Exit code 1 on any error.
 17. Session persistence — conversations are saved as JSON in `~/.local/share/natshell/sessions/`. Session IDs are validated as 32-char hex (UUID) to prevent path traversal. Size-limited to 10 MB by default.
 18. Plugin system — custom tools are loaded from `~/.config/natshell/plugins/*.py`. Each plugin's `register(registry)` function adds tools to the tool registry at startup.
 19. MCP server mode — `--mcp` exposes all tools via JSON-RPC over stdin/stdout. Safety mode is configurable via `[mcp]` config section.
 20. Backup & undo — `BackupManager` creates timestamped file snapshots before edits. `/undo` restores the most recent backup. Symlinks are refused (security). Directory permissions are 0o700.
+21. Small context tool filtering — when n_ctx ≤ 8192, the agent auto-filters to 5 core tools (`SMALL_CONTEXT_TOOLS` in registry.py: execute_shell, read_file, write_file, edit_file, list_directory). Reduces token overhead and improves tool selection accuracy for Qwen3-4B/8B. The excluded tools (search_files, git_tool, run_code, fetch_url, natshell_help) are all replaceable via execute_shell. Per-call tool filters (e.g. plan mode) intersect with the context filter.
+22. Sudo password passthrough — `execute_shell` uses `_inject_sudo_dash_s()` to replace `sudo` with `sudo -S` only at command-invocation positions (splits on shell operators `&&`, `||`, `;`, `&`, `|`), preventing password leakage when `sudo` appears inside string arguments (e.g. `echo "use sudo"`). Password is piped once per invocation. Trailing `y\n` lines are appended only for package manager commands (`_PKG_MANAGER_RE`). When retrying after a password prompt, the agent loop and `/cmd` auto-prepend `sudo` if the command doesn't contain it at a command position, then re-classify through the safety classifier before executing.
 
 ## Modules
 
@@ -50,7 +52,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/model_manager.py` — Model discovery, download management, and switching logic
 
 ### Agent
-- `src/natshell/agent/loop.py` — ReAct agent loop with safety classification, sudo password retry, engine fallback, edit failure tracking with escalating warnings and completion guard
+- `src/natshell/agent/loop.py` — ReAct agent loop with safety classification, sudo password retry (auto-prepends `sudo` on retry when missing, re-classifies via safety classifier), engine fallback, context-based tool filtering (`SMALL_CONTEXT_TOOLS` for n_ctx ≤ 8192), edit failure tracking with escalating warnings and completion guard
 - `src/natshell/agent/system_prompt.py` — Platform-aware system prompt with behavior rules, coding/development guidance, natshell_help integration, and `/no_think` directive
 - `src/natshell/agent/context.py` — System context gathering (CPU, RAM, disk, network, services, containers, tools) with per-platform commands
 - `src/natshell/agent/context_manager.py` — Token budget management, auto-trimming of older messages, extractive summarization for `/compact`
@@ -64,8 +66,8 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/inference/ollama.py` — Ollama server ping, model listing, URL normalization
 
 ### Tools
-- `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (10 tools)
-- `src/natshell/tools/execute_shell.py` — Shell execution with sudo password caching (5-min timeout), sensitive env var filtering, output truncation, process group isolation, auto-timeout patterns for long-running commands (default 60s)
+- `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (10 tools). Module-level filter sets: `PLAN_SAFE_TOOLS` (read-only tools for plan generation), `SMALL_CONTEXT_TOOLS` (5 core tools for small context windows ≤8192 tokens)
+- `src/natshell/tools/execute_shell.py` — Shell execution with sudo password caching (5-min timeout), position-aware sudo injection (`_inject_sudo_dash_s` / `_has_sudo_invocation` — only replaces sudo at command positions, not inside string arguments), package-manager-only `y\n` auto-confirm, sensitive env var filtering, output truncation, process group isolation, auto-timeout patterns for long-running commands (default 60s)
 - `src/natshell/tools/read_file.py` — File reading with line limits, `offset` and `limit` parameters, actionable truncation warning with offset hint
 - `src/natshell/tools/write_file.py` — File writing (always requires confirmation)
 - `src/natshell/tools/file_tracker.py` — Tracks file read state (`partial`/`full`) to prevent editing partially-read files. Module-level singleton shared by read_file, edit_file, and write_file.
@@ -102,17 +104,18 @@ These security features were added in the security refactor:
 4. **Environment variable filtering** — Sensitive env vars (AWS keys, GitHub tokens, API keys, etc.) are stripped from subprocess environments
 5. **HTTPS warning** — `RemoteEngine` logs a warning when API keys are sent over plaintext HTTP to non-localhost hosts
 6. **Sensitive file path gating** — `read_file` requires confirmation for SSH keys, `/etc/shadow`, `.env`, etc.
-7. **Sudo regex correctness** — `_SUDO_RE.sub()` replaces ALL `\bsudo\b` occurrences with `sudo -S`, repeating the password once per occurrence so chained commands (`sudo apt update && sudo apt install ...`) work correctly
-8. **Config permissions warning** — Warns if config file containing an API key has permissive permissions (world/group readable)
-9. **Log redaction** — Sudo password plumbing is redacted from verbose log output
-10. **Session ID validation** — Session IDs must be 32-char lowercase hex (UUID format); path traversal attempts are rejected with `ValueError`
-11. **Session size limits** — Serialized session JSON is checked against a configurable max size (default 10 MB) before writing
-12. **Session directory permissions** — Session directory is `chmod 0o700` on creation to prevent other users from reading conversation history
-13. **Backup directory permissions** — Backup directory is `chmod 0o700` on creation; backups may contain sensitive file content
-14. **Backup symlink rejection** — `BackupManager.backup()` refuses to back up symlinks to prevent silent exfiltration of sensitive targets
-15. **Git commit flag restrictions** — `git_tool` blocks `--amend`, `--author=`, `--date=`, `--reset-author`, `--allow-empty-message` for commit operations; users can use `execute_shell` for these (which goes through the safety classifier)
-16. **Plugin sandboxing** — Plugins are loaded from a dedicated directory with explicit `register()` entry points; no implicit code execution
-17. **MCP safety modes** — MCP server respects the same safety classifier as the TUI; configurable via `[mcp]` config section
+7. **Position-aware sudo injection** — `_inject_sudo_dash_s()` splits commands on shell operators (`&&`, `||`, `;`, `&`, `|`) and only replaces `sudo` with `sudo -S` at command-invocation positions (not inside string arguments like `echo "use sudo"`). Prevents password leakage to stdin-reading commands. Trailing `y\n` auto-confirm is limited to package manager commands via `_PKG_MANAGER_RE`. Detection patterns in `_SUDO_NEEDS_PW` cover both old (`no tty present`) and new (`no password was provided`) sudo versions.
+8. **Sudo retry with safety re-classification** — When a command without `sudo` triggers a sudo error, the retry path in both the agent loop and `/cmd` auto-prepends `sudo`, then re-classifies the modified command through the safety classifier before executing. Prevents privilege escalation bypass.
+9. **Config permissions warning** — Warns if config file containing an API key has permissive permissions (world/group readable)
+10. **Log redaction** — Sudo password plumbing is redacted from verbose log output
+11. **Session ID validation** — Session IDs must be 32-char lowercase hex (UUID format); path traversal attempts are rejected with `ValueError`
+12. **Session size limits** — Serialized session JSON is checked against a configurable max size (default 10 MB) before writing
+13. **Session directory permissions** — Session directory is `chmod 0o700` on creation to prevent other users from reading conversation history
+14. **Backup directory permissions** — Backup directory is `chmod 0o700` on creation; backups may contain sensitive file content
+15. **Backup symlink rejection** — `BackupManager.backup()` refuses to back up symlinks to prevent silent exfiltration of sensitive targets
+16. **Git commit flag restrictions** — `git_tool` blocks `--amend`, `--author=`, `--date=`, `--reset-author`, `--allow-empty-message` for commit operations; users can use `execute_shell` for these (which goes through the safety classifier)
+17. **Plugin sandboxing** — Plugins are loaded from a dedicated directory with explicit `register()` entry points; no implicit code execution
+18. **MCP safety modes** — MCP server respects the same safety classifier as the TUI; configurable via `[mcp]` config section
 
 ## Tech Stack
 
@@ -143,12 +146,12 @@ Context size is auto-detected from model filename (4B → 4096, 8B → 8192, Mis
 
 ## Testing
 
-Run tests with `pytest` (669 tests across 28 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
+Run tests with `pytest` (904 tests across 33 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
 
 Test files:
-- `test_agent.py` — Agent loop and event handling, edit failure completion guard
+- `test_agent.py` — Agent loop and event handling, edit failure completion guard, small context tool filtering, sudo retry with auto-prepend
 - `test_safety.py` — Safety classifier patterns, chaining, file sensitivity
-- `test_tools.py` — Individual tool execution
+- `test_tools.py` — Individual tool execution, position-aware sudo injection (_inject_sudo_dash_s, _has_sudo_invocation, detection patterns), SMALL_CONTEXT_TOOLS filtering
 - `test_file_tracker.py` — FileReadTracker state tracking and path resolution
 - `test_coding_tools.py` — edit_file and run_code tool tests (includes fuzzy match, start_line/end_line, tracker integration)
 - `test_natshell_help.py` — natshell_help static/dynamic topic tests

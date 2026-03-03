@@ -51,6 +51,7 @@ from natshell.model_manager import (
 from natshell.safety.classifier import Risk
 from natshell.session import SessionManager
 from natshell.tools.execute_shell import (
+    _has_sudo_invocation,
     execute_shell,
     needs_sudo_password,
     set_sudo_password,
@@ -436,12 +437,34 @@ class NatShellApp(App):
                 password = await self.push_screen_wait(SudoPasswordScreen(command))
                 if password:
                     set_sudo_password(password)
-                    # If the command doesn't contain sudo (e.g. "apt install"
-                    # which internally invokes sudo), prepend it so the
-                    # password injection in execute_shell kicks in.
-                    from natshell.tools.execute_shell import _SUDO_RE
-
-                    retry_cmd = command if _SUDO_RE.search(command) else f"sudo {command}"
+                    # If the command doesn't contain sudo at a command
+                    # position (e.g. "apt install" which internally invokes
+                    # sudo), prepend it so the password injection kicks in.
+                    retry_cmd = (
+                        command if _has_sudo_invocation(command) else f"sudo {command}"
+                    )
+                    # Re-classify the modified command — prepending sudo
+                    # may change the risk level.
+                    retry_risk = self.agent.safety.classify_tool_call(
+                        "execute_shell", {"command": retry_cmd}
+                    )
+                    if retry_risk == Risk.BLOCKED:
+                        conversation.mount(
+                            SystemMessage("Retried command with sudo was blocked.")
+                        )
+                        return
+                    if retry_risk == Risk.CONFIRM and not self._skip_permissions:
+                        synthetic = ToolCall(
+                            id="slash-cmd-retry",
+                            name="execute_shell",
+                            arguments={"command": retry_cmd},
+                        )
+                        confirmed = await self.push_screen_wait(
+                            ConfirmScreen(synthetic)
+                        )
+                        if not confirmed:
+                            conversation.mount(SystemMessage("Command cancelled."))
+                            return
                     result = await execute_shell(retry_cmd)
 
             output = result.output or result.error

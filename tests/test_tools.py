@@ -12,7 +12,8 @@ from natshell.tools.execute_shell import (
     _SENSITIVE_ENV_VARS,
     _SENSITIVE_SUFFIXES,
     _SUDO_NEEDS_PW,
-    _SUDO_RE,
+    _has_sudo_invocation,
+    _inject_sudo_dash_s,
     _min_timeout_for,
     _truncate_output,
     clear_sudo_password,
@@ -118,7 +119,8 @@ class TestAutoTimeout:
 
 
 class TestSudoPasswordInjection:
-    """Test that sudo -S injection handles chained commands correctly."""
+    """Test that sudo -S injection handles chained commands correctly
+    and only injects at command-invocation positions."""
 
     def setup_method(self):
         clear_sudo_password()
@@ -128,20 +130,19 @@ class TestSudoPasswordInjection:
 
     def test_single_sudo_gets_dash_s(self):
         """A single sudo is replaced with sudo -S."""
-        cmd = "sudo apt update"
-        result = _SUDO_RE.sub("sudo -S", cmd)
+        result, count = _inject_sudo_dash_s("sudo apt update")
         assert result == "sudo -S apt update"
+        assert count == 1
 
     def test_chained_sudo_all_replaced(self):
         """Both sudos in a chained command get replaced."""
-        cmd = "sudo apt update && sudo apt install -y nmap"
-        result = _SUDO_RE.sub("sudo -S", cmd)
+        result, count = _inject_sudo_dash_s("sudo apt update && sudo apt install -y nmap")
         assert result == "sudo -S apt update && sudo -S apt install -y nmap"
+        assert count == 2
 
     def test_password_repeated_per_sudo(self):
         """Password input should contain one line per sudo occurrence."""
-        cmd = "sudo apt update && sudo apt install -y nmap"
-        count = len(_SUDO_RE.findall(cmd))
+        _, count = _inject_sudo_dash_s("sudo apt update && sudo apt install -y nmap")
         password = "hunter2"
         password_input = (password + "\n") * count
         assert password_input == "hunter2\nhunter2\n"
@@ -150,40 +151,64 @@ class TestSudoPasswordInjection:
     def test_triple_sudo_chain(self):
         """Three chained sudos all get replaced with repeated password."""
         cmd = "sudo systemctl stop nginx && sudo apt upgrade -y && sudo systemctl start nginx"
-        count = len(_SUDO_RE.findall(cmd))
-        result = _SUDO_RE.sub("sudo -S", cmd)
+        result, count = _inject_sudo_dash_s(cmd)
         assert count == 3
         assert result.count("sudo -S") == 3
 
     async def test_chained_sudo_commands_both_execute(self):
         """Chained sudo commands should both execute when password is set."""
         set_sudo_password("testpass")
-        # Use a harmless chained command that proves both sides run.
-        # sudo -S with a wrong password will fail, but the command structure
-        # is what we're testing — both commands should be attempted.
-        # We use 'echo' wrapped in sudo to test the piping; this will fail
-        # because 'testpass' isn't a real password, but both sides should
-        # get the -S flag (verified via the unit tests above).
-        # Instead, test with a real command that doesn't actually need sudo:
         result = await execute_shell("echo first && echo second")
         assert "first" in result.output
         assert "second" in result.output
 
-    def test_sudo_in_argument_not_a_problem(self):
-        """sudo inside a string argument still gets word-boundary match,
-        but this is harmless and expected."""
-        cmd = "sudo echo 'run sudo to test'"
-        count = len(_SUDO_RE.findall(cmd))
-        # Both word-boundary matches of 'sudo' are found
-        assert count == 2
+    def test_sudo_in_argument_not_injected(self):
+        """sudo inside a string argument should NOT be injected with -S.
+        Only sudo at command-invocation positions gets modified."""
+        cmd = 'echo "use sudo carefully"'
+        result, count = _inject_sudo_dash_s(cmd)
+        assert count == 0
+        assert result == cmd  # unchanged
 
-    def test_password_input_has_trailing_yes(self):
+    def test_sudo_at_start_but_also_in_args(self):
+        """Only the command-position sudo gets -S, not the one in args."""
+        cmd = "sudo echo 'run sudo to test'"
+        result, count = _inject_sudo_dash_s(cmd)
+        assert count == 1
+        assert result == "sudo -S echo 'run sudo to test'"
+
+    def test_password_input_has_trailing_yes_for_pkg_manager(self):
         """Password input should end with 'y' lines for package manager prompts."""
         cmd = "sudo apt install nmap"
-        count = len(_SUDO_RE.findall(cmd))
+        _, count = _inject_sudo_dash_s(cmd)
         password = "hunter2"
         password_input = (password + "\n") * count + "y\n" * 3
         assert password_input == "hunter2\ny\ny\ny\n"
+
+    def test_has_sudo_invocation_at_command_position(self):
+        """_has_sudo_invocation returns True for sudo at command positions."""
+        assert _has_sudo_invocation("sudo apt update")
+        assert _has_sudo_invocation("sudo apt update && sudo reboot")
+        assert _has_sudo_invocation("  sudo ls")  # leading whitespace
+
+    def test_has_sudo_invocation_not_in_args(self):
+        """_has_sudo_invocation returns False for sudo only in arguments."""
+        assert not _has_sudo_invocation('echo "use sudo"')
+        assert not _has_sudo_invocation("grep sudo /var/log/auth.log")
+
+    def test_piped_sudo_commands(self):
+        """sudo in piped commands at command positions gets replaced."""
+        cmd = "sudo cat /etc/shadow | sudo grep root"
+        result, count = _inject_sudo_dash_s(cmd)
+        assert count == 2
+        assert "sudo -S cat" in result
+        assert "sudo -S grep" in result
+
+    def test_semicolon_separated_sudo(self):
+        """sudo in semicolon-separated commands gets replaced."""
+        cmd = "sudo systemctl stop nginx; sudo systemctl start nginx"
+        result, count = _inject_sudo_dash_s(cmd)
+        assert count == 2
 
 
 # ─── sudo password detection ────────────────────────────────────────────────

@@ -617,18 +617,47 @@ class AgentLoop:
                         password = await password_callback(tool_call)
                         if password:
                             from natshell.tools.execute_shell import (
-                                _SUDO_RE,
+                                _has_sudo_invocation,
                                 set_sudo_password,
                             )
 
                             set_sudo_password(password)
-                            # If the command doesn't contain sudo (e.g. "apt install"
-                            # which internally invokes sudo), prepend it so the
-                            # password injection in execute_shell kicks in.
+                            # If the command doesn't contain sudo at a command
+                            # position (e.g. "apt install" which internally
+                            # invokes sudo), prepend it so the password
+                            # injection in execute_shell kicks in.
                             retry_args = dict(tool_call.arguments)
                             cmd = retry_args.get("command", "")
-                            if cmd and not _SUDO_RE.search(cmd):
+                            if cmd and not _has_sudo_invocation(cmd):
                                 retry_args["command"] = f"sudo {cmd}"
+                            # Re-classify the modified command — prepending
+                            # sudo may change the risk level.
+                            retry_risk = self.safety.classify_tool_call(
+                                tool_call.name, retry_args
+                            )
+                            if retry_risk == Risk.BLOCKED:
+                                yield AgentEvent(
+                                    type=EventType.BLOCKED, tool_call=tool_call
+                                )
+                                self._append_tool_exchange(
+                                    tool_call,
+                                    "BLOCKED: The retried command with sudo was "
+                                    "blocked by the safety classifier.",
+                                )
+                                continue
+                            if retry_risk == Risk.CONFIRM and confirm_callback:
+                                yield AgentEvent(
+                                    type=EventType.CONFIRM_NEEDED,
+                                    tool_call=tool_call,
+                                )
+                                confirmed = await confirm_callback(tool_call)
+                                if not confirmed:
+                                    self._append_tool_exchange(
+                                        tool_call,
+                                        "DECLINED: The user declined the retried "
+                                        "command with sudo.",
+                                    )
+                                    continue
                             yield AgentEvent(type=EventType.THINKING)
                             tool_result = await self.tools.execute(
                                 tool_call.name, retry_args

@@ -39,6 +39,49 @@ _SUDO_PW_TIMEOUT = 300  # 5 minutes
 
 _SUDO_RE = re.compile(r"\bsudo\b")
 
+# Splits a command on shell operators, keeping delimiters.
+# Used to identify sub-commands that start with sudo (vs. "sudo" appearing
+# inside quoted arguments like `echo "use sudo"`).
+_CMD_SPLIT_RE = re.compile(r"(&&|\|\||[;&|(])")
+
+# Package manager commands that may prompt "Do you want to continue? [Y/n]"
+_PKG_MANAGER_RE = re.compile(
+    r"\b(?:apt|apt-get|dnf|yum|pacman|zypper|apk|emerge)\b"
+)
+
+
+def _inject_sudo_dash_s(command: str) -> tuple[str, int]:
+    """Replace ``sudo`` with ``sudo -S`` only at command-invocation positions.
+
+    Returns ``(modified_command, replacement_count)``.  Unlike a naive
+    ``\\bsudo\\b`` substitution this avoids matching ``sudo`` inside string
+    arguments (e.g. ``echo "use sudo"``), preventing password leaks to
+    stdin-reading commands that follow in a pipeline or chain.
+    """
+    parts = _CMD_SPLIT_RE.split(command)
+    count = 0
+    result_parts: list[str] = []
+    for part in parts:
+        # Shell-operator delimiters pass through unchanged
+        if _CMD_SPLIT_RE.fullmatch(part):
+            result_parts.append(part)
+            continue
+        # Check if this sub-command starts with sudo (optional leading whitespace)
+        stripped = part.lstrip()
+        if re.match(r"sudo(?:\s|$)", stripped):
+            idx = part.index("sudo")
+            part = part[:idx] + "sudo -S" + part[idx + 4:]
+            count += 1
+        result_parts.append(part)
+    return "".join(result_parts), count
+
+
+def _has_sudo_invocation(command: str) -> bool:
+    """Return True if the command contains ``sudo`` at a command-invocation position."""
+    _, count = _inject_sudo_dash_s(command)
+    return count > 0
+
+
 # stderr patterns that mean "sudo wanted a password but couldn't get one"
 _SUDO_NEEDS_PW = [
     "sudo: a terminal is required to read the password",
@@ -211,8 +254,8 @@ async def execute_shell(
     # Redact sudo -S from log output to avoid leaking password plumbing
     sudo_pw = _get_sudo_password()
     log_cmd = command
-    if sudo_pw and _SUDO_RE.search(command):
-        log_cmd = _SUDO_RE.sub("sudo -S", command)
+    if sudo_pw and _has_sudo_invocation(command):
+        log_cmd, _ = _inject_sudo_dash_s(command)
     logger.info(f"Executing: {log_cmd} (timeout={timeout}s)")
 
     # Filter sensitive environment variables before passing to subprocess
@@ -234,20 +277,21 @@ async def execute_shell(
             "start_new_session": True,
         }
 
-        # If we have a cached sudo password and the command uses sudo,
-        # add -S so sudo reads the password from stdin.
-        # Replace ALL occurrences — chained commands like
-        # "sudo apt update && sudo apt install -y nmap" need every sudo
-        # to read from stdin.  Repeat the password once per occurrence
-        # so each sudo -S gets a line to consume.
-        # Append trailing "y\n" lines so that interactive prompts from
-        # package managers (e.g. "Do you want to continue? [Y/n]") get
-        # auto-confirmed rather than aborting on EOF — the user already
-        # approved this command through NatShell's confirmation dialog.
-        if sudo_pw and _SUDO_RE.search(command):
-            sudo_count = len(_SUDO_RE.findall(command))
-            command = _SUDO_RE.sub("sudo -S", command)
-            run_kwargs["input"] = (sudo_pw + "\n") * sudo_count + "y\n" * 3
+        # If we have a cached sudo password and the command invokes sudo
+        # at a command position (not inside string arguments), add -S so
+        # sudo reads the password from stdin.  Uses _inject_sudo_dash_s()
+        # to avoid matching "sudo" inside quoted text — prevents password
+        # leakage to stdin-reading commands.
+        if sudo_pw and _has_sudo_invocation(command):
+            command, sudo_count = _inject_sudo_dash_s(command)
+            stdin_data = (sudo_pw + "\n") * sudo_count
+            # Append trailing "y\n" only for package manager commands that
+            # may prompt "Do you want to continue? [Y/n]".  Not appended
+            # for other commands to avoid feeding "y" to interactive programs
+            # (fdisk, mysql, python, etc.) that read from stdin.
+            if _PKG_MANAGER_RE.search(command):
+                stdin_data += "y\n" * 3
+            run_kwargs["input"] = stdin_data
         else:
             run_kwargs["stdin"] = subprocess.DEVNULL
 
