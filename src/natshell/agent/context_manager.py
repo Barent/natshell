@@ -36,6 +36,7 @@ class ContextManager:
         tokenizer_fn: Callable[[str], int] | None = None,
     ) -> None:
         self.context_budget = context_budget
+        self._initial_budget = context_budget
         self._tokenizer_fn = tokenizer_fn
         self.trimmed_count: int = 0  # total messages trimmed across all calls
 
@@ -89,7 +90,8 @@ class ContextManager:
         ratio = actual_tokens / estimated_tokens
         if ratio > 1.15:
             new_budget = int(self.context_budget / ratio)
-            new_budget = max(new_budget, 1024)
+            floor = max(1024, int(self._initial_budget * 0.4))
+            new_budget = max(new_budget, floor)
             if new_budget != self.context_budget:
                 logger.info(
                     "Calibrating context budget %d → %d "

@@ -310,6 +310,14 @@ class TestCalibrateFromActual:
         cm.calibrate_from_actual(estimated_tokens=100, actual_tokens=1000)
         assert cm.context_budget == 1024
 
+    def test_calibrate_floor_uses_initial_budget(self):
+        """Budget floor is 40% of initial budget when that exceeds 1024."""
+        cm = ContextManager(context_budget=5000)
+        # Actual is 10x the estimate — would shrink to 500
+        # Floor = max(1024, int(5000 * 0.4)) = max(1024, 2000) = 2000
+        cm.calibrate_from_actual(estimated_tokens=100, actual_tokens=1000)
+        assert cm.context_budget == 2000
+
     def test_calibrate_no_op_on_zero(self):
         """No-op when either value is zero."""
         cm = ContextManager(context_budget=10000)
