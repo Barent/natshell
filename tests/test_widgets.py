@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from rich.console import Group
+from rich.syntax import Syntax
 from rich.text import Text
 
 from natshell.inference.engine import ToolCall
@@ -66,7 +67,10 @@ class TestFormatToolSummary:
 class TestFormatToolDetail:
     def test_execute_shell_shows_command(self):
         tc = ToolCall(id="1", name="execute_shell", arguments={"command": "echo hi"})
-        assert "echo hi" in _format_tool_detail(tc)
+        result = _format_tool_detail(tc)
+        assert isinstance(result, Syntax)
+        assert result.lexer.name == "Bash"
+        assert "echo hi" in result.code
 
     def test_edit_file_shows_diff(self):
         tc = ToolCall(
@@ -100,7 +104,21 @@ class TestFormatToolDetail:
             name="run_code",
             arguments={"language": "python", "code": "print(42)"},
         )
-        assert "print(42)" in _format_tool_detail(tc)
+        result = _format_tool_detail(tc)
+        assert isinstance(result, Syntax)
+        assert result.lexer.name == "Python"
+        assert "print(42)" in result.code
+
+    def test_run_code_default_language(self):
+        tc = ToolCall(
+            id="1",
+            name="run_code",
+            arguments={"code": "some code"},
+        )
+        result = _format_tool_detail(tc)
+        assert isinstance(result, Syntax)
+        assert result.lexer.name == "Text only"
+        assert "some code" in result.code
 
     def test_write_file_new_file_shows_preview(self, tmp_path):
         path = tmp_path / "new.txt"

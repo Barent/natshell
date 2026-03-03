@@ -246,7 +246,7 @@ ConfirmScreen {
 }
 
 #confirm-command {
-    max-height: 16;
+    max-height: 24;
     min-height: 3;
     height: auto;
     background: #0d0d1a;

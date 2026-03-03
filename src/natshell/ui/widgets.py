@@ -14,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from rich.console import RenderableType
+from rich.syntax import Syntax
 
 from natshell.inference.engine import ToolCall
 from natshell.ui.code_fence import parse_code_fences
@@ -575,11 +576,12 @@ def _color_diff(diff_lines: list[str]) -> str:
     return "\n".join(colored)
 
 
-def _format_tool_detail(tc: ToolCall) -> str:
+def _format_tool_detail(tc: ToolCall) -> str | RenderableType:
     """Detailed content for the scrollable area."""
     match tc.name:
         case "execute_shell":
-            return _escape(tc.arguments.get("command", str(tc.arguments)))
+            cmd = tc.arguments.get("command", str(tc.arguments))
+            return Syntax(cmd, "bash", theme="monokai", background_color="#0d1b2a", word_wrap=True)
         case "edit_file":
             old = tc.arguments.get("old_text", "")
             new = tc.arguments.get("new_text", "")
@@ -593,7 +595,9 @@ def _format_tool_detail(tc: ToolCall) -> str:
                 return _color_diff([line.rstrip("\n") for line in diff])
             return _escape(f"(no changes)\nold: {old}\nnew: {new}")
         case "run_code":
-            return _escape(tc.arguments.get("code", str(tc.arguments)))
+            code = tc.arguments.get("code", str(tc.arguments))
+            lang = tc.arguments.get("language", "text")
+            return Syntax(code, lang, theme="monokai", background_color="#0d1b2a", word_wrap=True)
         case "write_file":
             path_str = tc.arguments.get("path", "")
             content = tc.arguments.get("content", "")
