@@ -765,10 +765,17 @@ class AgentLoop:
         """Check if we should attempt fallback to local model."""
         import httpx
 
-        from natshell.inference.remote import ContextOverflowError, RemoteEngine
+        from natshell.inference.remote import (
+            AuthenticationError,
+            ContextOverflowError,
+            RemoteEngine,
+        )
 
         # Context overflow is not a connectivity issue — don't swap engines
         if isinstance(error, ContextOverflowError):
+            return False
+        # Auth errors mean the server is reachable but the key is wrong — don't swap
+        if isinstance(error, AuthenticationError):
             return False
         if not isinstance(self.engine, RemoteEngine):
             return False

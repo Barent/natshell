@@ -888,6 +888,16 @@ class TestContextOverflow:
         agent = _make_agent([CompletionResult(content="ok")])
         assert not agent._can_fallback(ContextOverflowError("context full"))
 
+    async def test_auth_error_does_not_trigger_local_fallback(self):
+        """_can_fallback returns False for AuthenticationError."""
+        from natshell.inference.remote import AuthenticationError, RemoteEngine
+
+        agent = _make_agent([CompletionResult(content="ok")])
+        # _can_fallback requires a RemoteEngine and fallback_config to even consider fallback
+        agent.engine = AsyncMock(spec=RemoteEngine)
+        agent.fallback_config = True  # truthy sentinel
+        assert not agent._can_fallback(AuthenticationError("API key is missing or incorrect"))
+
     async def test_context_overflow_unrecoverable_shows_clear_message(self):
         """When conversation is too short to compact, suggest /clear."""
         from natshell.inference.remote import ContextOverflowError

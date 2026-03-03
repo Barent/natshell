@@ -38,6 +38,10 @@ class ContextOverflowError(ConnectionError):
     """The remote API rejected the request because the prompt exceeds the model's context window."""
 
 
+class AuthenticationError(ConnectionError):
+    """The remote API rejected the request due to a missing or invalid API key (401/403)."""
+
+
 class RemoteEngine:
     """LLM inference via a remote OpenAI-compatible API."""
 
@@ -131,6 +135,13 @@ class RemoteEngine:
                         raise ContextOverflowError(
                             f"Prompt exceeds model context window (HTTP {status}): {body}"
                         ) from e
+                # Authentication errors — don't retry, don't fall back
+                if status in (401, 403):
+                    raise AuthenticationError(
+                        f"API key is missing or incorrect (HTTP {status}). "
+                        "Check your NATSHELL_API_KEY environment variable "
+                        "or api_key in ~/.config/natshell/config.toml"
+                    ) from e
                 # Only retry on transient server errors (502/503/504)
                 if status not in (502, 503, 504):
                     raise ConnectionError(

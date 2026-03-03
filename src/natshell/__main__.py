@@ -147,6 +147,13 @@ def main() -> None:
     remote_model = config.remote.model
     remote_api_key = config.remote.api_key
     use_remote = bool(remote_url)
+
+    # Diagnostic: show whether an API key was found
+    if remote_url:
+        if remote_api_key:
+            print("API key: configured")
+        else:
+            print("API key: not set — set NATSHELL_API_KEY or api_key in config.toml")
     fallback_config = None
 
     # Ensure remote URL has a scheme
