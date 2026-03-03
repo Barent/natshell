@@ -102,7 +102,7 @@ These security features were added in the security refactor:
 4. **Environment variable filtering** — Sensitive env vars (AWS keys, GitHub tokens, API keys, etc.) are stripped from subprocess environments
 5. **HTTPS warning** — `RemoteEngine` logs a warning when API keys are sent over plaintext HTTP to non-localhost hosts
 6. **Sensitive file path gating** — `read_file` requires confirmation for SSH keys, `/etc/shadow`, `.env`, etc.
-7. **Sudo regex correctness** — `_SUDO_RE.sub()` uses `count=1` to only replace the first `sudo` occurrence
+7. **Sudo regex correctness** — `_SUDO_RE.sub()` replaces ALL `\bsudo\b` occurrences with `sudo -S`, repeating the password once per occurrence so chained commands (`sudo apt update && sudo apt install ...`) work correctly
 8. **Config permissions warning** — Warns if config file containing an API key has permissive permissions (world/group readable)
 9. **Log redaction** — Sudo password plumbing is redacted from verbose log output
 10. **Session ID validation** — Session IDs must be 32-char lowercase hex (UUID format); path traversal attempts are rejected with `ValueError`

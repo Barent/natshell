@@ -211,7 +211,7 @@ async def execute_shell(
     sudo_pw = _get_sudo_password()
     log_cmd = command
     if sudo_pw and _SUDO_RE.search(command):
-        log_cmd = _SUDO_RE.sub("sudo -S", command, count=1)
+        log_cmd = _SUDO_RE.sub("sudo -S", command)
     logger.info(f"Executing: {log_cmd} (timeout={timeout}s)")
 
     # Filter sensitive environment variables before passing to subprocess
@@ -235,9 +235,14 @@ async def execute_shell(
 
         # If we have a cached sudo password and the command uses sudo,
         # add -S so sudo reads the password from stdin.
+        # Replace ALL occurrences — chained commands like
+        # "sudo apt update && sudo apt install -y nmap" need every sudo
+        # to read from stdin.  Repeat the password once per occurrence
+        # so each sudo -S gets a line to consume.
         if sudo_pw and _SUDO_RE.search(command):
-            command = _SUDO_RE.sub("sudo -S", command, count=1)
-            run_kwargs["input"] = sudo_pw + "\n"
+            sudo_count = len(_SUDO_RE.findall(command))
+            command = _SUDO_RE.sub("sudo -S", command)
+            run_kwargs["input"] = (sudo_pw + "\n") * sudo_count
         else:
             run_kwargs["stdin"] = subprocess.DEVNULL
 
