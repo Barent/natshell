@@ -258,36 +258,36 @@ class TestToolCallClassification:
         assert c.classify_tool_call("execute_shell", {"command": "ls"}) == Risk.SAFE
 
 
-# ─── YOLO mode ───────────────────────────────────────────────────────────────
+# ─── Danger mode ─────────────────────────────────────────────────────────────
 
 
-class TestYoloMode:
-    def test_yolo_downgrades_confirm_to_safe(self):
-        c = _make_classifier(mode="yolo")
+class TestDangerMode:
+    def test_danger_downgrades_confirm_to_safe(self):
+        c = _make_classifier(mode="danger")
         assert c.classify_tool_call("execute_shell", {"command": "rm foo"}) == Risk.SAFE
         assert c.classify_tool_call("execute_shell", {"command": "sudo apt install x"}) == Risk.SAFE
 
-    def test_yolo_does_not_downgrade_blocked(self):
-        c = _make_classifier(mode="yolo")
+    def test_danger_does_not_downgrade_blocked(self):
+        c = _make_classifier(mode="danger")
         assert c.classify_tool_call("execute_shell", {"command": "rm -rf /"}) == Risk.BLOCKED
 
-    def test_yolo_downgrades_edit_file(self):
-        c = _make_classifier(mode="yolo")
+    def test_danger_downgrades_edit_file(self):
+        c = _make_classifier(mode="danger")
         assert (
             c.classify_tool_call("edit_file", {"path": "/tmp/x", "old_text": "a", "new_text": "b"})
             == Risk.SAFE
         )
 
-    def test_yolo_downgrades_run_code(self):
-        c = _make_classifier(mode="yolo")
+    def test_danger_downgrades_run_code(self):
+        c = _make_classifier(mode="danger")
         assert (
             c.classify_tool_call("run_code", {"language": "python", "code": "print(1)"})
             == Risk.SAFE
         )
 
-    def test_yolo_edit_file_sensitive_path_still_confirm(self):
-        """Even in yolo mode, sensitive paths on edit_file stay CONFIRM."""
-        c = _make_classifier(mode="yolo")
+    def test_danger_edit_file_sensitive_path_still_confirm(self):
+        """Even in danger mode, sensitive paths on edit_file stay CONFIRM."""
+        c = _make_classifier(mode="danger")
         assert (
             c.classify_tool_call(
                 "edit_file", {"path": "/home/user/.env", "old_text": "a", "new_text": "b"}

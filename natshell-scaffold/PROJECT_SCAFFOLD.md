@@ -150,7 +150,7 @@ max_tokens = 2048
 [safety]
 # "confirm" = ask before moderate/dangerous commands
 # "warn" = show warning but auto-execute
-# "yolo" = execute everything without asking
+# "danger" = execute everything without asking
 mode = "confirm"
 # Commands that always require confirmation (regex patterns)
 always_confirm = [

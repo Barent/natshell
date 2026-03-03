@@ -53,8 +53,8 @@ class SafetyClassifier:
         if tool_name == "execute_shell":
             command = arguments.get("command", "")
             risk = self.classify_command(command)
-            # In yolo mode, downgrade CONFIRM to SAFE (but not BLOCKED)
-            if self.mode == "yolo" and risk == Risk.CONFIRM:
+            # In danger mode, downgrade CONFIRM to SAFE (but not BLOCKED)
+            if self.mode == "danger" and risk == Risk.CONFIRM:
                 return Risk.SAFE
             return risk
 

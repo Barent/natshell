@@ -242,7 +242,7 @@ Initial public release.
 - Plan generation (`/plan`) and execution (`/exeplan`) for multi-step workflows
 - Textual-based TUI with command palette, clipboard integration, input history
 - GPU acceleration — auto-detection via vulkaninfo, nvidia-smi, lspci; Vulkan, Metal, and CPU backends
-- Regex-based safety classifier with three modes (confirm, warn, yolo)
+- Regex-based safety classifier with three modes (confirm, warn, danger)
 - Command chaining detection — splits `&&`, `||`, `;`, `&`, `|` and classifies each sub-command
 - Sensitive file path gating for read_file (SSH keys, /etc/shadow, .env, etc.)
 - Environment variable filtering — strips API keys and tokens from subprocesses

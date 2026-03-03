@@ -704,7 +704,7 @@ class TestEditFailureGuard:
                     CompletionResult(content="Let me re-read and try again."),
                 ],
                 max_steps=5,
-                safety_mode="yolo",  # skip confirmation for edit_file
+                safety_mode="danger",  # skip confirmation for edit_file
             )
 
             events = await _collect_events(agent, "fix the bug")
@@ -758,7 +758,7 @@ class TestEditFailureGuard:
                     CompletionResult(content="Done! I've updated the file."),
                 ],
                 max_steps=5,
-                safety_mode="yolo",
+                safety_mode="danger",
             )
 
             events = await _collect_events(agent, "update the file")
@@ -999,7 +999,7 @@ class TestRepetitiveReadDetection:
                     CompletionResult(content="Done reading."),
                 ],
                 max_steps=5,
-                safety_mode="yolo",
+                safety_mode="danger",
             )
 
             await _collect_events(agent, "read the file")
@@ -1057,7 +1057,7 @@ class TestRepetitiveReadDetection:
                     CompletionResult(content="Done."),
                 ],
                 max_steps=6,
-                safety_mode="yolo",
+                safety_mode="danger",
             )
 
             await _collect_events(agent, "update the file")
@@ -1095,7 +1095,7 @@ class TestRepetitiveReadDetection:
                     CompletionResult(content="Done."),
                 ],
                 max_steps=4,
-                safety_mode="yolo",
+                safety_mode="danger",
             )
 
             await _collect_events(agent, "read the file")
@@ -1236,7 +1236,7 @@ class TestEditFailureGuidance:
                     CompletionResult(content="Let me try write_file."),
                 ],
                 max_steps=5,
-                safety_mode="yolo",
+                safety_mode="danger",
             )
 
             await _collect_events(agent, "edit the file")
@@ -1307,7 +1307,7 @@ class TestEditFailureGuidance:
                     CompletionResult(content="Let me try write_file."),
                 ],
                 max_steps=5,
-                safety_mode="yolo",
+                safety_mode="danger",
             )
 
             await _collect_events(agent, "edit the file")

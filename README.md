@@ -163,7 +163,7 @@ Additional safety features:
 - LLM output is escaped to prevent Rich markup injection in the TUI
 - API keys sent over plaintext HTTP trigger a warning
 
-Safety modes are configurable: `confirm` (default), `warn`, or `yolo`. All patterns are customizable in config.
+Safety modes are configurable: `confirm` (default), `warn`, or `danger`. All patterns are customizable in config.
 
 ## Configuration
 

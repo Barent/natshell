@@ -106,8 +106,8 @@ class SafetyClassifier:
         if tool_name == "execute_shell":
             command = arguments.get("command", "")
             risk = self.classify_command(command)
-            # In yolo mode, downgrade CONFIRM to SAFE (but not BLOCKED)
-            if self.mode == "yolo" and risk == Risk.CONFIRM:
+            # In danger mode, downgrade CONFIRM to SAFE (but not BLOCKED)
+            if self.mode == "danger" and risk == Risk.CONFIRM:
                 return Risk.SAFE
             return risk
 
@@ -120,12 +120,12 @@ class SafetyClassifier:
             for pattern in _SENSITIVE_PATH_PATTERNS:
                 if pattern in path:
                     return Risk.CONFIRM
-            if self.mode == "yolo":
+            if self.mode == "danger":
                 return Risk.SAFE
             return Risk.CONFIRM
 
         if tool_name == "run_code":
-            if self.mode == "yolo":
+            if self.mode == "danger":
                 return Risk.SAFE
             return Risk.CONFIRM
 
@@ -143,7 +143,7 @@ class SafetyClassifier:
                 return Risk.SAFE
             # Mutating operations require confirmation
             if operation in ("commit", "stash"):
-                if self.mode == "yolo":
+                if self.mode == "danger":
                     return Risk.SAFE
                 return Risk.CONFIRM
             # Unknown operation — let the tool handle the error, but confirm

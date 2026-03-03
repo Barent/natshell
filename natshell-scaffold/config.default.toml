@@ -33,7 +33,7 @@ max_tokens = 2048
 # Safety mode:
 #   "confirm"  = ask user before moderate/dangerous commands (recommended)
 #   "warn"     = show warning but auto-execute
-#   "yolo"     = execute everything without confirmation (dangerous!)
+#   "danger"   = execute everything without confirmation (dangerous!)
 mode = "confirm"
 
 # Commands that always require user confirmation (regex patterns matched against full command)

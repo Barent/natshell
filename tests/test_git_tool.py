@@ -298,16 +298,16 @@ class TestGitToolClassification:
         c = _make_classifier()
         assert c.classify_tool_call("git_tool", {"operation": "stash"}) == Risk.CONFIRM
 
-    def test_yolo_downgrades_commit(self):
-        c = _make_classifier(mode="yolo")
+    def test_danger_downgrades_commit(self):
+        c = _make_classifier(mode="danger")
         assert c.classify_tool_call("git_tool", {"operation": "commit"}) == Risk.SAFE
 
-    def test_yolo_downgrades_stash(self):
-        c = _make_classifier(mode="yolo")
+    def test_danger_downgrades_stash(self):
+        c = _make_classifier(mode="danger")
         assert c.classify_tool_call("git_tool", {"operation": "stash"}) == Risk.SAFE
 
-    def test_yolo_safe_ops_unchanged(self):
-        c = _make_classifier(mode="yolo")
+    def test_danger_safe_ops_unchanged(self):
+        c = _make_classifier(mode="danger")
         assert c.classify_tool_call("git_tool", {"operation": "status"}) == Risk.SAFE
         assert c.classify_tool_call("git_tool", {"operation": "diff"}) == Risk.SAFE
 

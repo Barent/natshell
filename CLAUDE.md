@@ -79,7 +79,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 - `src/natshell/tools/fetch_url.py` — Fetch URL contents with SSRF protection (private IP blocking), response size cap (1 MB), timeout limits, GET-only. Classified as SAFE.
 
 ### Safety
-- `src/natshell/safety/classifier.py` — Command risk classifier. Splits chained commands (`&&`, `||`, `;`, `&`, `|`) and classifies each sub-command. Detects subshell/backtick expansion. Sensitive file path gating for read_file. Three modes: confirm (default), warn, yolo.
+- `src/natshell/safety/classifier.py` — Command risk classifier. Splits chained commands (`&&`, `||`, `;`, `&`, `|`) and classifies each sub-command. Detects subshell/backtick expansion. Sensitive file path gating for read_file. Three modes: confirm (default), warn, danger.
 
 ### UI
 - `src/natshell/ui/widgets.py` — Custom Textual widgets: HistoryInput (shell-like up/down arrow input history with draft save/restore), LogoBanner, CopyableMessage (UserMessage, AssistantMessage, PlanningMessage, BlockedMessage, SystemMessage, HelpMessage), CommandBlock, ThinkingIndicator, ConfirmScreen, SudoPasswordScreen, PlanStepDivider, PlanOverviewMessage, PlanSummaryMessage, RunStatsMessage. Rich markup escaping (`_escape()`) on all untrusted content.
