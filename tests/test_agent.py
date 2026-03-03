@@ -1862,3 +1862,100 @@ class TestSmallContextToolFilter:
         schemas = call_args.kwargs.get("tools") or call_args[1].get("tools", [])
         schema_names = {s["function"]["name"] for s in schemas}
         assert schema_names == {"read_file"}
+
+
+# ─── Sudo retry prepends sudo ────────────────────────────────────────────────
+
+
+class TestSudoRetryPrependsSudo:
+    async def test_retry_prepends_sudo_when_missing(self):
+        """When 'apt install nmap' triggers a sudo error, the retry should
+        prepend 'sudo' so the password injection fires."""
+        from natshell.tools.registry import ToolResult
+
+        # Model calls execute_shell with "apt install -y nmap" (no sudo)
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc1",
+                            name="execute_shell",
+                            arguments={"command": "apt install -y nmap"},
+                        )
+                    ],
+                ),
+                CompletionResult(content="nmap installed!"),
+            ],
+            safety_mode="warn",
+        )
+
+        # Mock the tool execution: first call returns sudo error, second succeeds
+        sudo_error = ToolResult(
+            exit_code=1,
+            error="sudo: a terminal is required to read the password",
+        )
+        success = ToolResult(exit_code=0, output="installed nmap")
+        agent.tools.execute = AsyncMock(side_effect=[sudo_error, success])
+
+        # Password callback returns a password
+        password_cb = AsyncMock(return_value="hunter2")
+
+        events = []
+        async for event in agent.handle_user_message(
+            "install nmap",
+            password_callback=password_cb,
+        ):
+            events.append(event)
+
+        # Password callback should have been called
+        password_cb.assert_called_once()
+
+        # The retry call should have prepended sudo
+        assert agent.tools.execute.call_count == 2
+        retry_call = agent.tools.execute.call_args_list[1]
+        # The retry args are passed as (name, arguments_dict)
+        retry_args = retry_call[0][1] if len(retry_call[0]) > 1 else retry_call[1]
+        assert retry_args.get("command", "").startswith("sudo ")
+
+    async def test_retry_does_not_double_sudo(self):
+        """When 'sudo apt install nmap' triggers a sudo error, the retry should
+        NOT prepend a second 'sudo'."""
+        from natshell.tools.registry import ToolResult
+
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc1",
+                            name="execute_shell",
+                            arguments={"command": "sudo apt install -y nmap"},
+                        )
+                    ],
+                ),
+                CompletionResult(content="done"),
+            ],
+            safety_mode="warn",
+        )
+
+        sudo_error = ToolResult(
+            exit_code=1,
+            error="sudo: no password was provided",
+        )
+        success = ToolResult(exit_code=0, output="installed")
+        agent.tools.execute = AsyncMock(side_effect=[sudo_error, success])
+        password_cb = AsyncMock(return_value="hunter2")
+
+        async for _ in agent.handle_user_message(
+            "install nmap",
+            password_callback=password_cb,
+        ):
+            pass
+
+        # Retry should use the original command (already has sudo)
+        retry_args = agent.tools.execute.call_args_list[1][0][1]
+        assert retry_args["command"] == "sudo apt install -y nmap"
+        assert not retry_args["command"].startswith("sudo sudo")

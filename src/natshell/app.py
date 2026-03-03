@@ -436,7 +436,13 @@ class NatShellApp(App):
                 password = await self.push_screen_wait(SudoPasswordScreen(command))
                 if password:
                     set_sudo_password(password)
-                    result = await execute_shell(command)
+                    # If the command doesn't contain sudo (e.g. "apt install"
+                    # which internally invokes sudo), prepend it so the
+                    # password injection in execute_shell kicks in.
+                    from natshell.tools.execute_shell import _SUDO_RE
+
+                    retry_cmd = command if _SUDO_RE.search(command) else f"sudo {command}"
+                    result = await execute_shell(retry_cmd)
 
             output = result.output or result.error
             conversation.mount(CommandBlock(command, output, result.exit_code))

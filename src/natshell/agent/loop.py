@@ -616,12 +616,22 @@ class AgentLoop:
                     ):
                         password = await password_callback(tool_call)
                         if password:
-                            from natshell.tools.execute_shell import set_sudo_password
+                            from natshell.tools.execute_shell import (
+                                _SUDO_RE,
+                                set_sudo_password,
+                            )
 
                             set_sudo_password(password)
+                            # If the command doesn't contain sudo (e.g. "apt install"
+                            # which internally invokes sudo), prepend it so the
+                            # password injection in execute_shell kicks in.
+                            retry_args = dict(tool_call.arguments)
+                            cmd = retry_args.get("command", "")
+                            if cmd and not _SUDO_RE.search(cmd):
+                                retry_args["command"] = f"sudo {cmd}"
                             yield AgentEvent(type=EventType.THINKING)
                             tool_result = await self.tools.execute(
-                                tool_call.name, tool_call.arguments
+                                tool_call.name, retry_args
                             )
 
                     # Track edit_file/write_file results
