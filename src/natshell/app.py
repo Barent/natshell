@@ -872,6 +872,35 @@ class NatShellApp(App):
             )
         )
 
+    async def _switch_to_remote_api(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str,
+        n_ctx: int,
+        conversation: ScrollableContainer,
+    ) -> None:
+        """Switch to a remote OpenAI-compatible API (non-Ollama)."""
+        from natshell.inference.remote import RemoteEngine
+
+        # Use profile api_key, fall back to config, then env var
+        key = api_key or self._config.remote.api_key
+        if not key:
+            import os
+            key = os.environ.get("NATSHELL_API_KEY", "")
+
+        new_engine = RemoteEngine(
+            base_url=base_url, model=model, api_key=key, n_ctx=n_ctx,
+        )
+        await self.agent.swap_engine(new_engine)
+        save_engine_preference("remote")
+        conversation.mount(
+            SystemMessage(
+                f"Switched to [bold]{model}[/] on {base_url}\n"
+                "[dim]Conversation history cleared.[/]"
+            )
+        )
+
     async def _model_switch_local(self, conversation: ScrollableContainer) -> None:
         """Switch back to the local model."""
         info = self.agent.engine.engine_info()
@@ -1056,7 +1085,10 @@ class NatShellApp(App):
         if profile.ollama_model:
             await self._model_use(profile.ollama_model, conversation)
         elif profile.remote_model and profile.remote_url:
-            await self._model_use(profile.remote_model, conversation)
+            await self._switch_to_remote_api(
+                profile.remote_url, profile.remote_model,
+                profile.api_key, profile.n_ctx, conversation,
+            )
         elif profile.engine == "local":
             await self._model_switch_local(conversation)
         else:
