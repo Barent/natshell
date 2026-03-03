@@ -550,10 +550,10 @@ def _make_agent_with_ctx(
 
 
 class TestMaxTokensScaling:
-    def test_small_context_uses_config_floor(self):
-        """4096-token context: max(2048, min(1024, 16384)) = 2048 (unchanged)."""
+    def test_small_context_uses_25pct(self):
+        """4096-token context: n_ctx ≤ 16384 → scaled = 1024 (25% of context)."""
         agent = _make_agent_with_ctx(n_ctx=4096)
-        assert agent._max_tokens == 2048
+        assert agent._max_tokens == 1024
 
     def test_large_context_scales_up(self):
         """40960-token context: max(2048, min(10240, 16384)) = 10240."""
@@ -570,16 +570,20 @@ class TestMaxTokensScaling:
         agent = _make_agent_with_ctx(n_ctx=262144)
         assert agent._max_tokens == 65536
 
-    def test_user_high_floor_respected(self):
-        """User sets max_tokens=8192 — should be respected as floor."""
+    def test_user_high_floor_capped_on_small_context(self):
+        """User sets max_tokens=8192 on 4K context — capped to 25% to avoid starving budget."""
         agent = _make_agent_with_ctx(n_ctx=4096, max_tokens=8192)
-        # max(8192, min(1024, 16384)) = 8192
+        assert agent._max_tokens == 1024
+
+    def test_user_high_floor_respected_on_large_context(self):
+        """User sets max_tokens=8192 on 32K context — respected as floor."""
+        agent = _make_agent_with_ctx(n_ctx=32768, max_tokens=8192)
         assert agent._max_tokens == 8192
 
     async def test_engine_swap_recalculates(self):
         """Swapping to an engine with a larger context should update _max_tokens."""
         agent = _make_agent_with_ctx(n_ctx=4096)
-        assert agent._max_tokens == 2048
+        assert agent._max_tokens == 1024
 
         # Swap to a bigger engine
         new_engine = AsyncMock()

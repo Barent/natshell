@@ -163,11 +163,17 @@ class AgentLoop:
     def _effective_max_tokens(self, n_ctx: int) -> int:
         """Scale max_tokens based on context window size.
 
-        Uses 25% of the context window (capped at 65536), with the configured
-        value as a minimum floor.  This gives small local models their current
-        behaviour while providing remote/large models proper output headroom.
+        Uses 25% of the context window (capped at 65536).  For small context
+        windows (≤16K), always uses the 25% scaling to prevent the config
+        default (8192) from consuming the entire context and starving the
+        prompt budget.  For larger contexts, the configured value is used as
+        a minimum floor.
         """
-        return max(self.config.max_tokens, min(n_ctx // 4, 65536))
+        scaled = min(n_ctx // 4, 65536)
+        if n_ctx <= 16384:
+            # Small local models: enforce 25% cap regardless of config
+            return scaled
+        return max(self.config.max_tokens, scaled)
 
     _DEFAULT_MAX_STEPS = 15
     _CONTEXT_PRESSURE_THRESHOLD = 0.85
