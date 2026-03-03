@@ -1637,7 +1637,11 @@ _SAMPLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "execute_shell",
-            "description": "Execute a shell command on the user's system and return the output. Use this for system administration tasks.",
+            "description": (
+                "Execute a shell command on the user's system"
+                " and return the output."
+                " Use this for system administration tasks."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1658,7 +1662,10 @@ _SAMPLE_TOOLS = [
         "type": "function",
         "function": {
             "name": "git_tool",
-            "description": "Perform structured git operations. Returns clean output for common git tasks.",
+            "description": (
+                "Perform structured git operations."
+                " Returns clean output for common git tasks."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
