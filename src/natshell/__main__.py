@@ -102,7 +102,6 @@ def main() -> None:
 
     # Setup logging — nothing must reach stderr while the Textual TUI owns
     # the terminal, because any stderr output corrupts the display.
-    is_tui = not args.headless and not args.mcp
     root_logger = logging.getLogger()
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG if args.verbose else logging.WARNING)
