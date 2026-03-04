@@ -128,12 +128,18 @@ def main() -> None:
         _self_update()
         return
 
-    # First-run setup wizard
+    # Conflict check (before wizard to avoid unnecessary interaction)
+    if args.local and args.remote:
+        print("Error: --local and --remote cannot be used together.")
+        sys.exit(1)
+
+    # First-run setup wizard (skip when CLI specifies engine explicitly)
     from natshell.setup_wizard import should_run_wizard
 
     if should_run_wizard(
         config_path=Path(args.config) if args.config else None,
-        no_setup=args.no_setup,
+        no_setup=args.no_setup or bool(args.local) or bool(args.remote)
+        or bool(args.model),
         headless=bool(args.headless),
         mcp=args.mcp,
         download=args.download,
@@ -144,11 +150,6 @@ def main() -> None:
 
     # Load config
     config = load_config(args.config)
-
-    # Conflict check
-    if args.local and args.remote:
-        print("Error: --local and --remote cannot be used together.")
-        sys.exit(1)
 
     # Override config with CLI args
     if args.model:
