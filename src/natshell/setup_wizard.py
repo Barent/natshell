@@ -10,25 +10,13 @@ import sys
 from pathlib import Path
 from typing import Callable, TextIO
 
+from natshell.model_manager import BUNDLED_TIERS
+
+# Wizard choices: numbered keys map to BUNDLED_TIERS + non-download options.
 MODEL_TIERS: dict[str, dict[str, str]] = {
-    "1": {
-        "name": "Light",
-        "description": "Qwen3-4B (~2.5 GB, low RAM)",
-        "hf_repo": "Qwen/Qwen3-4B-GGUF",
-        "hf_file": "Qwen3-4B-Q4_K_M.gguf",
-    },
-    "2": {
-        "name": "Standard",
-        "description": "Qwen3-8B (~5 GB, general purpose)",
-        "hf_repo": "Qwen/Qwen3-8B-GGUF",
-        "hf_file": "Qwen3-8B-Q4_K_M.gguf",
-    },
-    "3": {
-        "name": "Enhanced",
-        "description": "Mistral Nemo 12B (~7.5 GB, 128K context)",
-        "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
-        "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
-    },
+    "1": BUNDLED_TIERS["light"],
+    "2": BUNDLED_TIERS["standard"],
+    "3": BUNDLED_TIERS["enhanced"],
     "4": {
         "name": "Remote only",
         "description": "Use an Ollama/remote server (no local download)",

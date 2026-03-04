@@ -38,8 +38,11 @@ from natshell.config import (
 )
 from natshell.inference.engine import ToolCall
 from natshell.model_manager import (
+    BUNDLED_TIERS,
+    download_bundled_model,
     fetch_model_list,
     find_local_model,
+    format_download_menu,
     format_local_models,
     format_model_info,
     format_model_list,
@@ -906,16 +909,19 @@ class NatShellApp(App):
                     conversation.mount(SystemMessage("Usage: /model default <model-name>"))
                 else:
                     self._model_set_default(subargs.strip(), conversation)
+            case "download":
+                await self._model_download_command(subargs.strip(), conversation)
             case _:
                 conversation.mount(
                     SystemMessage(
                         "Unknown subcommand. Usage:\n"
-                        "  /model          — show current info\n"
-                        "  /model list     — list remote models\n"
-                        "  /model use <n>  — switch to remote model\n"
-                        "  /model switch   — switch local model\n"
-                        "  /model local    — switch to local model\n"
-                        "  /model default <n> — set default model"
+                        "  /model            — show current info\n"
+                        "  /model list       — list remote models\n"
+                        "  /model use <n>    — switch to remote model\n"
+                        "  /model switch     — switch local model\n"
+                        "  /model local      — switch to local model\n"
+                        "  /model default <n> — set default model\n"
+                        "  /model download   — download a bundled model tier"
                     )
                 )
 
@@ -1094,6 +1100,51 @@ class NatShellApp(App):
             return
 
         await self.switch_local_model(str(target))
+
+    async def _model_download_command(
+        self, args: str, conversation: ScrollableContainer
+    ) -> None:
+        """Handle /model download [tier]."""
+        if not args:
+            conversation.mount(SystemMessage(format_download_menu()))
+            return
+
+        tier_key = args.lower()
+        if tier_key not in BUNDLED_TIERS:
+            conversation.mount(
+                SystemMessage(
+                    f"Unknown tier '{args}'. "
+                    f"Valid tiers: {', '.join(BUNDLED_TIERS)}"
+                )
+            )
+            return
+
+        tier = BUNDLED_TIERS[tier_key]
+        conversation.mount(
+            SystemMessage(f"Downloading {tier['name']} ({tier['description']})...")
+        )
+        conversation.scroll_end()
+
+        try:
+            model_path = await download_bundled_model(tier_key)
+        except RuntimeError as e:
+            conversation.mount(SystemMessage(f"[red]{e}[/]"))
+            return
+
+        # Persist and switch to the downloaded model
+        save_model_config(tier["hf_repo"], tier["hf_file"])
+        save_engine_preference("local")
+        self._config.model.hf_repo = tier["hf_repo"]
+        self._config.model.hf_file = tier["hf_file"]
+
+        conversation.mount(
+            SystemMessage(
+                f"[green]Downloaded {tier['name']}[/] — {tier['hf_file']}\n"
+                f"Switching to {tier['name']}..."
+            )
+        )
+
+        await self.switch_local_model(str(model_path))
 
     async def switch_local_model(self, model_path: str) -> None:
         """Switch to a different local .gguf model (used by command palette and /model switch)."""

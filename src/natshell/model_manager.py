@@ -1,14 +1,17 @@
 """Model management helpers — extracted from app.py.
 
 Pure logic for formatting model info, listing models, validating
-server connectivity, and resolving local model paths.  Functions
-accept the data they need (config, engine info, etc.) so they stay
-decoupled from the Textual app.
+server connectivity, resolving local model paths, and downloading
+bundled model tiers.  Functions accept the data they need (config,
+engine info, etc.) so they stay decoupled from the Textual app.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
+from typing import Callable
 
 from natshell.config import NatShellConfig, save_ollama_default
 from natshell.inference.engine import EngineInfo
@@ -19,6 +22,97 @@ from natshell.inference.ollama import (
     normalize_base_url,
     ping_server,
 )
+
+logger = logging.getLogger(__name__)
+
+# ─── Bundled model tiers ─────────────────────────────────────────────
+
+BUNDLED_TIERS: dict[str, dict[str, str]] = {
+    "light": {
+        "name": "Light",
+        "description": "Qwen3-4B (~2.5 GB, low RAM)",
+        "hf_repo": "Qwen/Qwen3-4B-GGUF",
+        "hf_file": "Qwen3-4B-Q4_K_M.gguf",
+    },
+    "standard": {
+        "name": "Standard",
+        "description": "Qwen3-8B (~5 GB, general purpose)",
+        "hf_repo": "Qwen/Qwen3-8B-GGUF",
+        "hf_file": "Qwen3-8B-Q4_K_M.gguf",
+    },
+    "enhanced": {
+        "name": "Enhanced",
+        "description": "Mistral Nemo 12B (~7.5 GB, 128K context)",
+        "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+        "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+    },
+}
+
+MODELS_DIR = Path.home() / ".local" / "share" / "natshell" / "models"
+
+
+def format_download_menu(models_dir: Path | None = None) -> str:
+    """List bundled tiers with checkmarks for already-downloaded ones."""
+    if models_dir is None:
+        models_dir = MODELS_DIR
+    lines = ["[bold]Bundled Model Tiers[/]\n"]
+    for key, tier in BUNDLED_TIERS.items():
+        downloaded = (models_dir / tier["hf_file"]).exists()
+        mark = " [green]✓ downloaded[/]" if downloaded else ""
+        lines.append(f"  [bold]{key:<10}[/] {tier['description']}{mark}")
+    lines.append("\n[dim]Use /model download <tier> to download (light, standard, enhanced)[/]")
+    return "\n".join(lines)
+
+
+async def download_bundled_model(
+    tier_key: str,
+    models_dir: Path | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> Path:
+    """Download a bundled model tier via huggingface_hub.
+
+    Args:
+        tier_key: One of 'light', 'standard', 'enhanced'.
+        models_dir: Directory to save to (default: ~/.local/share/natshell/models/).
+        progress_callback: Optional callable for status messages.
+
+    Returns:
+        Path to the downloaded .gguf file.
+
+    Raises:
+        ValueError: If tier_key is not valid.
+        RuntimeError: If the download fails.
+    """
+    if tier_key not in BUNDLED_TIERS:
+        raise ValueError(
+            f"Unknown tier '{tier_key}'. Valid tiers: {', '.join(BUNDLED_TIERS)}"
+        )
+
+    if models_dir is None:
+        models_dir = MODELS_DIR
+
+    tier = BUNDLED_TIERS[tier_key]
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    if progress_callback:
+        progress_callback(f"Downloading {tier['name']} ({tier['description']})...")
+
+    def _do_download() -> str:
+        from huggingface_hub import hf_hub_download
+
+        return hf_hub_download(
+            repo_id=tier["hf_repo"],
+            filename=tier["hf_file"],
+            local_dir=str(models_dir),
+        )
+
+    try:
+        path_str = await asyncio.to_thread(_do_download)
+    except Exception as e:
+        logger.error("Model download failed: %s", e)
+        raise RuntimeError(f"Download failed: {e}") from e
+
+    return Path(path_str)
 
 # ─── URL resolution ─────────────────────────────────────────────────
 

@@ -26,6 +26,7 @@ def show_help(conversation: ScrollableContainer) -> None:
         "  [bold cyan]/model switch[/]          Switch local model (or Ctrl+P)\n"
         "  [bold cyan]/model local[/]           Switch back to local model\n"
         "  [bold cyan]/model default <name>[/]  Save default remote model\n"
+        "  [bold cyan]/model download[/]         Download a bundled model tier\n"
         "  [bold cyan]/profile[/]               List configuration profiles\n"
         "  [bold cyan]/profile <name>[/]        Apply a configuration profile\n"
         "  [bold cyan]/keys[/]                  Show keyboard shortcuts\n"

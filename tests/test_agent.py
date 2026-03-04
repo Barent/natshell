@@ -219,9 +219,9 @@ class TestEffectiveMaxSteps:
         agent = self._make_loop(max_steps=15)
         assert agent._effective_max_steps(131072) == 60
 
-    def test_scales_to_75_for_256k_ctx(self):
+    def test_scales_to_120_for_256k_ctx(self):
         agent = self._make_loop(max_steps=15)
-        assert agent._effective_max_steps(262144) == 75
+        assert agent._effective_max_steps(262144) == 120
 
     def test_explicit_override_respected(self):
         """When user sets max_steps != 15, auto-scaling is disabled."""

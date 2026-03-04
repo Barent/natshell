@@ -195,7 +195,7 @@ class AgentLoop:
         if self.config.max_steps != self._DEFAULT_MAX_STEPS:
             return self.config.max_steps
         if n_ctx >= 262144:
-            return 75
+            return 120
         elif n_ctx >= 131072:
             return 60
         elif n_ctx >= 32768:
