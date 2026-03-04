@@ -6,8 +6,6 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from natshell.plugins import ENTRY_POINT_GROUP, _load_file_plugins, load_plugins
 from natshell.tools.registry import ToolDefinition, ToolRegistry
 
@@ -192,7 +190,10 @@ class TestFilePlugins:
 
     def test_valid_plugin_loads(self, tmp_path):
         plugin_dir = tmp_path / "plugins"
-        _write_plugin(plugin_dir, "hello.py", "def register(registry): registry._test_marker = True\n")
+        _write_plugin(
+            plugin_dir, "hello.py",
+            "def register(registry): registry._test_marker = True\n",
+        )
 
         registry = ToolRegistry()
         with patch("natshell.plugins.PLUGIN_DIR", plugin_dir):
@@ -256,7 +257,10 @@ def register(registry):
 
     def test_register_raises_skipped(self, tmp_path):
         plugin_dir = tmp_path / "plugins"
-        _write_plugin(plugin_dir, "explode.py", "def register(registry): raise RuntimeError('kaboom')\n")
+        _write_plugin(
+            plugin_dir, "explode.py",
+            "def register(registry): raise RuntimeError('kaboom')\n",
+        )
 
         with patch("natshell.plugins.PLUGIN_DIR", plugin_dir):
             count = _load_file_plugins(ToolRegistry())
@@ -265,8 +269,14 @@ def register(registry):
 
     def test_underscore_files_skipped(self, tmp_path):
         plugin_dir = tmp_path / "plugins"
-        _write_plugin(plugin_dir, "__init__.py", "def register(registry): registry._init = True\n")
-        _write_plugin(plugin_dir, "_helpers.py", "def register(registry): registry._helper = True\n")
+        _write_plugin(
+            plugin_dir, "__init__.py",
+            "def register(registry): registry._init = True\n",
+        )
+        _write_plugin(
+            plugin_dir, "_helpers.py",
+            "def register(registry): registry._helper = True\n",
+        )
 
         registry = ToolRegistry()
         with patch("natshell.plugins.PLUGIN_DIR", plugin_dir):
