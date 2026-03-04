@@ -97,6 +97,11 @@ def main() -> None:
         help="Run as an MCP (Model Context Protocol) server over stdio. "
         "Requires the 'mcp' package: pip install 'natshell[mcp]'",
     )
+    parser.add_argument(
+        "--no-setup",
+        action="store_true",
+        help="Skip the first-run setup wizard",
+    )
 
     args = parser.parse_args()
 
@@ -122,6 +127,20 @@ def main() -> None:
     if args.update:
         _self_update()
         return
+
+    # First-run setup wizard
+    from natshell.setup_wizard import should_run_wizard
+
+    if should_run_wizard(
+        config_path=Path(args.config) if args.config else None,
+        no_setup=args.no_setup,
+        headless=bool(args.headless),
+        mcp=args.mcp,
+        download=args.download,
+    ):
+        from natshell.setup_wizard import run_setup_wizard
+
+        run_setup_wizard()
 
     # Load config
     config = load_config(args.config)
@@ -286,6 +305,11 @@ def main() -> None:
     from natshell.tools.natshell_help import set_safety_config
 
     set_safety_config(config.safety)
+
+    # Inject live config into the update_config tool
+    from natshell.tools.update_config import set_live_config
+
+    set_live_config(config)
 
     # MCP server mode — run over stdio and exit
     if args.mcp:

@@ -58,7 +58,8 @@ _STATIC_TOPICS: dict[str, str] = {
         "  list_directory — List directory contents with sizes and types\n"
         "  search_files   — Text search (grep) or file search (find) in a directory\n"
         "  natshell_help  — Look up NatShell documentation by topic (this tool)\n"
-        "  fetch_url     — Fetch a URL and return its content (blocks private/internal IPs)"
+        "  fetch_url      — Fetch a URL and return its content (blocks private/internal IPs)\n"
+        "  update_config  — Update a NatShell config value (saves to disk + applies live)"
     ),
     "models": (
         "Model configuration:\n"

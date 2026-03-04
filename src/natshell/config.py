@@ -109,6 +109,130 @@ class NatShellConfig:
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
 
 
+# ── Valid config keys (section → {key: type_string}) ─────────────────────
+
+VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
+    "model": {
+        "path": "str",
+        "hf_repo": "str",
+        "hf_file": "str",
+        "n_ctx": "int",
+        "n_threads": "int",
+        "n_gpu_layers": "int",
+        "main_gpu": "int",
+        "prompt_cache": "bool",
+        "prompt_cache_mb": "int",
+    },
+    "remote": {
+        "url": "str",
+        "model": "str",
+        "api_key": "str",
+        "n_ctx": "int",
+    },
+    "ollama": {
+        "url": "str",
+        "default_model": "str",
+        "n_ctx": "int",
+    },
+    "agent": {
+        "max_steps": "int",
+        "plan_max_steps": "int",
+        "temperature": "float",
+        "max_tokens": "int",
+        "context_reserve": "int",
+    },
+    "safety": {
+        "mode": "str",
+    },
+    "ui": {
+        "theme": "str",
+    },
+    "backup": {
+        "enabled": "bool",
+        "max_per_file": "int",
+    },
+    "engine": {
+        "preferred": "str",
+    },
+    "mcp": {
+        "safety_mode": "str",
+    },
+}
+
+CONFIG_ENUMS: dict[str, dict[str, list[str]]] = {
+    "safety": {
+        "mode": ["confirm", "warn", "danger"],
+    },
+    "engine": {
+        "preferred": ["auto", "local", "remote"],
+    },
+    "mcp": {
+        "safety_mode": ["strict", "permissive"],
+    },
+    "ui": {
+        "theme": ["dark", "light"],
+    },
+}
+
+
+def save_config_value(section: str, key: str, value: str | int | float | bool) -> Path:
+    """Persist a single config value to the user config file.
+
+    Uses simple line-based TOML editing (same pattern as save_engine_preference).
+    Returns the path to the config file.
+    """
+    config_dir = Path.home() / ".config" / "natshell"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "config.toml"
+
+    if config_path.exists():
+        lines = config_path.read_text().splitlines(keepends=True)
+    else:
+        lines = []
+
+    # Format value as TOML
+    if isinstance(value, bool):
+        val_str = "true" if value else "false"
+    elif isinstance(value, str):
+        val_str = f'"{value}"'
+    else:
+        val_str = str(value)
+
+    section_header = f"[{section}]"
+    section_idx = None
+    next_section_idx = None
+    key_idx = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == section_header:
+            section_idx = i
+        elif section_idx is not None and next_section_idx is None:
+            if re.match(r"^\[.+\]", stripped):
+                next_section_idx = i
+            elif stripped.startswith(key) or stripped.startswith(f"# {key}"):
+                # Verify this is the actual key, not a prefix match
+                if re.match(rf"^#?\s*{re.escape(key)}\s*=", stripped):
+                    key_idx = i
+
+    new_line = f"{key} = {val_str}\n"
+
+    if section_idx is not None:
+        insert_at = next_section_idx if next_section_idx is not None else len(lines)
+        if key_idx is not None:
+            lines[key_idx] = new_line
+        else:
+            lines.insert(insert_at, new_line)
+    else:
+        if lines and not lines[-1].endswith("\n"):
+            lines.append("\n")
+        lines.append(f"\n{section_header}\n")
+        lines.append(new_line)
+
+    config_path.write_text("".join(lines))
+    return config_path
+
+
 def load_config(config_path: str | Path | None = None) -> NatShellConfig:
     """Load configuration from TOML file, falling back to defaults.
 

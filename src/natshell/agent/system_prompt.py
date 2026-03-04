@@ -171,6 +171,7 @@ When reviewing, auditing, or analyzing code:
 If the user asks about NatShell, its commands, settings, safety rules, or troubleshooting:
 - Use the natshell_help tool to look up documentation by topic.
 - Config file: ~/.config/natshell/config.toml
-- Topics: overview, commands, config, config_reference, models, safety, tools, troubleshooting"""
+- Topics: overview, commands, config, config_reference, models, safety, tools, troubleshooting
+- To change a setting, use the update_config tool (e.g. update_config section="agent" key="temperature" value="0.7")"""
 
     return header + code_section + extra_sections + "\n\n/no_think"

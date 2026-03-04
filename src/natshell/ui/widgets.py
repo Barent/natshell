@@ -12,6 +12,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
@@ -24,9 +25,18 @@ from natshell.ui.syntax_render import render_segments
 class HistoryInput(Input):
     """Input widget with shell-like up/down arrow history navigation."""
 
+    class TabComplete(Message):
+        """Posted when the user presses Tab for completion."""
+
+        def __init__(self, reverse: bool = False) -> None:
+            super().__init__()
+            self.reverse = reverse
+
     BINDINGS = [
         Binding("up", "history_back", "Previous", show=False),
         Binding("down", "history_forward", "Next", show=False),
+        Binding("tab", "tab_complete", "Complete", show=False),
+        Binding("shift+tab", "tab_complete_reverse", "Complete reverse", show=False),
     ]
 
     def __init__(self, **kwargs) -> None:
@@ -76,6 +86,14 @@ class HistoryInput(Input):
             self._history_index = -1
             self.value = self._draft
         self.cursor_position = len(self.value)
+
+    def action_tab_complete(self) -> None:
+        """Request tab completion (forward)."""
+        self.post_message(self.TabComplete(reverse=False))
+
+    def action_tab_complete_reverse(self) -> None:
+        """Request tab completion (backward)."""
+        self.post_message(self.TabComplete(reverse=True))
 
     def clear_history(self) -> None:
         """Clear all history state."""

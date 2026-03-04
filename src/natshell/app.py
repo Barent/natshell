@@ -152,6 +152,10 @@ class NatShellApp(App):
         self._busy = False
         self._skip_permissions = skip_permissions
         self._session_mgr = SessionManager()
+        # Tab completion state
+        self._completion_matches: list[str] = []
+        self._completion_index: int = -1
+        self._completion_prefix: str = ""
 
     def compose(self) -> ComposeResult:
         yield LogoBanner()
@@ -189,6 +193,11 @@ class NatShellApp(App):
         text = event.value
         suggestions = self.query_one("#slash-suggestions", Static)
 
+        # Reset completion state when the user types manually
+        self._completion_matches = []
+        self._completion_index = -1
+        self._completion_prefix = ""
+
         if text.startswith("/") and " " not in text:
             matches = [(cmd, desc) for cmd, desc in SLASH_COMMANDS if cmd.startswith(text.lower())]
             if matches:
@@ -198,6 +207,81 @@ class NatShellApp(App):
                 return
 
         suggestions.display = False
+
+    def _build_completions(self, text: str) -> list[str]:
+        """Build tab-completion candidates for the current input text."""
+        if not text.startswith("/"):
+            return []
+
+        parts = text.split(maxsplit=1)
+        base_cmd = parts[0].lower()
+
+        if len(parts) == 1 and not text.endswith(" "):
+            # Level 1: complete the base command
+            seen: set[str] = set()
+            matches: list[str] = []
+            for cmd, _ in SLASH_COMMANDS:
+                # Extract just the base command (first word)
+                base = cmd.split()[0]
+                if base.startswith(base_cmd) and base not in seen:
+                    seen.add(base)
+                    matches.append(base)
+            return matches
+
+        # Level 2: complete subcommands/arguments
+        arg_prefix = parts[1].lower() if len(parts) > 1 else ""
+
+        if base_cmd == "/model":
+            subs = ["list", "use", "switch", "local", "default"]
+            return [
+                f"/model {s}" for s in subs if s.startswith(arg_prefix)
+            ]
+        elif base_cmd == "/profile":
+            profiles = list_profiles(self._config)
+            return [
+                f"/profile {p}" for p in profiles if p.startswith(arg_prefix)
+            ]
+        elif base_cmd == "/load":
+            try:
+                sessions = self._session_mgr.list_sessions()
+                return [
+                    f"/load {s['id']}"
+                    for s in sessions
+                    if s["id"].startswith(arg_prefix)
+                ]
+            except Exception:
+                return []
+
+        return []
+
+    def on_history_input_tab_complete(
+        self, message: HistoryInput.TabComplete
+    ) -> None:
+        """Handle tab completion from the input widget."""
+        input_widget = self.query_one("#user-input", HistoryInput)
+        text = input_widget.value
+
+        # If no active completion, build matches
+        if not self._completion_matches:
+            self._completion_prefix = text
+            self._completion_matches = self._build_completions(text)
+            if not self._completion_matches:
+                return
+            self._completion_index = -1
+
+        # Cycle through matches
+        if message.reverse:
+            self._completion_index -= 1
+            if self._completion_index < 0:
+                self._completion_index = len(self._completion_matches) - 1
+        else:
+            self._completion_index += 1
+            if self._completion_index >= len(self._completion_matches):
+                self._completion_index = 0
+
+        match = self._completion_matches[self._completion_index]
+        input_widget.value = match
+        input_widget.cursor_position = len(match)
 
     @on(Input.Submitted, "#user-input")
     async def on_input_submitted(self, event: Input.Submitted) -> None:
