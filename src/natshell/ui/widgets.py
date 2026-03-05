@@ -646,6 +646,11 @@ def _format_tool_detail(tc: ToolCall) -> str | RenderableType:
 class ConfirmScreen(ModalScreen[bool]):
     """Modal confirmation dialog for dangerous commands."""
 
+    BINDINGS = [
+        Binding("enter", "confirm_yes", "Confirm", show=False),
+        Binding("escape", "confirm_no", "Decline", show=False),
+    ]
+
     def __init__(self, tool_call: ToolCall) -> None:
         super().__init__()
         self.tool_call = tool_call
@@ -668,6 +673,12 @@ class ConfirmScreen(ModalScreen[bool]):
 
     @on(Button.Pressed, "#btn-no")
     def on_no(self) -> None:
+        self.dismiss(False)
+
+    def action_confirm_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_confirm_no(self) -> None:
         self.dismiss(False)
 
 
