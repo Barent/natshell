@@ -426,7 +426,6 @@ async def run_headless_exeplan(
                 )
                 agent.clear_history()
                 agent.config.max_steps = VERIFY_FIX_BUDGET
-                fix_summary = ""
                 try:
                     async for event in agent.handle_user_message(
                         fix_prompt,
@@ -435,8 +434,6 @@ async def run_headless_exeplan(
                         match event.type:
                             case EventType.RESPONSE:
                                 _log(f"[fix] {event.data}")
-                                if event.data:
-                                    fix_summary = event.data
                             case EventType.EXECUTING:
                                 if event.tool_call:
                                     _log(f"[fix] {event.tool_call.name}")
