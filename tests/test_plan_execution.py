@@ -68,8 +68,8 @@ class TestBuildStepPrompt:
     def test_termination_directive(self):
         plan = self._make_plan()
         prompt = _build_step_prompt(plan.steps[0], plan, [])
-        assert "IMMEDIATELY provide a short text summary" in prompt
-        assert "STOP" in prompt
+        assert "STOP making tool calls" in prompt
+        assert "SUMMARY:" in prompt
         assert "Do not modify files not mentioned in this step" in prompt
 
     def test_step_title_in_prompt(self):
@@ -388,7 +388,7 @@ class TestExeplanInSlashCommands:
 class TestAnnotateFile:
     """Test the file annotation helper for cross-step context injection."""
 
-    def test_annotate_tsx_exports_and_neon_classes(self):
+    def test_annotate_tsx_exports_and_classes(self):
         from natshell.agent.plan_executor import _annotate_file
 
         content = '''
@@ -399,8 +399,10 @@ export const Score = () => <span className="neon-yellow">0</span>
 '''
         result = _annotate_file("src/HUD.tsx", content)
         assert "exports: HUD, Score" in result
-        assert "neon-cyan" in result
-        assert "neon-pink" in result
+        # Generic class extraction — any hyphenated token > 3 chars
+        assert "text-neon-cyan" in result
+        assert "bg-neon-pink" in result
+        assert "neon-yellow" in result
 
     def test_annotate_non_source_returns_empty(self):
         from natshell.agent.plan_executor import _annotate_file
@@ -408,13 +410,20 @@ export const Score = () => <span className="neon-yellow">0</span>
         result = _annotate_file("README.md", "# Hello")
         assert result == ""
 
-    def test_annotate_no_neon_classes(self):
+    def test_annotate_skips_short_utility_classes(self):
         from natshell.agent.plan_executor import _annotate_file
 
-        content = 'export function Foo() { return <div className="flex p-4">...</div> }'
+        # Short tokens without hyphens like "flex", "p-4" are excluded
+        content = (
+            'export function Foo() {'
+            ' return <div className="flex p-4 btn-primary">...</div> }'
+        )
         result = _annotate_file("Foo.tsx", content)
         assert "exports: Foo" in result
-        assert "neon" not in result
+        # "flex" has no hyphen, "p-4" is <=3 chars — both excluded
+        assert "flex" not in result
+        # "btn-primary" has a hyphen and is >3 chars — included
+        assert "btn-primary" in result
 
     def test_annotate_js_file(self):
         from natshell.agent.plan_executor import _annotate_file
@@ -434,13 +443,13 @@ export const Score = () => <span className="neon-yellow">0</span>
         from natshell.agent.plan_executor import _annotate_file
 
         content = (
-            '<div className="neon-pink neon-cyan">'
-            '<span className="neon-pink neon-yellow"></span>'
+            '<div className="btn-pink btn-cyan">'
+            '<span className="btn-pink btn-yellow"></span>'
             "</div>"
         )
         result = _annotate_file("Card.tsx", content)
-        # neon-pink should appear only once
-        assert result.count("neon-pink") == 1
+        # btn-pink should appear only once
+        assert result.count("btn-pink") == 1
 
     def test_annotate_limits_exports_to_five(self):
         from natshell.agent.plan_executor import _annotate_file
@@ -450,6 +459,15 @@ export const Score = () => <span className="neon-yellow">0</span>
         # Should only list up to 5 exports
         listed = result.split("exports: ")[1].split(";")[0].split(", ")
         assert len(listed) <= 5
+
+    def test_annotate_limits_classes_to_ten(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        classes = " ".join(f"cls-token-{i}" for i in range(20))
+        content = f'<div className="{classes}"></div>'
+        result = _annotate_file("many.tsx", content)
+        listed = result.split("classes: ")[1].split(", ")
+        assert len(listed) <= 10
 
 
 # ─── _build_step_prompt summary injection ─────────────────────────────────────
@@ -478,7 +496,7 @@ class TestBuildStepPromptSummaryDirective:
     def test_summary_directive_format_line(self):
         plan = self._make_plan()
         prompt = _build_step_prompt(plan.steps[0], plan, [])
-        assert "starts with SUMMARY:" in prompt
+        assert "must be the last line" in prompt
 
 
 # ─── _build_step_prompt n_ctx summary gating ──────────────────────────────────
@@ -526,3 +544,30 @@ class TestBuildStepPromptSummaryGating:
             plan.steps[1], plan, summaries, n_ctx=8192
         )
         assert "Step A" in prompt
+
+    def test_emdash_in_title_preserved_at_small_context(self):
+        """An em-dash within the step *title* must not be split off."""
+        plan = self._make_plan()
+        # Title contains an em-dash, no appended summary detail
+        summaries = ["1. Setup \u2014 auth \u2713"]
+        prompt = _build_step_prompt(
+            plan.steps[1], plan, summaries, n_ctx=8192
+        )
+        # The whole title should survive — no detail to strip
+        assert "Setup \u2014 auth \u2713" in prompt
+
+    def test_emdash_in_title_with_summary_strips_detail_only(self):
+        """When title has em-dash AND there is an appended summary,
+        only the detail after the status marker's em-dash is removed;
+        the em-dash inside the title survives."""
+        plan = self._make_plan()
+        summaries = [
+            "1. Setup \u2014 auth \u2713 \u2014 Created JWT middleware"
+        ]
+        prompt = _build_step_prompt(
+            plan.steps[1], plan, summaries, n_ctx=8192
+        )
+        # Title including its em-dash survives
+        assert "Setup \u2014 auth" in prompt
+        # Summary detail is stripped
+        assert "Created JWT middleware" not in prompt

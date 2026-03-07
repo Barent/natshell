@@ -67,7 +67,7 @@ def _annotate_file(path: str, content: str) -> str:
     """Extract key patterns from a source file for cross-step injection.
 
     Returns an annotation string like:
-      'exports: Foo, Bar; neon classes: text-neon-cyan, bg-neon-pink'
+      'exports: Foo, Bar; classes: text-neon-cyan, bg-neon-pink, btn-primary'
     or empty string if nothing useful was found.
     """
     ext = path.rsplit(".", 1)[-1] if "." in path else ""
@@ -84,11 +84,10 @@ def _annotate_file(path: str, content: str) -> str:
     for match in _CLASSNAME_RE.finditer(content):
         all_classes.extend(match.group(1).split())
     unique_classes = list(dict.fromkeys(all_classes))
-    notable = [c for c in unique_classes if any(
-        c.startswith(prefix) for prefix in ("neon-", "text-neon", "bg-neon", "border-neon")
-    )]
+    # Skip single-char and very common utility tokens to reduce noise
+    notable = [c for c in unique_classes if len(c) > 3 and "-" in c]
     if notable:
-        parts.append(f"neon classes: {', '.join(notable[:8])}")
+        parts.append(f"classes: {', '.join(notable[:10])}")
 
     return "; ".join(parts)
 
@@ -130,9 +129,17 @@ def _build_step_prompt(
     if completed_summaries:
         parts.append("\nPreviously completed:")
         for summary in completed_summaries:
-            # For small context windows, truncate to title only
-            if n_ctx < 32768 and " — " in summary:
-                summary = summary.split(" — ")[0]
+            # For small context windows, strip the appended summary detail.
+            # Format: "N. Title ✓ — detail" or "N. Title ⚠ (partial) — detail"
+            # We strip " — detail" only when preceded by a status marker,
+            # so em-dashes within step titles are preserved.
+            if n_ctx < 32768:
+                summary = _re.sub(
+                    r"([\u2713\u26a0\u2717](?:\s*\([^)]*\))?)"
+                    r"\s*\u2014\s*.+$",
+                    r"\1",
+                    summary,
+                )
             parts.append(f"  {summary}")
 
     # Cross-step file change tracking
@@ -163,12 +170,8 @@ def _build_step_prompt(
         "\n- Execute ONLY the task described above. Do not modify files not mentioned in this step."
         "\n- Do NOT re-examine, refactor, or 'improve' files you already wrote."
         "\n- Do NOT read the plan file (PLAN.md or similar)."
-        "\n- When the step is complete, IMMEDIATELY provide a short text summary of what you did"
-        " and STOP. Do not continue with additional tool calls after the work is done."
-    )
-    parts.append(
-        "\nWhen the step is complete, end your response with a line in EXACTLY this format "
-        "(one line, no bullet, starts with SUMMARY:):\n"
+        "\n- When the step is complete, STOP making tool calls. End your final response with a"
+        " single line in EXACTLY this format (no bullet, must be the last line):\n"
         "SUMMARY: <one sentence describing what was created/changed and key patterns used>"
     )
 

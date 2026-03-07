@@ -849,25 +849,68 @@ class NatShellApp(App):
 
                 # Record file changes from this step
                 completed_files.extend(step_files)
+                # Track how many files existed before verify retries
+                files_before_verify = len(step_files)
 
                 # Extract structured SUMMARY from model response
+                # (skip when hit_max_steps — the last response is a
+                # "maximum number of steps" warning, not a real summary)
                 step_summary = ""
-                if step_response_text:
+                if step_response_text and not hit_max_steps:
                     _m = _SUMMARY_RE.search(step_response_text)
                     if _m:
                         step_summary = _m.group(1).strip()
                     else:
-                        step_summary = step_response_text[:300].replace("\n", " ").strip()
+                        step_summary = (
+                            step_response_text[:300]
+                            .replace("\n", " ")
+                            .strip()
+                        )
 
                 # --- Automatic verification ---
                 _MAX_VERIFY_RETRIES = 2
                 verify_cmd = step.verification
+                verify_failed = False
                 if verify_cmd and not hit_max_steps:
                     for verify_attempt in range(_MAX_VERIFY_RETRIES + 1):
-                        verify_result = await execute_shell(verify_cmd)
+                        # Safety-classify the verify command the same
+                        # way /cmd does — block BLOCKED, prompt CONFIRM.
+                        v_risk = self.agent.safety.classify_command(
+                            verify_cmd,
+                        )
+                        if v_risk == Risk.BLOCKED:
+                            conversation.mount(
+                                BlockedMessage(verify_cmd)
+                            )
+                            verify_failed = True
+                            break
+                        if (
+                            v_risk == Risk.CONFIRM
+                            and not self._skip_permissions
+                        ):
+                            syn = ToolCall(
+                                id="verify",
+                                name="execute_shell",
+                                arguments={"command": verify_cmd},
+                            )
+                            ok = await self.push_screen_wait(
+                                ConfirmScreen(syn),
+                            )
+                            if not ok:
+                                conversation.mount(
+                                    SystemMessage(
+                                        "Verification cancelled."
+                                    )
+                                )
+                                break  # user declined — skip verify
+
+                        verify_result = await execute_shell(
+                            verify_cmd,
+                        )
                         conversation.mount(CommandBlock(
                             f"[verify] {verify_cmd}",
-                            verify_result.output or verify_result.error,
+                            verify_result.output
+                            or verify_result.error,
                             verify_result.exit_code,
                         ))
                         conversation.scroll_end()
@@ -877,103 +920,157 @@ class NatShellApp(App):
 
                         if verify_attempt < _MAX_VERIFY_RETRIES:
                             conversation.mount(SystemMessage(
-                                f"[yellow]Verification failed (attempt {verify_attempt + 1}"
-                                f"/{_MAX_VERIFY_RETRIES}) — retrying step...[/]"
+                                "[yellow]Verification failed"
+                                f" (attempt {verify_attempt + 1}"
+                                f"/{_MAX_VERIFY_RETRIES})"
+                                " \u2014 retrying step\u2026[/]"
                             ))
                             self.agent.clear_history()
+                            # Restore plan budget for the retry
+                            self.agent.config.max_steps = plan_max
                             failure_output = (
-                                (verify_result.output or "") + (verify_result.error or "")
+                                (verify_result.output or "")
+                                + (verify_result.error or "")
                             )
-                            correction_prompt = _build_step_prompt(
-                                step, plan, completed_summaries,
-                                max_steps=effective_max,
-                                completed_files=completed_files or None,
-                                n_ctx=n_ctx,
-                            ) + (
-                                "\n\n[VERIFICATION FAILED] The verification command"
-                                f" `{verify_cmd}` exited with code"
-                                f" {verify_result.exit_code}.\n"
-                                f"Output:\n{failure_output[:2000]}\n\n"
-                                "Fix all issues described above, then the"
-                                " verification will be re-run automatically."
+                            correction_prompt = (
+                                _build_step_prompt(
+                                    step,
+                                    plan,
+                                    completed_summaries,
+                                    max_steps=effective_max,
+                                    completed_files=(
+                                        completed_files or None
+                                    ),
+                                    n_ctx=n_ctx,
+                                )
+                                + "\n\n[VERIFICATION FAILED]"
+                                " The verification command"
+                                f" `{verify_cmd}` exited with"
+                                f" code {verify_result.exit_code}"
+                                ".\n"
+                                "Output:\n"
+                                f"{failure_output[:2000]}\n\n"
+                                "Fix all issues described above,"
+                                " then the verification will be"
+                                " re-run automatically."
                             )
-                            retry_thinking_ref: list[ThinkingIndicator | None] = [None]
+                            rtref: list[
+                                ThinkingIndicator | None
+                            ] = [None]
                             try:
-                                async for event in self.agent.handle_user_message(
-                                    correction_prompt,
-                                    confirm_callback=confirm_cb,
-                                    password_callback=password_callback,
+                                async for ev in (
+                                    self.agent.handle_user_message(
+                                        correction_prompt,
+                                        confirm_callback=confirm_cb,
+                                        password_callback=password_callback,
+                                    )
                                 ):
                                     self._render_agent_event(
-                                        event, conversation, retry_thinking_ref
+                                        ev, conversation, rtref
                                     )
                                     if (
-                                        event.type == EventType.TOOL_RESULT
-                                        and event.tool_call
-                                        and event.tool_call.name in ("write_file", "edit_file")
-                                        and event.tool_result
-                                        and event.tool_result.exit_code == 0
+                                        ev.type
+                                        == EventType.TOOL_RESULT
+                                        and ev.tool_call
+                                        and ev.tool_call.name
+                                        in (
+                                            "write_file",
+                                            "edit_file",
+                                        )
+                                        and ev.tool_result
+                                        and ev.tool_result.exit_code
+                                        == 0
                                     ):
-                                        path = event.tool_call.arguments.get("path", "")
-                                        if path:
-                                            action = (
+                                        p = (
+                                            ev.tool_call
+                                            .arguments
+                                            .get("path", "")
+                                        )
+                                        if p:
+                                            a = (
                                                 "created"
-                                                if event.tool_call.name == "write_file"
+                                                if ev.tool_call.name
+                                                == "write_file"
                                                 else "modified"
                                             )
                                             step_files.append(
-                                                f"{path} ({action} in step {step.number} retry)"
+                                                f"{p} ({a} in step"
+                                                f" {step.number}"
+                                                " retry)"
                                             )
                             except Exception as e:
                                 conversation.mount(Static(
-                                    f"[bold red]Retry error:[/] {_escape(str(e))}"
+                                    "[bold red]Retry error:[/]"
+                                    f" {_escape(str(e))}"
                                 ))
+                                verify_failed = True
                                 break
                             finally:
-                                if retry_thinking_ref[0]:
-                                    retry_thinking_ref[0].remove()
-                                self.query_one(LogoBanner).stop_animation()
+                                self.agent.config.max_steps = (
+                                    original_max
+                                )
+                                if rtref[0]:
+                                    rtref[0].remove()
+                                self.query_one(
+                                    LogoBanner
+                                ).stop_animation()
                         else:
                             # All retries exhausted
-                            divider.mark_failed(
-                                f"Verification failed after {_MAX_VERIFY_RETRIES} retries"
-                            )
-                            failed_count += 1
-                            if step_summary:
-                                completed_summaries.append(
-                                    f"{step.number}. {step.title} \u2717 (verify failed)"
-                                    f" \u2014 {step_summary}"
-                                )
-                            else:
-                                completed_summaries.append(
-                                    f"{step.number}. {step.title} \u2717 (verify failed)"
-                                )
-                            conversation.mount(SystemMessage(
-                                f"[red]Step {step.number} verification failed after "
-                                f"{_MAX_VERIFY_RETRIES} retries. Continuing plan.[/]"
-                            ))
-                            conversation.scroll_end()
-                            continue  # Skip normal mark_done/mark_partial
+                            verify_failed = True
 
-                # Update divider status
-                if hit_max_steps:
+                    # Propagate any file changes from retries
+                    if len(step_files) > files_before_verify:
+                        completed_files.extend(
+                            step_files[files_before_verify:]
+                        )
+
+                if verify_failed:
+                    divider.mark_failed(
+                        f"Verification failed after"
+                        f" {_MAX_VERIFY_RETRIES} retries"
+                    )
+                    failed_count += 1
+                    if step_summary:
+                        completed_summaries.append(
+                            f"{step.number}. {step.title}"
+                            f" \u2717 (verify failed)"
+                            f" \u2014 {step_summary}"
+                        )
+                    else:
+                        completed_summaries.append(
+                            f"{step.number}. {step.title}"
+                            " \u2717 (verify failed)"
+                        )
+                    conversation.mount(SystemMessage(
+                        f"[red]Step {step.number} verification"
+                        f" failed. Continuing plan.[/]"
+                    ))
+                elif hit_max_steps:
                     divider.mark_partial()
                     failed_count += 1
                     if step_summary:
                         completed_summaries.append(
-                            f"{step.number}. {step.title} \u26a0 (partial) \u2014 {step_summary}"
+                            f"{step.number}. {step.title}"
+                            f" \u26a0 (partial)"
+                            f" \u2014 {step_summary}"
                         )
                     else:
-                        completed_summaries.append(f"{step.number}. {step.title} \u26a0 (partial)")
+                        completed_summaries.append(
+                            f"{step.number}. {step.title}"
+                            " \u26a0 (partial)"
+                        )
                 else:
                     divider.mark_done()
                     completed_count += 1
                     if step_summary:
                         completed_summaries.append(
-                            f"{step.number}. {step.title} \u2713 \u2014 {step_summary}"
+                            f"{step.number}. {step.title}"
+                            f" \u2713 \u2014 {step_summary}"
                         )
                     else:
-                        completed_summaries.append(f"{step.number}. {step.title} \u2713")
+                        completed_summaries.append(
+                            f"{step.number}. {step.title} \u2713"
+                        )
 
                 conversation.scroll_end()
 
