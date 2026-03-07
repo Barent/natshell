@@ -110,6 +110,12 @@ def main() -> None:
         "Use --danger-fast to auto-approve all confirmations.",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume a previously interrupted --exeplan run from the last failed step. "
+        "Reads state from PLAN.state.json alongside the plan file.",
+    )
+    parser.add_argument(
         "--no-setup",
         action="store_true",
         help="Skip the first-run setup wizard",
@@ -367,7 +373,11 @@ def main() -> None:
         from natshell.headless import run_headless_exeplan
 
         exit_code = asyncio.run(
-            run_headless_exeplan(agent, args.exeplan, auto_approve=args.danger_fast)
+            run_headless_exeplan(
+                agent, args.exeplan,
+                auto_approve=args.danger_fast,
+                resume=args.resume,
+            )
         )
         sys.exit(exit_code)
 

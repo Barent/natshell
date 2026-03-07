@@ -751,6 +751,32 @@ class NatShellApp(App):
         except (AttributeError, TypeError):
             n_ctx = 4096
 
+        # State persistence for resume support
+        from datetime import datetime, timezone
+
+        from natshell.agent.plan_executor import (
+            VERIFY_FIX_BUDGET,
+            _build_verify_fix_prompt,
+        )
+        from natshell.agent.plan_state import (
+            PlanState,
+            StepResult,
+            save_plan_state,
+            state_path_for_plan,
+        )
+
+        plan_source = plan.source_dir or Path.cwd()
+        state_file = state_path_for_plan(plan_source / "PLAN.md")
+        state = PlanState(
+            plan_file=str(state_file.with_suffix(".md")),
+            plan_title=plan.title,
+            total_steps=len(plan.steps),
+            step_results=[],
+            completed_summaries=[],
+            completed_files=[],
+            started_at=datetime.now(timezone.utc).isoformat(),
+        )
+
         try:
             for step in plan.steps:
                 # Mount step divider
@@ -825,6 +851,14 @@ class NatShellApp(App):
                     divider.mark_failed(str(e))
                     failed_count += 1
                     completed_summaries.append(f"{step.number}. {step.title} \u2717")
+                    state.step_results.append(StepResult(
+                        number=step.number, title=step.title, status="failed",
+                        summary=completed_summaries[-1], files_changed=step_files,
+                        error=str(e),
+                    ))
+                    state.completed_summaries = list(completed_summaries)
+                    state.completed_files = list(completed_files)
+                    save_plan_state(state, state_file)
                     continue
 
                 finally:
@@ -836,6 +870,51 @@ class NatShellApp(App):
                 # Record file changes from this step
                 completed_files.extend(step_files)
 
+                # Post-step verification (only with --danger-fast / skip_permissions)
+                if (
+                    step.verification
+                    and self._skip_permissions
+                    and not hit_max_steps
+                ):
+                    from natshell.tools.execute_shell import (
+                        execute_shell as _exec_shell,
+                    )
+
+                    verify_result = _exec_shell(
+                        {"command": step.verification, "timeout": 30}
+                    )
+                    if verify_result.exit_code != 0:
+                        fix_prompt = _build_verify_fix_prompt(
+                            step,
+                            step.verification,
+                            verify_result.output
+                            or verify_result.error
+                            or "No output",
+                            n_ctx=n_ctx,
+                        )
+                        self.agent.clear_history()
+                        self.agent.config.max_steps = VERIFY_FIX_BUDGET
+                        fix_thinking: list[ThinkingIndicator | None] = [None]
+                        try:
+                            async for event in self.agent.handle_user_message(
+                                fix_prompt,
+                                confirm_callback=confirm_cb,
+                                password_callback=password_callback,
+                            ):
+                                self._render_agent_event(
+                                    event, conversation, fix_thinking
+                                )
+                        finally:
+                            self.agent.config.max_steps = original_max
+                            if fix_thinking[0]:
+                                fix_thinking[0].remove()
+
+                        verify_result2 = _exec_shell(
+                            {"command": step.verification, "timeout": 30}
+                        )
+                        if verify_result2.exit_code != 0:
+                            hit_max_steps = True  # downgrade to partial
+
                 # Update divider status
                 if hit_max_steps:
                     divider.mark_partial()
@@ -845,6 +924,16 @@ class NatShellApp(App):
                     divider.mark_done()
                     completed_count += 1
                     completed_summaries.append(f"{step.number}. {step.title} \u2713")
+
+                # Persist state after each step
+                step_status = "passed" if not hit_max_steps else "partial"
+                state.step_results.append(StepResult(
+                    number=step.number, title=step.title, status=step_status,
+                    summary=completed_summaries[-1], files_changed=step_files,
+                ))
+                state.completed_summaries = list(completed_summaries)
+                state.completed_files = list(completed_files)
+                save_plan_state(state, state_file)
 
                 conversation.scroll_end()
 
@@ -859,6 +948,11 @@ class NatShellApp(App):
             conversation.mount(
                 PlanSummaryMessage(completed_count, failed_count, skipped_count, wall_ms)
             )
+
+            # Final state save
+            state.finished_at = datetime.now(timezone.utc).isoformat()
+            save_plan_state(state, state_file)
+
             self._busy = False
             self.query_one(LogoBanner).stop_animation()
             self.query_one("#user-input", Input).focus()

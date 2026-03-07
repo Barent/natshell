@@ -380,3 +380,36 @@ class TestExeplanInSlashCommands:
 
         commands = [cmd for cmd, _ in SLASH_COMMANDS]
         assert "/exeplan" in commands
+
+
+# ─── _build_verify_fix_prompt ────────────────────────────────────────────────
+
+
+class TestBuildVerifyFixPrompt:
+    def test_contains_verification_command(self):
+        from natshell.agent.plan_executor import _build_verify_fix_prompt
+
+        step = parse_plan_text("## Build\n\nWrite code.\n\nVerify: npm test\n").steps[0]
+        prompt = _build_verify_fix_prompt(step, "npm test", "FAIL: 2 tests failed")
+        assert "npm test" in prompt
+
+    def test_contains_error_output(self):
+        from natshell.agent.plan_executor import _build_verify_fix_prompt
+
+        step = parse_plan_text("## Build\n\nCode.\n").steps[0]
+        prompt = _build_verify_fix_prompt(step, "pytest", "AssertionError: x != y")
+        assert "AssertionError" in prompt
+
+    def test_truncates_long_output(self):
+        from natshell.agent.plan_executor import _build_verify_fix_prompt
+
+        step = parse_plan_text("## Build\n\nCode.\n").steps[0]
+        long_output = "x" * 5000
+        prompt = _build_verify_fix_prompt(step, "test", long_output)
+        # Output portion should be truncated to ~2000 chars
+        assert len(prompt) < 3000
+
+    def test_budget_constant(self):
+        from natshell.agent.plan_executor import VERIFY_FIX_BUDGET
+
+        assert VERIFY_FIX_BUDGET == 8

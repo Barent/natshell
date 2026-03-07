@@ -7,6 +7,7 @@ from pathlib import Path
 from natshell.agent.plan import Plan, PlanStep
 
 _DEFAULT_PLAN_MAX_STEPS = 35
+VERIFY_FIX_BUDGET = 8
 
 
 def _effective_plan_max_steps(n_ctx: int, configured: int = _DEFAULT_PLAN_MAX_STEPS) -> int:
@@ -357,5 +358,36 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
         "First examine the directory with list_directory. Read key source files",
         "and any project documentation (README, design docs, etc.) to understand",
         "the codebase, then call write_file to save PLAN.md.",
+    ]
+    return "\n".join(parts)
+
+
+def _build_verify_fix_prompt(
+    step: PlanStep,
+    verification_cmd: str,
+    verify_output: str,
+    *,
+    n_ctx: int = 4096,
+) -> str:
+    """Build a focused prompt for one retry after a step's verification fails.
+
+    Uses a small fixed budget (VERIFY_FIX_BUDGET) — the model should make
+    1-3 targeted edits, not re-implement the whole step.
+    """
+    # Truncate output to prevent blowing context
+    truncated = verify_output[:2000]
+    if len(verify_output) > 2000:
+        truncated += "\n... (output truncated)"
+
+    parts = [
+        f'The previous step "{step.title}" completed but its verification command failed.',
+        f"\nVerification command: {verification_cmd}",
+        f"Exit code indicated failure. Output:\n{truncated}",
+        f"\nFix the issues. You have {VERIFY_FIX_BUDGET} tool calls — make targeted fixes only.",
+        "- Read error messages carefully before editing",
+        "- Use edit_file for small fixes, write_file to replace broken files",
+        "- Do NOT re-implement the entire step from scratch",
+        "- Do NOT re-read files unless you need exact content for edit_file matching",
+        "\nWhen done, provide a brief summary of what you fixed.",
     ]
     return "\n".join(parts)

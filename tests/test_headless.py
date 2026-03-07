@@ -351,3 +351,150 @@ class TestHeadlessExeplan:
         assert code == 1
         captured = capsys.readouterr()
         assert "Failed: 1" in captured.out
+
+
+# ─── Resume support ─────────────────────────────────────────────────────────
+
+
+class TestHeadlessResume:
+    async def test_resume_skips_completed_steps(self, capsys, tmp_path, monkeypatch):
+        """Resume should skip passed steps and execute from failure point."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: First\n\nDo first.\n\n"
+            "## Step 2: Second\n\nDo second.\n"
+        )
+
+        # Write a state file with step 1 passed
+        from natshell.agent.plan_state import (
+            PlanState,
+            StepResult,
+            save_plan_state,
+            state_path_for_plan,
+        )
+
+        state_file = state_path_for_plan(plan_file.resolve())
+        state = PlanState(
+            plan_file=str(plan_file), plan_title="Test Plan", total_steps=2,
+            step_results=[
+                StepResult(number=1, title="First", status="passed", summary="1. First ✓"),
+            ],
+            completed_summaries=["1. First ✓"],
+            completed_files=[],
+            started_at="2026-01-01T00:00:00Z",
+        )
+        save_plan_state(state, state_file)
+
+        call_count = 0
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            nonlocal call_count
+            call_count += 1
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        code = await run_headless_exeplan(agent, str(plan_file), resume=True)
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "[skip] Step 1" in captured.err
+        assert call_count == 1  # Only step 2 was executed
+
+    async def test_resume_without_state_starts_fresh(self, capsys, tmp_path, monkeypatch):
+        """Resume with no state file should execute all steps."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Only\n\nDo it.\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        code = await run_headless_exeplan(agent, str(plan_file), resume=True)
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "[skip]" not in captured.err
+
+    async def test_state_file_created_after_run(self, capsys, tmp_path, monkeypatch):
+        """A normal run should create a .state.json file."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Only\n\nDo it.\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        await run_headless_exeplan(agent, str(plan_file))
+
+        from natshell.agent.plan_state import state_path_for_plan
+
+        state_file = state_path_for_plan(plan_file.resolve())
+        assert state_file.exists()
+
+
+# ─── Verification support ───────────────────────────────────────────────────
+
+
+class TestHeadlessVerification:
+    async def test_verify_skipped_without_auto_approve(
+        self, capsys, tmp_path, monkeypatch
+    ):
+        """Verification should not run without auto_approve."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Build\n\nWrite code.\n\nVerify: npm test\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        await run_headless_exeplan(agent, str(plan_file), auto_approve=False)
+        captured = capsys.readouterr()
+        assert "[verify]" not in captured.err

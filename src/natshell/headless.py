@@ -178,18 +178,33 @@ async def run_headless_exeplan(
     agent: AgentLoop,
     plan_path: str,
     auto_approve: bool = False,
+    resume: bool = False,
 ) -> int:
     """Execute a plan file step by step.
 
     Mirrors app.py:run_plan but outputs to stderr/stdout.
+    Supports post-step verification, one-retry fix, state persistence,
+    and resume from the last failed step.
 
     Returns:
         Exit code (0 = all steps passed, 1 = any failures).
     """
+    from datetime import datetime, timezone
+
     from natshell.agent.plan import parse_plan_file
     from natshell.agent.plan_executor import (
+        VERIFY_FIX_BUDGET,
         _build_step_prompt,
+        _build_verify_fix_prompt,
         _effective_plan_max_steps,
+    )
+    from natshell.agent.plan_state import (
+        PlanState,
+        StepResult,
+        get_resume_point,
+        load_plan_state,
+        save_plan_state,
+        state_path_for_plan,
     )
 
     try:
@@ -216,12 +231,55 @@ async def run_headless_exeplan(
     except (AttributeError, TypeError):
         n_ctx = 4096
 
+    # --- Resume or fresh start ---
+    state_file = state_path_for_plan(Path(plan_path).resolve())
     completed_summaries: list[str] = []
     completed_files: list[str] = []
     completed_count = 0
     failed_count = 0
+    resume_idx = 0
+    prior_results: list[StepResult] = []
+
+    if resume and state_file.exists():
+        try:
+            prev_state = load_plan_state(state_file)
+            resume_idx = get_resume_point(prev_state)
+            completed_summaries = list(prev_state.completed_summaries)
+            completed_files = list(prev_state.completed_files)
+            completed_count = sum(
+                1 for r in prev_state.step_results if r.status == "passed"
+            )
+            failed_count = sum(
+                1 for r in prev_state.step_results
+                if r.status in ("failed", "partial")
+            )
+            prior_results = list(prev_state.step_results[:resume_idx])
+            _err(
+                f"Resuming from step {resume_idx + 1} "
+                f"({completed_count} passed, {failed_count} failed)"
+            )
+            # Reset failed count — we're retrying from the failure point
+            failed_count = 0
+        except (ValueError, KeyError) as e:
+            _err(f"[warn] Could not load state file, starting fresh: {e}")
+            resume_idx = 0
+
+    state = PlanState(
+        plan_file=plan_path,
+        plan_title=plan.title,
+        total_steps=len(plan.steps),
+        step_results=list(prior_results),
+        completed_summaries=list(completed_summaries),
+        completed_files=list(completed_files),
+        started_at=datetime.now(timezone.utc).isoformat(),
+    )
 
     for step in plan.steps:
+        # Skip already-completed steps on resume
+        if step.number - 1 < resume_idx:
+            _err(f"[skip] Step {step.number}: {step.title} (already completed)")
+            continue
+
         _err(f"\n{'=' * 60}")
         _err(f"Step {step.number}/{len(plan.steps)}: {step.title}")
         _err(f"{'=' * 60}")
@@ -300,6 +358,14 @@ async def run_headless_exeplan(
             _err(f"[error] Step {step.number} failed: {e}")
             failed_count += 1
             completed_summaries.append(f"{step.number}. {step.title} ✗")
+            state.step_results.append(StepResult(
+                number=step.number, title=step.title, status="failed",
+                summary=completed_summaries[-1], files_changed=step_files,
+                error=str(e),
+            ))
+            state.completed_summaries = list(completed_summaries)
+            state.completed_files = list(completed_files)
+            save_plan_state(state, state_file)
             agent.config.max_steps = original_max
             continue
 
@@ -308,17 +374,87 @@ async def run_headless_exeplan(
 
         completed_files.extend(step_files)
 
+        # --- Post-step verification ---
+        if step.verification and auto_approve and not hit_max_steps:
+            _err(f"[verify] Running: {step.verification}")
+            from natshell.tools.execute_shell import execute_shell as _exec_shell
+
+            verify_result = _exec_shell(
+                {"command": step.verification, "timeout": 30}
+            )
+
+            if verify_result.exit_code != 0:
+                _err(f"[verify-failed] Exit code {verify_result.exit_code}")
+                if verify_result.output:
+                    _err(verify_result.output[:500])
+
+                # One retry with small budget
+                fix_prompt = _build_verify_fix_prompt(
+                    step,
+                    step.verification,
+                    verify_result.output or verify_result.error or "No output",
+                    n_ctx=n_ctx,
+                )
+                agent.clear_history()
+                agent.config.max_steps = VERIFY_FIX_BUDGET
+                try:
+                    async for event in agent.handle_user_message(
+                        fix_prompt,
+                        confirm_callback=_confirm_callback,
+                    ):
+                        match event.type:
+                            case EventType.RESPONSE:
+                                _err(f"[fix] {event.data}")
+                            case EventType.EXECUTING:
+                                if event.tool_call:
+                                    _err(f"[fix] {event.tool_call.name}")
+                            case EventType.TOOL_RESULT:
+                                if event.tool_result and event.tool_result.output:
+                                    _err(event.tool_result.output)
+                            case _:
+                                pass
+                finally:
+                    agent.config.max_steps = original_max
+
+                # Re-verify
+                verify_result2 = _exec_shell(
+                    {"command": step.verification, "timeout": 30}
+                )
+                if verify_result2.exit_code != 0:
+                    _err("[verify-failed] Still failing after fix attempt")
+                    hit_max_steps = True  # downgrade to partial
+                else:
+                    _err("[verify-passed] Fixed on retry")
+            else:
+                _err("[verify-passed]")
+
+        # --- Update status ---
         if hit_max_steps:
             failed_count += 1
             completed_summaries.append(f"{step.number}. {step.title} ⚠ (partial)")
             _err(f"[partial] Step {step.number} hit max steps")
+            status = "partial"
         else:
             completed_count += 1
             completed_summaries.append(f"{step.number}. {step.title} ✓")
             _err(f"[done] Step {step.number} complete")
+            status = "passed"
+
+        # --- Persist state ---
+        state.step_results.append(StepResult(
+            number=step.number, title=step.title, status=status,
+            summary=completed_summaries[-1], files_changed=step_files,
+        ))
+        state.completed_summaries = list(completed_summaries)
+        state.completed_files = list(completed_files)
+        save_plan_state(state, state_file)
 
     skipped_count = len(plan.steps) - completed_count - failed_count
     wall_ms = int((time.monotonic() - plan_t0) * 1000)
+
+    # Final state save
+    state.finished_at = datetime.now(timezone.utc).isoformat()
+    save_plan_state(state, state_file)
 
     # Print summary to stdout
     print(f"\nPlan complete: {plan.title}", flush=True)
