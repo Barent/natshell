@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re as _re
 from pathlib import Path
 
 from natshell.agent.plan import Plan, PlanStep
@@ -55,6 +56,43 @@ def _shallow_tree(directory: Path, max_depth: int = 2) -> str:
     return "\n".join(lines)
 
 
+_EXPORT_RE = _re.compile(
+    r"^export\s+(?:default\s+)?(?:function|class|const|let|var|async\s+function)\s+(\w+)",
+    _re.MULTILINE,
+)
+_CLASSNAME_RE = _re.compile(r'className=["\']([^"\']+)["\']')
+
+
+def _annotate_file(path: str, content: str) -> str:
+    """Extract key patterns from a source file for cross-step injection.
+
+    Returns an annotation string like:
+      'exports: Foo, Bar; neon classes: text-neon-cyan, bg-neon-pink'
+    or empty string if nothing useful was found.
+    """
+    ext = path.rsplit(".", 1)[-1] if "." in path else ""
+    if ext not in ("ts", "tsx", "js", "jsx"):
+        return ""
+
+    parts: list[str] = []
+
+    exports = _EXPORT_RE.findall(content)
+    if exports:
+        parts.append(f"exports: {', '.join(exports[:5])}")
+
+    all_classes: list[str] = []
+    for match in _CLASSNAME_RE.finditer(content):
+        all_classes.extend(match.group(1).split())
+    unique_classes = list(dict.fromkeys(all_classes))
+    notable = [c for c in unique_classes if any(
+        c.startswith(prefix) for prefix in ("neon-", "text-neon", "bg-neon", "border-neon")
+    )]
+    if notable:
+        parts.append(f"neon classes: {', '.join(notable[:8])}")
+
+    return "; ".join(parts)
+
+
 def _build_step_prompt(
     step: PlanStep,
     plan: Plan,
@@ -92,6 +130,9 @@ def _build_step_prompt(
     if completed_summaries:
         parts.append("\nPreviously completed:")
         for summary in completed_summaries:
+            # For small context windows, truncate to title only
+            if n_ctx < 32768 and " — " in summary:
+                summary = summary.split(" — ")[0]
             parts.append(f"  {summary}")
 
     # Cross-step file change tracking
@@ -124,6 +165,11 @@ def _build_step_prompt(
         "\n- Do NOT read the plan file (PLAN.md or similar)."
         "\n- When the step is complete, IMMEDIATELY provide a short text summary of what you did"
         " and STOP. Do not continue with additional tool calls after the work is done."
+    )
+    parts.append(
+        "\nWhen the step is complete, end your response with a line in EXACTLY this format "
+        "(one line, no bullet, starts with SUMMARY:):\n"
+        "SUMMARY: <one sentence describing what was created/changed and key patterns used>"
     )
 
     return "\n".join(parts)

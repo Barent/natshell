@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from textual.widgets import Button, Footer, Input, Static
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
 from natshell.agent.plan import Plan, parse_plan_file
 from natshell.agent.plan_executor import (
+    _annotate_file,
     _build_plan_prompt,
     _build_step_prompt,
     _effective_plan_max_steps,
@@ -80,6 +82,8 @@ from natshell.ui.widgets import (
     UserMessage,
     _escape,
 )
+
+_SUMMARY_RE = re.compile(r"^SUMMARY:\s*(.+)$", re.MULTILINE)
 
 
 def _tool_display_text(tool_call: ToolCall) -> str:
@@ -784,6 +788,7 @@ class NatShellApp(App):
                 thinking_ref: list[ThinkingIndicator | None] = [None]
                 hit_max_steps = False
                 step_files: list[str] = []
+                step_response_text: str = ""
 
                 try:
                     async for event in self.agent.handle_user_message(
@@ -801,16 +806,25 @@ class NatShellApp(App):
                             and event.tool_result
                             and event.tool_result.exit_code == 0
                         ):
-                            path = event.tool_call.arguments.get("path", "")
-                            if path:
-                                action = (
-                                    "created"
-                                    if event.tool_call.name == "write_file"
-                                    else "modified"
-                                )
-                                step_files.append(
-                                    f"{path} ({action} in step {step.number})"
-                                )
+                            if event.tool_call.name == "write_file":
+                                path = event.tool_call.arguments.get("path", "")
+                                content = event.tool_call.arguments.get("content", "")
+                                if path:
+                                    annotation = _annotate_file(path, content)
+                                    entry = f"{path} (created in step {step.number})"
+                                    if annotation:
+                                        entry += f" [{annotation}]"
+                                    step_files.append(entry)
+                            elif event.tool_call.name == "edit_file":
+                                path = event.tool_call.arguments.get("path", "")
+                                if path:
+                                    step_files.append(
+                                        f"{path} (modified in step {step.number})"
+                                    )
+
+                        # Capture model's final response for richer summaries
+                        if event.type == EventType.RESPONSE and event.data:
+                            step_response_text = event.data
 
                         # Detect max-steps warning
                         if (
@@ -836,15 +850,130 @@ class NatShellApp(App):
                 # Record file changes from this step
                 completed_files.extend(step_files)
 
+                # Extract structured SUMMARY from model response
+                step_summary = ""
+                if step_response_text:
+                    _m = _SUMMARY_RE.search(step_response_text)
+                    if _m:
+                        step_summary = _m.group(1).strip()
+                    else:
+                        step_summary = step_response_text[:300].replace("\n", " ").strip()
+
+                # --- Automatic verification ---
+                _MAX_VERIFY_RETRIES = 2
+                verify_cmd = step.verification
+                if verify_cmd and not hit_max_steps:
+                    for verify_attempt in range(_MAX_VERIFY_RETRIES + 1):
+                        verify_result = await execute_shell(verify_cmd)
+                        conversation.mount(CommandBlock(
+                            f"[verify] {verify_cmd}",
+                            verify_result.output or verify_result.error,
+                            verify_result.exit_code,
+                        ))
+                        conversation.scroll_end()
+
+                        if verify_result.exit_code == 0:
+                            break  # Verification passed
+
+                        if verify_attempt < _MAX_VERIFY_RETRIES:
+                            conversation.mount(SystemMessage(
+                                f"[yellow]Verification failed (attempt {verify_attempt + 1}"
+                                f"/{_MAX_VERIFY_RETRIES}) — retrying step...[/]"
+                            ))
+                            self.agent.clear_history()
+                            failure_output = (
+                                (verify_result.output or "") + (verify_result.error or "")
+                            )
+                            correction_prompt = _build_step_prompt(
+                                step, plan, completed_summaries,
+                                max_steps=effective_max,
+                                completed_files=completed_files or None,
+                                n_ctx=n_ctx,
+                            ) + (
+                                "\n\n[VERIFICATION FAILED] The verification command"
+                                f" `{verify_cmd}` exited with code"
+                                f" {verify_result.exit_code}.\n"
+                                f"Output:\n{failure_output[:2000]}\n\n"
+                                "Fix all issues described above, then the"
+                                " verification will be re-run automatically."
+                            )
+                            retry_thinking_ref: list[ThinkingIndicator | None] = [None]
+                            try:
+                                async for event in self.agent.handle_user_message(
+                                    correction_prompt,
+                                    confirm_callback=confirm_cb,
+                                    password_callback=password_callback,
+                                ):
+                                    self._render_agent_event(
+                                        event, conversation, retry_thinking_ref
+                                    )
+                                    if (
+                                        event.type == EventType.TOOL_RESULT
+                                        and event.tool_call
+                                        and event.tool_call.name in ("write_file", "edit_file")
+                                        and event.tool_result
+                                        and event.tool_result.exit_code == 0
+                                    ):
+                                        path = event.tool_call.arguments.get("path", "")
+                                        if path:
+                                            action = (
+                                                "created"
+                                                if event.tool_call.name == "write_file"
+                                                else "modified"
+                                            )
+                                            step_files.append(
+                                                f"{path} ({action} in step {step.number} retry)"
+                                            )
+                            except Exception as e:
+                                conversation.mount(Static(
+                                    f"[bold red]Retry error:[/] {_escape(str(e))}"
+                                ))
+                                break
+                            finally:
+                                if retry_thinking_ref[0]:
+                                    retry_thinking_ref[0].remove()
+                                self.query_one(LogoBanner).stop_animation()
+                        else:
+                            # All retries exhausted
+                            divider.mark_failed(
+                                f"Verification failed after {_MAX_VERIFY_RETRIES} retries"
+                            )
+                            failed_count += 1
+                            if step_summary:
+                                completed_summaries.append(
+                                    f"{step.number}. {step.title} \u2717 (verify failed)"
+                                    f" \u2014 {step_summary}"
+                                )
+                            else:
+                                completed_summaries.append(
+                                    f"{step.number}. {step.title} \u2717 (verify failed)"
+                                )
+                            conversation.mount(SystemMessage(
+                                f"[red]Step {step.number} verification failed after "
+                                f"{_MAX_VERIFY_RETRIES} retries. Continuing plan.[/]"
+                            ))
+                            conversation.scroll_end()
+                            continue  # Skip normal mark_done/mark_partial
+
                 # Update divider status
                 if hit_max_steps:
                     divider.mark_partial()
                     failed_count += 1
-                    completed_summaries.append(f"{step.number}. {step.title} \u26a0 (partial)")
+                    if step_summary:
+                        completed_summaries.append(
+                            f"{step.number}. {step.title} \u26a0 (partial) \u2014 {step_summary}"
+                        )
+                    else:
+                        completed_summaries.append(f"{step.number}. {step.title} \u26a0 (partial)")
                 else:
                     divider.mark_done()
                     completed_count += 1
-                    completed_summaries.append(f"{step.number}. {step.title} \u2713")
+                    if step_summary:
+                        completed_summaries.append(
+                            f"{step.number}. {step.title} \u2713 \u2014 {step_summary}"
+                        )
+                    else:
+                        completed_summaries.append(f"{step.number}. {step.title} \u2713")
 
                 conversation.scroll_end()
 

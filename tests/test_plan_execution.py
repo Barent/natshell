@@ -380,3 +380,149 @@ class TestExeplanInSlashCommands:
 
         commands = [cmd for cmd, _ in SLASH_COMMANDS]
         assert "/exeplan" in commands
+
+
+# ─── _annotate_file ───────────────────────────────────────────────────────────
+
+
+class TestAnnotateFile:
+    """Test the file annotation helper for cross-step context injection."""
+
+    def test_annotate_tsx_exports_and_neon_classes(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        content = '''
+export function HUD() {
+  return <div className="text-neon-cyan bg-neon-pink">...</div>
+}
+export const Score = () => <span className="neon-yellow">0</span>
+'''
+        result = _annotate_file("src/HUD.tsx", content)
+        assert "exports: HUD, Score" in result
+        assert "neon-cyan" in result
+        assert "neon-pink" in result
+
+    def test_annotate_non_source_returns_empty(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        result = _annotate_file("README.md", "# Hello")
+        assert result == ""
+
+    def test_annotate_no_neon_classes(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        content = 'export function Foo() { return <div className="flex p-4">...</div> }'
+        result = _annotate_file("Foo.tsx", content)
+        assert "exports: Foo" in result
+        assert "neon" not in result
+
+    def test_annotate_js_file(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        content = "export const helper = () => {};\nexport function util() {}"
+        result = _annotate_file("utils.js", content)
+        assert "exports: helper, util" in result
+
+    def test_annotate_non_js_extension_returns_empty(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        content = "export function Foo() {}"
+        assert _annotate_file("module.py", content) == ""
+        assert _annotate_file("style.css", content) == ""
+
+    def test_annotate_deduplicates_classes(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        content = (
+            '<div className="neon-pink neon-cyan">'
+            '<span className="neon-pink neon-yellow"></span>'
+            "</div>"
+        )
+        result = _annotate_file("Card.tsx", content)
+        # neon-pink should appear only once
+        assert result.count("neon-pink") == 1
+
+    def test_annotate_limits_exports_to_five(self):
+        from natshell.agent.plan_executor import _annotate_file
+
+        exports = "\n".join(f"export function Fn{i}() {{}}" for i in range(10))
+        result = _annotate_file("big.tsx", exports)
+        # Should only list up to 5 exports
+        listed = result.split("exports: ")[1].split(";")[0].split(", ")
+        assert len(listed) <= 5
+
+
+# ─── _build_step_prompt summary injection ─────────────────────────────────────
+
+
+class TestBuildStepPromptSummaryDirective:
+    """SUMMARY: instruction is appended to step prompts."""
+
+    def _make_plan(self) -> "Plan":
+        return parse_plan_text(
+            textwrap.dedent("""\
+            # My Plan
+
+            ## Do something
+
+            Create a file.
+        """)
+        )
+
+    def test_summary_directive_present(self):
+        plan = self._make_plan()
+        prompt = _build_step_prompt(plan.steps[0], plan, [])
+        assert "SUMMARY:" in prompt
+        assert "one sentence" in prompt
+
+    def test_summary_directive_format_line(self):
+        plan = self._make_plan()
+        prompt = _build_step_prompt(plan.steps[0], plan, [])
+        assert "starts with SUMMARY:" in prompt
+
+
+# ─── _build_step_prompt n_ctx summary gating ──────────────────────────────────
+
+
+class TestBuildStepPromptSummaryGating:
+    """Expanded summaries are gated on context window size."""
+
+    def _make_plan(self) -> "Plan":
+        return parse_plan_text(
+            textwrap.dedent("""\
+            # Plan
+
+            ## Step A
+
+            Do A.
+
+            ## Step B
+
+            Do B.
+        """)
+        )
+
+    def test_expanded_summary_shown_at_large_context(self):
+        plan = self._make_plan()
+        summaries = ["1. Step A \u2713 \u2014 Created auth module with JWT tokens"]
+        prompt = _build_step_prompt(
+            plan.steps[1], plan, summaries, n_ctx=32768
+        )
+        assert "Created auth module with JWT tokens" in prompt
+
+    def test_expanded_summary_truncated_at_small_context(self):
+        plan = self._make_plan()
+        summaries = ["1. Step A \u2713 \u2014 Created auth module with JWT tokens"]
+        prompt = _build_step_prompt(
+            plan.steps[1], plan, summaries, n_ctx=8192
+        )
+        assert "Created auth module with JWT tokens" not in prompt
+        assert "Step A" in prompt
+
+    def test_plain_summary_unaffected_at_small_context(self):
+        plan = self._make_plan()
+        summaries = ["1. Step A \u2713"]
+        prompt = _build_step_prompt(
+            plan.steps[1], plan, summaries, n_ctx=8192
+        )
+        assert "Step A" in prompt
