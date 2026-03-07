@@ -193,10 +193,8 @@ async def run_headless_exeplan(
 
     from natshell.agent.plan import parse_plan_file
     from natshell.agent.plan_executor import (
-        VERIFY_ESCALATION_BUDGET,
         VERIFY_FIX_BUDGET,
         _build_step_prompt,
-        _build_verify_escalation_prompt,
         _build_verify_fix_prompt,
         _effective_plan_max_steps,
         validate_plan,
@@ -456,46 +454,8 @@ async def run_headless_exeplan(
                 )
                 if verify_result2.exit_code != 0:
                     verify_attempts += 1
-                    _log("[verify-failed] First fix failed, escalating...")
-
-                    # Second retry — broader fix with larger budget
-                    escalation_prompt = _build_verify_escalation_prompt(
-                        step,
-                        step.verification,
-                        verify_result2.output or verify_result2.error or "No output",
-                        fix_summary or "targeted fix attempt (see logs above)",
-                        n_ctx=n_ctx,
-                    )
-                    agent.clear_history()
-                    agent.config.max_steps = VERIFY_ESCALATION_BUDGET
-                    try:
-                        async for event in agent.handle_user_message(
-                            escalation_prompt,
-                            confirm_callback=_confirm_callback,
-                        ):
-                            match event.type:
-                                case EventType.RESPONSE:
-                                    _log(f"[escalation] {event.data}")
-                                case EventType.EXECUTING:
-                                    if event.tool_call:
-                                        _log(f"[escalation] {event.tool_call.name}")
-                                case EventType.TOOL_RESULT:
-                                    if event.tool_result and event.tool_result.output:
-                                        _log(event.tool_result.output)
-                                case _:
-                                    pass
-                    finally:
-                        agent.config.max_steps = original_max
-
-                    # Final verify
-                    verify_result3 = _exec_shell(
-                        {"command": step.verification, "timeout": 30}
-                    )
-                    if verify_result3.exit_code != 0:
-                        _log("[verify-failed] Still failing after escalation")
-                        hit_max_steps = True  # downgrade to partial
-                    else:
-                        _log("[verify-passed] Fixed on escalation")
+                    _log("[verify-failed] Still failing after fix attempt")
+                    hit_max_steps = True  # downgrade to partial
                 else:
                     _log("[verify-passed] Fixed on retry")
             else:

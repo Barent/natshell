@@ -590,14 +590,14 @@ class TestHeadlessTelemetry:
         assert state.total_tool_calls == 4  # 2 * 2
 
 
-# ─── Escalation ──────────────────────────────────────────────────────────
+# ─── Double verify failure downgrades to partial ─────────────────────────
 
 
-class TestHeadlessEscalation:
-    async def test_escalation_triggered_on_double_failure(
+class TestHeadlessDoubleVerifyFailure:
+    async def test_double_failure_downgrades_to_partial(
         self, capsys, tmp_path, monkeypatch
     ):
-        """Escalation should trigger when both initial verify and first fix fail."""
+        """When both initial verify and first fix fail, step is downgraded to partial."""
         monkeypatch.chdir(tmp_path)
 
         plan_file = tmp_path / "PLAN.md"
@@ -618,62 +618,10 @@ class TestHeadlessEscalation:
 
         agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
 
-        # Mock execute_shell — patch on the module so the lazy import picks it up
         from types import SimpleNamespace
 
-        call_idx = 0
-
         def _mock_exec(args):
-            nonlocal call_idx
-            call_idx += 1
             return SimpleNamespace(exit_code=1, output="FAIL", error="")
-
-        import natshell.tools.execute_shell as es_mod
-
-        monkeypatch.setattr(es_mod, "execute_shell", _mock_exec)
-
-        await run_headless_exeplan(
-            agent, str(plan_file), auto_approve=True
-        )
-        captured = capsys.readouterr()
-        assert "[verify-failed]" in captured.err
-        assert "escalat" in captured.err.lower()
-
-    async def test_escalation_succeeds_on_third_verify(
-        self, capsys, tmp_path, monkeypatch
-    ):
-        """Escalation fix should succeed when third verify passes."""
-        monkeypatch.chdir(tmp_path)
-
-        plan_file = tmp_path / "PLAN.md"
-        plan_file.write_text(
-            "# Test Plan\n\nPreamble.\n\n"
-            "## Step 1: Build\n\nWrite code.\n\nVerify: npm test\n"
-        )
-
-        async def _fake_handler(prompt, **kw):
-            from natshell.agent.loop import AgentEvent, EventType
-
-            yield AgentEvent(type=EventType.RESPONSE, data="Fixed it.")
-
-        agent = _make_agent([])
-        agent.handle_user_message = _fake_handler
-
-        from unittest.mock import MagicMock
-
-        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
-
-        # First two verifies fail, third succeeds
-        from types import SimpleNamespace
-
-        call_idx = 0
-
-        def _mock_exec(args):
-            nonlocal call_idx
-            call_idx += 1
-            if call_idx <= 2:
-                return SimpleNamespace(exit_code=1, output="FAIL", error="")
-            return SimpleNamespace(exit_code=0, output="OK", error="")
 
         import natshell.tools.execute_shell as es_mod
 
@@ -683,8 +631,9 @@ class TestHeadlessEscalation:
             agent, str(plan_file), auto_approve=True
         )
         captured = capsys.readouterr()
-        assert "[verify-passed] Fixed on escalation" in captured.err
-        assert code == 0
+        assert "[verify-failed]" in captured.err
+        assert "Still failing after fix attempt" in captured.err
+        assert code == 1
 
 
 # ─── Progress indicator ──────────────────────────────────────────────────
