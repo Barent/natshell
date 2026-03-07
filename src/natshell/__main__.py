@@ -98,6 +98,18 @@ def main() -> None:
         "Requires the 'mcp' package: pip install 'natshell[mcp]'",
     )
     parser.add_argument(
+        "--plan",
+        metavar="DESCRIPTION",
+        help="Generate a PLAN.md from a natural language description and exit. "
+        "Plan text goes to stdout, diagnostics to stderr.",
+    )
+    parser.add_argument(
+        "--exeplan",
+        metavar="FILE",
+        help="Execute a plan file step by step and exit. "
+        "Use --danger-fast to auto-approve all confirmations.",
+    )
+    parser.add_argument(
         "--no-setup",
         action="store_true",
         help="Skip the first-run setup wizard",
@@ -140,7 +152,7 @@ def main() -> None:
         config_path=Path(args.config) if args.config else None,
         no_setup=args.no_setup or bool(args.local) or bool(args.remote)
         or bool(args.model),
-        headless=bool(args.headless),
+        headless=bool(args.headless) or bool(args.plan) or bool(args.exeplan),
         mcp=args.mcp,
         download=args.download,
     ):
@@ -340,6 +352,24 @@ def main() -> None:
     print("Gathering system information...")
     context = asyncio.run(gather_system_context())
     agent.initialize(context)
+
+    # Headless plan generation
+    if args.plan:
+        from natshell.headless import run_headless_plan
+
+        exit_code = asyncio.run(
+            run_headless_plan(agent, args.plan, auto_approve=args.danger_fast)
+        )
+        sys.exit(exit_code)
+
+    # Headless plan execution
+    if args.exeplan:
+        from natshell.headless import run_headless_exeplan
+
+        exit_code = asyncio.run(
+            run_headless_exeplan(agent, args.exeplan, auto_approve=args.danger_fast)
+        )
+        sys.exit(exit_code)
 
     # Headless mode — single-shot CLI, no TUI
     if args.headless:

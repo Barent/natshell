@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop
 from natshell.config import AgentConfig, SafetyConfig
-from natshell.headless import run_headless
+from natshell.headless import run_headless, run_headless_exeplan, run_headless_plan
 from natshell.inference.engine import CompletionResult, ToolCall
 from natshell.safety.classifier import SafetyClassifier
 from natshell.tools.registry import create_default_registry
@@ -207,3 +207,147 @@ class TestHeadlessPlanning:
         captured = capsys.readouterr()
         assert "Let me check" in captured.err
         assert "Here are the files." in captured.out
+
+
+# ─── Headless plan generation ────────────────────────────────────────────────
+
+
+class TestHeadlessPlan:
+    async def test_plan_generation_creates_plan(self, capsys, tmp_path, monkeypatch):
+        """run_headless_plan should return 0 when PLAN.md is created."""
+        monkeypatch.chdir(tmp_path)
+
+        # Simulate the agent writing PLAN.md via write_file tool
+        plan_content = (
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Do something\n\nDetails here.\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            # Simulate writing PLAN.md
+            (tmp_path / "PLAN.md").write_text(plan_content)
+            yield AgentEvent(type=EventType.RESPONSE, data="Plan generated.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        # Mock engine_info for n_ctx
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(
+            return_value=MagicMock(n_ctx=4096)
+        )
+
+        code = await run_headless_plan(agent, "build something")
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "Test Plan" in captured.out
+        assert "1 steps" in captured.out or "Step 1" in captured.out
+
+    async def test_plan_generation_fails_without_file(self, capsys, tmp_path, monkeypatch):
+        """run_headless_plan should return 1 when PLAN.md is not created."""
+        monkeypatch.chdir(tmp_path)
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(type=EventType.RESPONSE, data="I described a plan.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(
+            return_value=MagicMock(n_ctx=4096)
+        )
+
+        code = await run_headless_plan(agent, "build something")
+        assert code == 1
+        captured = capsys.readouterr()
+        assert "not created" in captured.err.lower()
+
+
+# ─── Headless plan execution ─────────────────────────────────────────────────
+
+
+class TestHeadlessExeplan:
+    async def test_exeplan_executes_steps(self, capsys, tmp_path, monkeypatch):
+        """run_headless_exeplan should execute all steps and report results."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: First step\n\nDo the first thing.\n\n"
+            "## Step 2: Second step\n\nDo the second thing.\n"
+        )
+
+        call_count = 0
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            nonlocal call_count
+            call_count += 1
+            yield AgentEvent(
+                type=EventType.RESPONSE,
+                data=f"Completed step work (call {call_count}).",
+            )
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(
+            return_value=MagicMock(n_ctx=4096)
+        )
+
+        code = await run_headless_exeplan(agent, str(plan_file))
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "Passed: 2" in captured.out
+        assert "Failed: 0" in captured.out
+
+    async def test_exeplan_file_not_found(self, capsys):
+        """run_headless_exeplan should return 1 for missing plan file."""
+        agent = _make_agent([])
+        code = await run_headless_exeplan(agent, "/nonexistent/PLAN.md")
+        assert code == 1
+        captured = capsys.readouterr()
+        assert "error" in captured.err.lower()
+
+    async def test_exeplan_partial_step(self, capsys, tmp_path, monkeypatch):
+        """A step hitting max steps should count as failed."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Only step\n\nDo something.\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(
+                type=EventType.RESPONSE,
+                data="Reached the maximum number of steps for this run.",
+            )
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(
+            return_value=MagicMock(n_ctx=4096)
+        )
+
+        code = await run_headless_exeplan(agent, str(plan_file))
+        assert code == 1
+        captured = capsys.readouterr()
+        assert "Failed: 1" in captured.out
