@@ -8,6 +8,7 @@ from natshell.agent.plan import Plan, PlanStep
 
 _DEFAULT_PLAN_MAX_STEPS = 35
 VERIFY_FIX_BUDGET = 8
+VERIFY_ESCALATION_BUDGET = 15
 
 
 def _effective_plan_max_steps(n_ctx: int, configured: int = _DEFAULT_PLAN_MAX_STEPS) -> int:
@@ -391,3 +392,65 @@ def _build_verify_fix_prompt(
         "\nWhen done, provide a brief summary of what you fixed.",
     ]
     return "\n".join(parts)
+
+
+def _build_verify_escalation_prompt(
+    step: PlanStep,
+    verification_cmd: str,
+    verify_output: str,
+    prior_fix_summary: str,
+    *,
+    n_ctx: int = 4096,
+) -> str:
+    """Build a broader retry prompt after the first targeted fix also failed.
+
+    This gets a larger budget and more latitude to re-read and rethink.
+    """
+    truncated = verify_output[:2000]
+    if len(verify_output) > 2000:
+        truncated += "\n... (output truncated)"
+
+    parts = [
+        f'Step "{step.title}" still fails verification after a targeted fix attempt.',
+        f"\nPrevious fix attempt summary: {prior_fix_summary}",
+        f"\nVerification command: {verification_cmd}",
+        f"Current failure output:\n{truncated}",
+        f"\nYou have {VERIFY_ESCALATION_BUDGET} tool calls. Take a broader approach:",
+        "- Re-read the failing file(s) to understand the full context",
+        "- Consider whether the original implementation approach was wrong",
+        "- Fix root causes, not just symptoms",
+        "- If a file is fundamentally broken, rewrite it with write_file",
+        "\nWhen done, provide a brief summary of what you fixed.",
+    ]
+    return "\n".join(parts)
+
+
+def validate_plan(plan: Plan) -> list[str]:
+    """Check a parsed plan for common quality issues.
+
+    Returns a list of warning strings. Empty list = no issues.
+    Does not block execution — warnings are informational.
+    """
+    warnings: list[str] = []
+
+    numbers = [s.number for s in plan.steps]
+    if len(numbers) != len(set(numbers)):
+        dupes = [n for n in numbers if numbers.count(n) > 1]
+        warnings.append(f"Duplicate step numbers: {sorted(set(dupes))}")
+
+    no_verify = [s.number for s in plan.steps if not s.verification]
+    if no_verify:
+        warnings.append(
+            f"Steps without **Verify:** commands: {no_verify} "
+            f"(verification will be skipped for these steps)"
+        )
+
+    large = [s.number for s in plan.steps if len(s.body) > 3000]
+    if large:
+        warnings.append(f"Steps with very large bodies (>3000 chars): {large}")
+
+    expected = list(range(1, len(plan.steps) + 1))
+    if numbers != expected:
+        warnings.append(f"Non-sequential step numbers: {numbers} (expected {expected})")
+
+    return warnings

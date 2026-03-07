@@ -498,3 +498,227 @@ class TestHeadlessVerification:
         await run_headless_exeplan(agent, str(plan_file), auto_approve=False)
         captured = capsys.readouterr()
         assert "[verify]" not in captured.err
+
+
+# ─── Telemetry in state file ──────────────────────────────────────────────
+
+
+class TestHeadlessTelemetry:
+    async def test_state_file_contains_telemetry(self, capsys, tmp_path, monkeypatch):
+        """State file should contain per-step telemetry from RUN_STATS."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Only\n\nDo it.\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+            yield AgentEvent(
+                type=EventType.RUN_STATS, data="",
+                metrics={
+                    "steps": 3, "total_wall_ms": 5000,
+                    "total_inference_ms": 4000,
+                    "total_prompt_tokens": 800,
+                    "total_completion_tokens": 200,
+                },
+            )
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        await run_headless_exeplan(agent, str(plan_file))
+
+        from natshell.agent.plan_state import load_plan_state, state_path_for_plan
+
+        state = load_plan_state(state_path_for_plan(plan_file.resolve()))
+        assert state.step_results[0].wall_ms == 5000
+        assert state.step_results[0].prompt_tokens == 800
+        assert state.step_results[0].tool_calls == 3
+
+    async def test_state_file_aggregates(self, capsys, tmp_path, monkeypatch):
+        """PlanState aggregates should equal sum of step values."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: First\n\nDo first.\n\n"
+            "## Step 2: Second\n\nDo second.\n"
+        )
+
+        call_count = 0
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            nonlocal call_count
+            call_count += 1
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+            yield AgentEvent(
+                type=EventType.RUN_STATS, data="",
+                metrics={
+                    "steps": 2, "total_wall_ms": 3000,
+                    "total_inference_ms": 2000,
+                    "total_prompt_tokens": 500,
+                    "total_completion_tokens": 100,
+                },
+            )
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        await run_headless_exeplan(agent, str(plan_file))
+
+        from natshell.agent.plan_state import load_plan_state, state_path_for_plan
+
+        state = load_plan_state(state_path_for_plan(plan_file.resolve()))
+        assert state.total_prompt_tokens == 1000  # 500 * 2
+        assert state.total_wall_ms == 6000  # 3000 * 2
+        assert state.total_tool_calls == 4  # 2 * 2
+
+
+# ─── Escalation ──────────────────────────────────────────────────────────
+
+
+class TestHeadlessEscalation:
+    async def test_escalation_triggered_on_double_failure(
+        self, capsys, tmp_path, monkeypatch
+    ):
+        """Escalation should trigger when both initial verify and first fix fail."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Build\n\nWrite code.\n\nVerify: npm test\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        # Mock execute_shell — patch on the module so the lazy import picks it up
+        from types import SimpleNamespace
+
+        call_idx = 0
+
+        def _mock_exec(args):
+            nonlocal call_idx
+            call_idx += 1
+            return SimpleNamespace(exit_code=1, output="FAIL", error="")
+
+        import natshell.tools.execute_shell as es_mod
+
+        monkeypatch.setattr(es_mod, "execute_shell", _mock_exec)
+
+        await run_headless_exeplan(
+            agent, str(plan_file), auto_approve=True
+        )
+        captured = capsys.readouterr()
+        assert "[verify-failed]" in captured.err
+        assert "escalat" in captured.err.lower()
+
+    async def test_escalation_succeeds_on_third_verify(
+        self, capsys, tmp_path, monkeypatch
+    ):
+        """Escalation fix should succeed when third verify passes."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Build\n\nWrite code.\n\nVerify: npm test\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+
+            yield AgentEvent(type=EventType.RESPONSE, data="Fixed it.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        # First two verifies fail, third succeeds
+        from types import SimpleNamespace
+
+        call_idx = 0
+
+        def _mock_exec(args):
+            nonlocal call_idx
+            call_idx += 1
+            if call_idx <= 2:
+                return SimpleNamespace(exit_code=1, output="FAIL", error="")
+            return SimpleNamespace(exit_code=0, output="OK", error="")
+
+        import natshell.tools.execute_shell as es_mod
+
+        monkeypatch.setattr(es_mod, "execute_shell", _mock_exec)
+
+        code = await run_headless_exeplan(
+            agent, str(plan_file), auto_approve=True
+        )
+        captured = capsys.readouterr()
+        assert "[verify-passed] Fixed on escalation" in captured.err
+        assert code == 0
+
+
+# ─── Progress indicator ──────────────────────────────────────────────────
+
+
+class TestHeadlessProgressIndicator:
+    async def test_progress_format_includes_budget(self, capsys, tmp_path, monkeypatch):
+        """Executing lines should show call count and budget."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_file = tmp_path / "PLAN.md"
+        plan_file.write_text(
+            "# Test Plan\n\nPreamble.\n\n"
+            "## Step 1: Only\n\nDo it.\n"
+        )
+
+        async def _fake_handler(prompt, **kw):
+            from natshell.agent.loop import AgentEvent, EventType
+            from natshell.inference.engine import ToolCall
+
+            yield AgentEvent(
+                type=EventType.EXECUTING, data="",
+                tool_call=ToolCall(id="1", name="write_file", arguments={}),
+            )
+            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
+
+        agent = _make_agent([])
+        agent.handle_user_message = _fake_handler
+
+        from unittest.mock import MagicMock
+
+        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
+
+        await run_headless_exeplan(agent, str(plan_file))
+        captured = capsys.readouterr()
+        assert "calls," in captured.err
+        assert "1/" in captured.err

@@ -18,6 +18,13 @@ class StepResult:
     summary: str  # e.g. "1. Fix shapes ✓"
     files_changed: list[str] = field(default_factory=list)
     error: str | None = None
+    wall_ms: int = 0
+    inference_ms: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    tool_calls: int = 0
+    verify_attempts: int = 0
+    log_lines: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -32,6 +39,11 @@ class PlanState:
     completed_files: list[str] = field(default_factory=list)
     started_at: str = ""
     finished_at: str | None = None
+    total_wall_ms: int = 0
+    total_inference_ms: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tool_calls: int = 0
 
 
 def state_path_for_plan(plan_path: Path) -> Path:

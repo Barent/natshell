@@ -118,3 +118,105 @@ class TestGetResumePoint:
     def test_empty_results(self):
         state = PlanState(plan_file="P", plan_title="T", total_steps=3)
         assert get_resume_point(state) == 0
+
+
+# ─── telemetry fields ─────────────────────────────────────────────────────
+
+
+class TestTelemetryFields:
+    def test_step_result_telemetry_defaults(self):
+        r = StepResult(number=1, title="t", status="passed", summary="s")
+        assert r.wall_ms == 0
+        assert r.inference_ms == 0
+        assert r.prompt_tokens == 0
+        assert r.completion_tokens == 0
+        assert r.tool_calls == 0
+        assert r.verify_attempts == 0
+
+    def test_step_result_with_telemetry(self):
+        r = StepResult(
+            number=1, title="t", status="passed", summary="s",
+            wall_ms=1000, prompt_tokens=500, completion_tokens=200,
+            tool_calls=5, verify_attempts=1,
+        )
+        assert r.wall_ms == 1000
+        assert r.prompt_tokens == 500
+        assert r.tool_calls == 5
+
+    def test_plan_state_aggregates(self):
+        s = PlanState(
+            plan_file="P", plan_title="T", total_steps=1,
+            total_wall_ms=5000, total_prompt_tokens=1000,
+            total_completion_tokens=300, total_tool_calls=10,
+        )
+        assert s.total_wall_ms == 5000
+        assert s.total_tool_calls == 10
+
+    def test_roundtrip_with_telemetry(self, tmp_path: Path):
+        state = PlanState(
+            plan_file="PLAN.md", plan_title="T", total_steps=1,
+            step_results=[
+                StepResult(
+                    number=1, title="S1", status="passed", summary="1. S1 ✓",
+                    wall_ms=2000, inference_ms=1500, prompt_tokens=800,
+                    completion_tokens=200, tool_calls=7, verify_attempts=1,
+                ),
+            ],
+            total_wall_ms=2000, total_prompt_tokens=800,
+            total_completion_tokens=200, total_tool_calls=7,
+        )
+        path = tmp_path / "state.json"
+        save_plan_state(state, path)
+        loaded = load_plan_state(path)
+        assert loaded.step_results[0].wall_ms == 2000
+        assert loaded.step_results[0].prompt_tokens == 800
+        assert loaded.total_wall_ms == 2000
+        assert loaded.total_tool_calls == 7
+
+    def test_backward_compatible_load(self, tmp_path: Path):
+        """State files without new fields should load with defaults."""
+        import json
+
+        old_state = {
+            "plan_file": "P", "plan_title": "T", "total_steps": 1,
+            "step_results": [
+                {"number": 1, "title": "S", "status": "passed",
+                 "summary": "s", "files_changed": [], "error": None},
+            ],
+            "completed_summaries": [], "completed_files": [],
+            "started_at": "", "finished_at": None,
+        }
+        path = tmp_path / "old.json"
+        path.write_text(json.dumps(old_state))
+        loaded = load_plan_state(path)
+        assert loaded.step_results[0].wall_ms == 0
+        assert loaded.step_results[0].log_lines == []
+        assert loaded.total_wall_ms == 0
+
+
+# ─── log lines ────────────────────────────────────────────────────────────
+
+
+class TestLogLines:
+    def test_step_result_log_lines(self):
+        r = StepResult(
+            number=1, title="t", status="passed", summary="s",
+            log_lines=["[executing] write_file", "[response] Done"],
+        )
+        assert len(r.log_lines) == 2
+        assert "[executing]" in r.log_lines[0]
+
+    def test_roundtrip_with_log_lines(self, tmp_path: Path):
+        state = PlanState(
+            plan_file="P", plan_title="T", total_steps=1,
+            step_results=[
+                StepResult(
+                    number=1, title="S", status="passed", summary="s",
+                    log_lines=["line1", "line2"],
+                ),
+            ],
+        )
+        path = tmp_path / "state.json"
+        save_plan_state(state, path)
+        loaded = load_plan_state(path)
+        assert loaded.step_results[0].log_lines == ["line1", "line2"]

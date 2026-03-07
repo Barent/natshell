@@ -193,10 +193,13 @@ async def run_headless_exeplan(
 
     from natshell.agent.plan import parse_plan_file
     from natshell.agent.plan_executor import (
+        VERIFY_ESCALATION_BUDGET,
         VERIFY_FIX_BUDGET,
         _build_step_prompt,
+        _build_verify_escalation_prompt,
         _build_verify_fix_prompt,
         _effective_plan_max_steps,
+        validate_plan,
     )
     from natshell.agent.plan_state import (
         PlanState,
@@ -224,6 +227,11 @@ async def run_headless_exeplan(
         return False
 
     _err(f"Executing plan: {plan.title} ({len(plan.steps)} steps)")
+
+    plan_warnings = validate_plan(plan)
+    for w in plan_warnings:
+        _err(f"[plan-warning] {w}")
+
     plan_t0 = time.monotonic()
 
     try:
@@ -302,6 +310,15 @@ async def run_headless_exeplan(
 
         hit_max_steps = False
         step_files: list[str] = []
+        step_metrics: dict[str, Any] = {}
+        step_log: list[str] = []
+        step_tool_count = 0
+        step_t0 = time.monotonic()
+        verify_attempts = 0
+
+        def _log(msg: str) -> None:
+            step_log.append(msg)
+            _err(msg)
 
         try:
             async for event in agent.handle_user_message(
@@ -310,14 +327,14 @@ async def run_headless_exeplan(
             ):
                 match event.type:
                     case EventType.RESPONSE:
-                        _err(f"[response] {event.data}")
+                        _log(f"[response] {event.data}")
                         if event.data and "maximum number of steps" in event.data:
                             hit_max_steps = True
                     case EventType.TOOL_RESULT:
                         if event.tool_result and event.tool_result.output:
-                            _err(event.tool_result.output)
+                            _log(event.tool_result.output)
                         if event.tool_result and event.tool_result.error:
-                            _err(f"[stderr] {event.tool_result.error}")
+                            _log(f"[stderr] {event.tool_result.error}")
                         # Track file changes
                         if (
                             event.tool_call
@@ -336,32 +353,45 @@ async def run_headless_exeplan(
                                     f"{path} ({action} in step {step.number})"
                                 )
                     case EventType.PLANNING:
-                        _err(f"[thinking] {event.data}")
+                        _log(f"[thinking] {event.data}")
                     case EventType.EXECUTING:
                         if event.tool_call:
-                            _err(f"[executing] {event.tool_call.name}")
+                            step_tool_count += 1
+                            elapsed = int(time.monotonic() - step_t0)
+                            _log(
+                                f"[executing] {event.tool_call.name} "
+                                f"({step_tool_count}/{effective_max} calls, {elapsed}s)"
+                            )
                     case EventType.BLOCKED:
                         if event.tool_call:
-                            _err(
+                            _log(
                                 f"[BLOCKED] {event.tool_call.name}: "
                                 f"{event.tool_call.arguments}"
                             )
                     case EventType.ERROR:
-                        _err(f"[error] {event.data}")
+                        _log(f"[error] {event.data}")
                     case EventType.RUN_STATS:
                         if event.metrics:
+                            step_metrics = event.metrics
                             steps = event.metrics.get("steps", "?")
                             wall = event.metrics.get("total_wall_ms", 0)
-                            _err(f"[stats] {steps} steps in {wall}ms")
+                            _log(f"[stats] {steps} steps in {wall}ms")
 
         except Exception as e:
-            _err(f"[error] Step {step.number} failed: {e}")
+            _log(f"[error] Step {step.number} failed: {e}")
             failed_count += 1
             completed_summaries.append(f"{step.number}. {step.title} ✗")
             state.step_results.append(StepResult(
                 number=step.number, title=step.title, status="failed",
                 summary=completed_summaries[-1], files_changed=step_files,
                 error=str(e),
+                wall_ms=step_metrics.get("total_wall_ms", 0),
+                inference_ms=step_metrics.get("total_inference_ms", 0),
+                prompt_tokens=step_metrics.get("total_prompt_tokens", 0),
+                completion_tokens=step_metrics.get("total_completion_tokens", 0),
+                tool_calls=step_metrics.get("steps", 0),
+                verify_attempts=verify_attempts,
+                log_lines=step_log,
             ))
             state.completed_summaries = list(completed_summaries)
             state.completed_files = list(completed_files)
@@ -376,7 +406,7 @@ async def run_headless_exeplan(
 
         # --- Post-step verification ---
         if step.verification and auto_approve and not hit_max_steps:
-            _err(f"[verify] Running: {step.verification}")
+            _log(f"[verify] Running: {step.verification}")
             from natshell.tools.execute_shell import execute_shell as _exec_shell
 
             verify_result = _exec_shell(
@@ -384,11 +414,12 @@ async def run_headless_exeplan(
             )
 
             if verify_result.exit_code != 0:
-                _err(f"[verify-failed] Exit code {verify_result.exit_code}")
+                verify_attempts += 1
+                _log(f"[verify-failed] Exit code {verify_result.exit_code}")
                 if verify_result.output:
-                    _err(verify_result.output[:500])
+                    _log(verify_result.output[:500])
 
-                # One retry with small budget
+                # First retry — targeted fix with small budget
                 fix_prompt = _build_verify_fix_prompt(
                     step,
                     step.verification,
@@ -397,6 +428,7 @@ async def run_headless_exeplan(
                 )
                 agent.clear_history()
                 agent.config.max_steps = VERIFY_FIX_BUDGET
+                fix_summary = ""
                 try:
                     async for event in agent.handle_user_message(
                         fix_prompt,
@@ -404,29 +436,70 @@ async def run_headless_exeplan(
                     ):
                         match event.type:
                             case EventType.RESPONSE:
-                                _err(f"[fix] {event.data}")
+                                _log(f"[fix] {event.data}")
+                                if event.data:
+                                    fix_summary = event.data
                             case EventType.EXECUTING:
                                 if event.tool_call:
-                                    _err(f"[fix] {event.tool_call.name}")
+                                    _log(f"[fix] {event.tool_call.name}")
                             case EventType.TOOL_RESULT:
                                 if event.tool_result and event.tool_result.output:
-                                    _err(event.tool_result.output)
+                                    _log(event.tool_result.output)
                             case _:
                                 pass
                 finally:
                     agent.config.max_steps = original_max
 
-                # Re-verify
+                # Re-verify after first fix
                 verify_result2 = _exec_shell(
                     {"command": step.verification, "timeout": 30}
                 )
                 if verify_result2.exit_code != 0:
-                    _err("[verify-failed] Still failing after fix attempt")
-                    hit_max_steps = True  # downgrade to partial
+                    verify_attempts += 1
+                    _log("[verify-failed] First fix failed, escalating...")
+
+                    # Second retry — broader fix with larger budget
+                    escalation_prompt = _build_verify_escalation_prompt(
+                        step,
+                        step.verification,
+                        verify_result2.output or verify_result2.error or "No output",
+                        fix_summary or "targeted fix attempt (see logs above)",
+                        n_ctx=n_ctx,
+                    )
+                    agent.clear_history()
+                    agent.config.max_steps = VERIFY_ESCALATION_BUDGET
+                    try:
+                        async for event in agent.handle_user_message(
+                            escalation_prompt,
+                            confirm_callback=_confirm_callback,
+                        ):
+                            match event.type:
+                                case EventType.RESPONSE:
+                                    _log(f"[escalation] {event.data}")
+                                case EventType.EXECUTING:
+                                    if event.tool_call:
+                                        _log(f"[escalation] {event.tool_call.name}")
+                                case EventType.TOOL_RESULT:
+                                    if event.tool_result and event.tool_result.output:
+                                        _log(event.tool_result.output)
+                                case _:
+                                    pass
+                    finally:
+                        agent.config.max_steps = original_max
+
+                    # Final verify
+                    verify_result3 = _exec_shell(
+                        {"command": step.verification, "timeout": 30}
+                    )
+                    if verify_result3.exit_code != 0:
+                        _log("[verify-failed] Still failing after escalation")
+                        hit_max_steps = True  # downgrade to partial
+                    else:
+                        _log("[verify-passed] Fixed on escalation")
                 else:
-                    _err("[verify-passed] Fixed on retry")
+                    _log("[verify-passed] Fixed on retry")
             else:
-                _err("[verify-passed]")
+                _log("[verify-passed]")
 
         # --- Update status ---
         if hit_max_steps:
@@ -444,6 +517,13 @@ async def run_headless_exeplan(
         state.step_results.append(StepResult(
             number=step.number, title=step.title, status=status,
             summary=completed_summaries[-1], files_changed=step_files,
+            wall_ms=step_metrics.get("total_wall_ms", 0),
+            inference_ms=step_metrics.get("total_inference_ms", 0),
+            prompt_tokens=step_metrics.get("total_prompt_tokens", 0),
+            completion_tokens=step_metrics.get("total_completion_tokens", 0),
+            tool_calls=step_metrics.get("steps", 0),
+            verify_attempts=verify_attempts,
+            log_lines=step_log,
         ))
         state.completed_summaries = list(completed_summaries)
         state.completed_files = list(completed_files)
@@ -451,6 +531,13 @@ async def run_headless_exeplan(
 
     skipped_count = len(plan.steps) - completed_count - failed_count
     wall_ms = int((time.monotonic() - plan_t0) * 1000)
+
+    # Compute aggregates
+    state.total_wall_ms = sum(r.wall_ms for r in state.step_results)
+    state.total_inference_ms = sum(r.inference_ms for r in state.step_results)
+    state.total_prompt_tokens = sum(r.prompt_tokens for r in state.step_results)
+    state.total_completion_tokens = sum(r.completion_tokens for r in state.step_results)
+    state.total_tool_calls = sum(r.tool_calls for r in state.step_results)
 
     # Final state save
     state.finished_at = datetime.now(timezone.utc).isoformat()
@@ -463,6 +550,16 @@ async def run_headless_exeplan(
     if skipped_count:
         print(f"  Skipped: {skipped_count}", flush=True)
     print(f"  Time: {wall_ms}ms", flush=True)
+    total_tokens = state.total_prompt_tokens + state.total_completion_tokens
+    if total_tokens:
+        print(
+            f"  Tokens: {total_tokens:,} "
+            f"({state.total_prompt_tokens:,}p + {state.total_completion_tokens:,}c)",
+            flush=True,
+        )
+    if state.total_wall_ms:
+        mins = state.total_wall_ms / 60_000
+        print(f"  Inference time: {mins:.1f} min", flush=True)
 
     return 1 if failed_count > 0 else 0
 

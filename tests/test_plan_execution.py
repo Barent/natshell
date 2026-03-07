@@ -413,3 +413,100 @@ class TestBuildVerifyFixPrompt:
         from natshell.agent.plan_executor import VERIFY_FIX_BUDGET
 
         assert VERIFY_FIX_BUDGET == 8
+
+
+# ─── validate_plan ─────────────────────────────────────────────────────────
+
+
+class TestValidatePlan:
+    def test_valid_plan_no_warnings(self):
+        from natshell.agent.plan_executor import validate_plan
+
+        plan = parse_plan_text(
+            "# Good Plan\n\n"
+            "## Step 1: First\n\nDo it.\n\nVerify: pytest\n\n"
+            "## Step 2: Second\n\nDo more.\n\nVerify: npm test\n"
+        )
+        warnings = validate_plan(plan)
+        assert warnings == []
+
+    def test_duplicate_step_numbers(self):
+        from natshell.agent.plan_executor import validate_plan
+
+        plan = parse_plan_text(
+            "# Plan\n\n## Step 1: A\n\nBody.\n\n## Step 1: B\n\nBody.\n"
+        )
+        # Parser assigns sequential numbers, so duplicates won't happen
+        # via parse_plan_text. But we test the function directly.
+        plan.steps[1].number = 1
+        warnings = validate_plan(plan)
+        assert any("Duplicate" in w for w in warnings)
+
+    def test_missing_verify_commands(self):
+        from natshell.agent.plan_executor import validate_plan
+
+        plan = parse_plan_text(
+            "# Plan\n\n## Step 1: A\n\nBody without verify.\n\n"
+            "## Step 2: B\n\nAlso no verify.\n"
+        )
+        warnings = validate_plan(plan)
+        assert any("Verify" in w for w in warnings)
+        assert any("[1, 2]" in w for w in warnings)
+
+    def test_large_step_body(self):
+        from natshell.agent.plan_executor import validate_plan
+
+        plan = parse_plan_text(
+            "# Plan\n\n## Step 1: Big\n\n" + "x" * 4000 + "\n\n**Verify:** ok\n"
+        )
+        warnings = validate_plan(plan)
+        assert any("large" in w.lower() for w in warnings)
+
+    def test_non_sequential_numbers(self):
+        from natshell.agent.plan_executor import validate_plan
+
+        plan = parse_plan_text(
+            "# Plan\n\n## Step 1: A\n\nBody.\n\n## Step 3: B\n\nBody.\n"
+        )
+        plan.steps[1].number = 3
+        warnings = validate_plan(plan)
+        assert any("Non-sequential" in w for w in warnings)
+
+
+# ─── _build_verify_escalation_prompt ───────────────────────────────────────
+
+
+class TestBuildVerifyEscalationPrompt:
+    def test_contains_prior_fix_summary(self):
+        from natshell.agent.plan_executor import _build_verify_escalation_prompt
+
+        step = parse_plan_text("## Build\n\nCode.\n").steps[0]
+        prompt = _build_verify_escalation_prompt(
+            step, "npm test", "FAIL", "Fixed import order"
+        )
+        assert "Fixed import order" in prompt
+
+    def test_contains_verification_command(self):
+        from natshell.agent.plan_executor import _build_verify_escalation_prompt
+
+        step = parse_plan_text("## Build\n\nCode.\n").steps[0]
+        prompt = _build_verify_escalation_prompt(
+            step, "pytest -x", "error", "prior fix"
+        )
+        assert "pytest -x" in prompt
+
+    def test_truncates_long_output(self):
+        from natshell.agent.plan_executor import _build_verify_escalation_prompt
+
+        step = parse_plan_text("## Build\n\nCode.\n").steps[0]
+        long_output = "x" * 5000
+        prompt = _build_verify_escalation_prompt(
+            step, "test", long_output, "prior"
+        )
+        assert len(prompt) < 3500
+
+    def test_escalation_budget_constant(self):
+        from natshell.agent.plan_executor import VERIFY_ESCALATION_BUDGET
+
+        assert VERIFY_ESCALATION_BUDGET == 15
+        assert VERIFY_ESCALATION_BUDGET > 8
