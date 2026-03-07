@@ -362,7 +362,7 @@ if [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
 elif [[ -d "$INSTALL_DIR/.git" ]]; then
     info "Updating existing installation..."
     cd "$INSTALL_DIR"
-    git pull --ff-only
+    git pull --ff-only || { info "Fast-forward failed, resetting to remote..."; git fetch origin && git reset --hard origin/main; }
 else
     info "Cloning NatShell to $INSTALL_DIR..."
     git clone https://github.com/Barent/natshell.git "$INSTALL_DIR"
