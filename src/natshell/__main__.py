@@ -395,8 +395,21 @@ def _self_update() -> None:
         text=True,
     )
     if result.returncode != 0:
-        print(f"git pull failed:\n{result.stderr.strip()}")
-        sys.exit(1)
+        # Diverged history (e.g. after a force-push) — reset to remote
+        print("Fast-forward failed, resetting to remote...")
+        subprocess.run(
+            ["git", "-C", str(root), "fetch", "origin"],
+            capture_output=True,
+            text=True,
+        )
+        result = subprocess.run(
+            ["git", "-C", str(root), "reset", "--hard", "origin/main"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"git reset failed:\n{result.stderr.strip()}")
+            sys.exit(1)
     print(result.stdout.strip())
 
     # Reinstall using the same Python that's running us
