@@ -1130,10 +1130,14 @@ class TestStepBudgetAwareness:
     async def test_50pct_budget_info(self):
         """At 50% of budget, info message should appear in tool messages."""
         # max_steps=10, so step 5 = 50%
+        # Use unique commands to avoid duplicate tool call detection
         responses = [
             CompletionResult(
                 tool_calls=[
-                    ToolCall(id=str(i), name="execute_shell", arguments={"command": "echo hi"})
+                    ToolCall(
+                        id=str(i), name="execute_shell",
+                        arguments={"command": f"echo step{i}"},
+                    )
                 ],
             )
             for i in range(10)
@@ -1149,10 +1153,14 @@ class TestStepBudgetAwareness:
 
     async def test_90pct_urgent_warning(self):
         """At 90% of budget, URGENT warning should appear."""
+        # Use unique commands to avoid duplicate tool call detection
         responses = [
             CompletionResult(
                 tool_calls=[
-                    ToolCall(id=str(i), name="execute_shell", arguments={"command": "echo hi"})
+                    ToolCall(
+                        id=str(i), name="execute_shell",
+                        arguments={"command": f"echo step{i}"},
+                    )
                 ],
             )
             for i in range(10)
@@ -1959,3 +1967,155 @@ class TestSudoRetryPrependsSudo:
         retry_args = agent.tools.execute.call_args_list[1][0][1]
         assert retry_args["command"] == "sudo apt install -y nmap"
         assert not retry_args["command"].startswith("sudo sudo")
+
+
+# ─── Duplicate tool call detection ───────────────────────────────────────────
+
+
+class TestDuplicateToolCallDetection:
+    async def test_warning_at_3_identical_calls(self):
+        """After 3 identical consecutive tool calls, a warning is injected."""
+        responses = [
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(
+                        id=str(i),
+                        name="execute_shell",
+                        arguments={"command": "npm run type-check"},
+                    )
+                ],
+            )
+            for i in range(4)
+        ] + [CompletionResult(content="Done.")]
+
+        agent = _make_agent(responses, max_steps=10, safety_mode="danger")
+        await _collect_events(agent, "check types")
+
+        tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+        # 3rd call should have the warning
+        assert any(
+            "identical arguments" in m["content"] and "DIFFERENT approach" in m["content"]
+            for m in tool_msgs
+        )
+
+    async def test_abort_at_5_identical_calls(self):
+        """After 5 identical consecutive tool calls, the loop terminates."""
+        responses = [
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(
+                        id=str(i),
+                        name="execute_shell",
+                        arguments={"command": "npm run type-check"},
+                    )
+                ],
+            )
+            for i in range(10)  # Would do 10 but should stop at 5
+        ] + [CompletionResult(content="Done.")]
+
+        agent = _make_agent(responses, max_steps=15, safety_mode="danger")
+        events = await _collect_events(agent, "check types")
+
+        response_events = [e for e in events if e.type == EventType.RESPONSE]
+        assert len(response_events) == 1
+        assert "repeated identical tool call" in response_events[0].data
+
+        # Should have aborted after 5 calls, not continued to 10
+        tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+        assert len(tool_msgs) == 5
+
+    async def test_counter_resets_on_different_call(self):
+        """Counter resets when a different tool call is made."""
+        responses = [
+            # 3 identical calls (triggers warning but not abort)
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="1", name="execute_shell", arguments={"command": "echo a"})
+                ],
+            ),
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="2", name="execute_shell", arguments={"command": "echo a"})
+                ],
+            ),
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="3", name="execute_shell", arguments={"command": "echo a"})
+                ],
+            ),
+            # Different call resets counter
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="4", name="execute_shell", arguments={"command": "echo b"})
+                ],
+            ),
+            # 3 more of the original (triggers warning again but not abort)
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="5", name="execute_shell", arguments={"command": "echo a"})
+                ],
+            ),
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="6", name="execute_shell", arguments={"command": "echo a"})
+                ],
+            ),
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(id="7", name="execute_shell", arguments={"command": "echo a"})
+                ],
+            ),
+            CompletionResult(content="Done."),
+        ]
+
+        agent = _make_agent(responses, max_steps=10, safety_mode="danger")
+        events = await _collect_events(agent, "do stuff")
+
+        # Should complete normally (no abort) because counter was reset
+        response_events = [e for e in events if e.type == EventType.RESPONSE]
+        assert len(response_events) == 1
+        assert response_events[0].data == "Done."
+
+
+# ─── Plan step budget enforcement ────────────────────────────────────────────
+
+
+class TestPlanStepBudget:
+    def test_set_step_limit(self):
+        """set_step_limit directly overrides _max_steps."""
+        agent = _make_agent(
+            [CompletionResult(content="ok")],
+            max_steps=15,
+        )
+        # _max_steps is set during initialize based on context
+        original = agent._max_steps
+        agent.set_step_limit(42)
+        assert agent._max_steps == 42
+        # Restore
+        agent.set_step_limit(original)
+        assert agent._max_steps == original
+
+    async def test_set_step_limit_enforced_in_loop(self):
+        """set_step_limit is respected by handle_user_message loop."""
+        # Create 20 tool calls but limit to 5
+        responses = [
+            CompletionResult(
+                tool_calls=[
+                    ToolCall(
+                        id=str(i),
+                        name="execute_shell",
+                        arguments={"command": f"echo step{i}"},
+                    )
+                ],
+            )
+            for i in range(20)
+        ] + [CompletionResult(content="Done.")]
+
+        agent = _make_agent(responses, max_steps=15, safety_mode="danger")
+        agent.set_step_limit(5)
+        events = await _collect_events(agent, "do stuff")
+
+        # Should hit max steps at 5, not continue to 15 or 20
+        response_events = [e for e in events if e.type == EventType.RESPONSE]
+        assert len(response_events) == 1
+        assert "maximum number of steps (5)" in response_events[0].data

@@ -295,7 +295,10 @@ async def run_headless_exeplan(
         plan_max = _effective_plan_max_steps(n_ctx, agent.config.plan_max_steps)
         original_max = agent.config.max_steps
         agent.config.max_steps = plan_max
-        effective_max = max(getattr(agent, "_max_steps", plan_max), plan_max)
+        # Directly set the loop step limit (config.max_steps alone
+        # is ignored if _max_steps was set during initialize())
+        agent.set_step_limit(plan_max)
+        effective_max = plan_max
 
         prompt = _build_step_prompt(
             step,
@@ -395,10 +398,12 @@ async def run_headless_exeplan(
             state.completed_files = list(completed_files)
             save_plan_state(state, state_file)
             agent.config.max_steps = original_max
+            agent.set_step_limit(agent._effective_max_steps(n_ctx))
             continue
 
         finally:
             agent.config.max_steps = original_max
+            agent.set_step_limit(agent._effective_max_steps(n_ctx))
 
         completed_files.extend(step_files)
 
@@ -424,6 +429,7 @@ async def run_headless_exeplan(
                 )
                 agent.clear_history()
                 agent.config.max_steps = VERIFY_FIX_BUDGET
+                agent.set_step_limit(VERIFY_FIX_BUDGET)
                 try:
                     async for event in agent.handle_user_message(
                         fix_prompt,
@@ -442,6 +448,7 @@ async def run_headless_exeplan(
                                 pass
                 finally:
                     agent.config.max_steps = original_max
+                    agent.set_step_limit(agent._effective_max_steps(n_ctx))
 
                 # Re-verify after first fix
                 verify_result2 = await _exec_shell(step.verification, timeout=30)

@@ -138,6 +138,9 @@ class AgentLoop:
         self._completion_warning_sent: bool = False
         # Repetitive read detection
         self._read_counts: dict[str, int] = {}
+        # Duplicate tool call detection
+        self._last_tool_key: str = ""
+        self._consecutive_dupes: int = 0
         # Context overflow recovery guard
         self._context_recovery_attempted: bool = False
         # Message queue for mid-run user input
@@ -402,6 +405,8 @@ class AgentLoop:
         self._edit_successes = 0
         self._completion_warning_sent = False
         self._read_counts = {}
+        self._last_tool_key = ""
+        self._consecutive_dupes = 0
         self._context_recovery_attempted = False
 
         # Cumulative stats for this run
@@ -694,6 +699,57 @@ class AgentLoop:
                     # Build result content with warnings
                     result_content = tool_result.to_message_content()
 
+                    # Duplicate tool call detection — catch infinite retry loops
+                    tool_key = f"{tool_call.name}:{json.dumps(tool_call.arguments, sort_keys=True)}"
+                    if tool_key == self._last_tool_key:
+                        self._consecutive_dupes += 1
+                    else:
+                        self._last_tool_key = tool_key
+                        self._consecutive_dupes = 1
+
+                    _DUPE_WARN_THRESHOLD = 3
+                    _DUPE_ABORT_THRESHOLD = 5
+                    if self._consecutive_dupes >= _DUPE_ABORT_THRESHOLD:
+                        result_content += (
+                            f"\n\n\u26a0 CRITICAL: You have called {tool_call.name} "
+                            f"with identical arguments {self._consecutive_dupes} "
+                            "times in a row. The output will not change. "
+                            "STOP retrying. Summarize what you have accomplished "
+                            "and what remains unresolved, then finish."
+                        )
+                        self._append_tool_exchange(tool_call, result_content)
+                        # Force-terminate: emit response and break
+                        yield AgentEvent(
+                            type=EventType.RESPONSE,
+                            data=(
+                                f"Stopped: repeated identical tool call "
+                                f"({tool_call.name}) detected after "
+                                f"{self._consecutive_dupes} attempts. "
+                                f"The issue could not be resolved automatically."
+                            ),
+                        )
+                        run_wall_ms = int((time.monotonic() - run_t0) * 1000)
+                        yield AgentEvent(
+                            type=EventType.RUN_STATS,
+                            metrics=_build_run_stats(
+                                steps_used,
+                                run_wall_ms,
+                                total_inference_ms,
+                                total_prompt_tokens,
+                                total_completion_tokens,
+                            ),
+                        )
+                        return
+                    elif self._consecutive_dupes >= _DUPE_WARN_THRESHOLD:
+                        result_content += (
+                            f"\n\n\u26a0 You have called {tool_call.name} with "
+                            f"identical arguments {self._consecutive_dupes} times "
+                            "in a row and gotten the same result each time. "
+                            "Try a DIFFERENT approach — change the arguments, "
+                            "use a different tool, or fix the underlying issue "
+                            "before retrying."
+                        )
+
                     # Repetitive read detection
                     if tool_call.name == "read_file":
                         read_path = tool_call.arguments.get("path", "")
@@ -952,6 +1008,14 @@ class AgentLoop:
             }
         )
 
+    def set_step_limit(self, limit: int) -> None:
+        """Override the step limit for the next handle_user_message call.
+
+        Used by plan execution to enforce per-step budgets that differ
+        from the context-scaled default.
+        """
+        self._max_steps = limit
+
     def clear_history(self) -> None:
         """Clear conversation history, keeping only the system prompt."""
         if self.messages and self.messages[0]["role"] == "system":
@@ -960,6 +1024,8 @@ class AgentLoop:
             self.messages = []
         reset_tracker()
         self._read_counts = {}
+        self._last_tool_key = ""
+        self._consecutive_dupes = 0
         # Drain any pending queued messages
         while not self._message_queue.empty():
             try:

@@ -805,9 +805,10 @@ class NatShellApp(App):
                 plan_max = _effective_plan_max_steps(n_ctx, self.agent.config.plan_max_steps)
                 original_max = self.agent.config.max_steps
                 self.agent.config.max_steps = plan_max
-                # Re-derive effective max_steps with the plan floor
-                effective_max = getattr(self.agent, "_max_steps", plan_max)
-                effective_max = max(effective_max, plan_max)
+                # Directly set the loop step limit (config.max_steps alone
+                # is ignored if _max_steps was set during initialize())
+                self.agent.set_step_limit(plan_max)
+                effective_max = plan_max
 
                 # Build focused prompt for this step
                 prompt = _build_step_prompt(
@@ -876,6 +877,9 @@ class NatShellApp(App):
 
                 finally:
                     self.agent.config.max_steps = original_max
+                    self.agent.set_step_limit(
+                        self.agent._effective_max_steps(n_ctx)
+                    )
                     if thinking_ref[0]:
                         thinking_ref[0].remove()
                     self.query_one(LogoBanner).stop_animation()
@@ -905,6 +909,7 @@ class NatShellApp(App):
                         )
                         self.agent.clear_history()
                         self.agent.config.max_steps = VERIFY_FIX_BUDGET
+                        self.agent.set_step_limit(VERIFY_FIX_BUDGET)
                         fix_thinking: list[ThinkingIndicator | None] = [None]
                         try:
                             async for event in self.agent.handle_user_message(
@@ -917,6 +922,9 @@ class NatShellApp(App):
                                 )
                         finally:
                             self.agent.config.max_steps = original_max
+                            self.agent.set_step_limit(
+                                self.agent._effective_max_steps(n_ctx)
+                            )
                             if fix_thinking[0]:
                                 fix_thinking[0].remove()
 
