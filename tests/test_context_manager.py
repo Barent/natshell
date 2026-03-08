@@ -227,26 +227,39 @@ class TestSummary:
         assert "Exit code: 0" in summary
 
     def test_summary_captures_tool_names(self):
-        """Summary includes non-shell tool names."""
+        """Summary includes read_file paths and generic tool names."""
         cm = ContextManager(context_budget=10000)
         dropped = [_tool_call_msg("read_file", {"path": "/etc/hosts"})]
         summary = cm.build_summary(dropped)
-        assert "Called: read_file" in summary
+        assert "Read: /etc/hosts" in summary
 
-    def test_summary_capped_at_500_chars(self):
-        """Summary output is capped at 500 characters."""
+    def test_summary_captures_file_changes(self):
+        """Summary tracks files created/edited."""
+        cm = ContextManager(context_budget=10000)
+        dropped = [
+            _tool_call_msg("write_file", {"path": "/tmp/foo.ts", "content": "x"}),
+            _tool_result("Wrote /tmp/foo.ts"),
+            _tool_call_msg("edit_file", {"path": "/tmp/bar.ts", "old_text": "a", "new_text": "b"}),
+            _tool_result("Edited /tmp/bar.ts"),
+        ]
+        summary = cm.build_summary(dropped)
+        assert "created: /tmp/foo.ts" in summary
+        assert "edited: /tmp/bar.ts" in summary
+
+    def test_summary_capped_at_800_chars(self):
+        """Summary output is capped at 800 characters."""
         cm = ContextManager(context_budget=10000)
         dropped = [_user("x" * 200) for _ in range(30)]
         summary = cm.build_summary(dropped)
-        assert len(summary) <= 503  # 500 + "..."
+        assert len(summary) <= 803  # 800 + "..."
 
-    def test_summary_max_15_facts(self):
-        """Summary includes at most 15 facts."""
+    def test_summary_max_12_actions(self):
+        """Summary includes at most 12 action facts."""
         cm = ContextManager(context_budget=10000)
         dropped = [_user(f"question {i}") for i in range(30)]
         summary = cm.build_summary(dropped)
         lines = [line for line in summary.split("\n") if line.startswith("- ")]
-        assert len(lines) <= 15
+        assert len(lines) <= 12
 
 
 # ---------------------------------------------------------------------------

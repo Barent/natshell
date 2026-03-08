@@ -208,35 +208,63 @@ class ContextManager:
     # ------------------------------------------------------------------
 
     def build_summary(self, dropped_messages: list[dict[str, Any]]) -> str:
-        """Build a compact extractive summary of dropped messages."""
-        facts: list[str] = []
+        """Build a compact extractive summary of dropped messages.
+
+        Prioritizes file change tracking so the model knows what it
+        already created/modified, even after trimming.
+        """
+        files_changed: list[str] = []
+        actions: list[str] = []
         for msg in dropped_messages:
             role = msg.get("role", "")
             if role == "user":
                 content = msg.get("content", "")[:100]
                 if content:
-                    facts.append(f"User asked: {content}")
+                    actions.append(f"User asked: {content}")
             elif msg.get("tool_calls"):
                 for tc in msg["tool_calls"]:
                     func = tc.get("function", {})
                     name = func.get("name", "")
                     args_str = func.get("arguments", "")
-                    if name == "execute_shell":
+                    if name in ("write_file", "edit_file"):
+                        try:
+                            path = json.loads(args_str).get("path", "")
+                            if path:
+                                action = "created" if name == "write_file" else "edited"
+                                entry = f"{action}: {path}"
+                                if entry not in files_changed:
+                                    files_changed.append(entry)
+                        except (json.JSONDecodeError, AttributeError):
+                            actions.append(f"Called: {name}")
+                    elif name == "execute_shell":
                         try:
                             cmd = json.loads(args_str).get("command", "")[:80]
-                            facts.append(f"Ran: {cmd}")
+                            actions.append(f"Ran: {cmd}")
                         except (json.JSONDecodeError, AttributeError):
-                            facts.append(f"Called: {name}")
+                            actions.append(f"Called: {name}")
+                    elif name == "read_file":
+                        try:
+                            path = json.loads(args_str).get("path", "")
+                            if path:
+                                actions.append(f"Read: {path}")
+                        except (json.JSONDecodeError, AttributeError):
+                            actions.append(f"Called: {name}")
                     else:
-                        facts.append(f"Called: {name}")
+                        actions.append(f"Called: {name}")
             elif role == "tool":
                 content = msg.get("content", "")
                 for line in content.split("\n"):
                     if line.startswith("Exit code:"):
-                        facts.append(line)
+                        actions.append(line)
                         break
 
-        summary = "\n".join(f"- {f}" for f in facts[:15])
-        if len(summary) > 500:
-            summary = summary[:500] + "..."
+        parts: list[str] = []
+        if files_changed:
+            parts.append("Files changed:\n" + "\n".join(f"- {f}" for f in files_changed))
+        action_text = "\n".join(f"- {a}" for a in actions[:12])
+        if action_text:
+            parts.append(f"Actions:\n{action_text}")
+        summary = "\n".join(parts)
+        if len(summary) > 800:
+            summary = summary[:800] + "..."
         return summary

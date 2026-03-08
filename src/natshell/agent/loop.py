@@ -428,7 +428,8 @@ class AgentLoop:
             # Signal that the model is thinking
             yield AgentEvent(type=EventType.THINKING)
 
-            # Trim context if needed
+            # Compress old tool exchanges, then trim context if needed
+            self._compress_old_messages()
             if self._context_manager:
                 self.messages = self._context_manager.trim_messages(self.messages)
 
@@ -978,6 +979,55 @@ class AgentLoop:
         except Exception:
             logger.exception("Failed to load local model for fallback")
             return False
+
+    # Number of most-recent messages to keep uncompressed (5 tool exchanges)
+    _COMPRESS_PRESERVE_RECENT = 10
+
+    def _compress_old_messages(self) -> None:
+        """Compress old tool exchanges to save context tokens.
+
+        Replaces full file content in write_file arguments and truncates
+        long tool results for messages older than the last few exchanges.
+        Safe because the model has already processed these results.
+        """
+        if len(self.messages) <= self._COMPRESS_PRESERVE_RECENT + 1:
+            return
+
+        cutoff = len(self.messages) - self._COMPRESS_PRESERVE_RECENT
+
+        for i in range(1, cutoff):  # skip system prompt
+            msg = self.messages[i]
+
+            # Compress write_file arguments (elide full file content)
+            if msg.get("tool_calls"):
+                for tc in msg.get("tool_calls", []):
+                    func = tc.get("function", {})
+                    name = func.get("name", "")
+                    args_str = func.get("arguments", "")
+
+                    if name == "write_file" and len(args_str) > 300:
+                        try:
+                            args = json.loads(args_str)
+                            content = args.get("content", "")
+                            if len(content) > 100:
+                                args["content"] = f"[{len(content)} chars elided]"
+                                func["arguments"] = json.dumps(args)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+            # Compress long tool results
+            if msg.get("role") == "tool":
+                content = msg.get("content", "")
+                if len(content) > 800:
+                    lines = content.split("\n")
+                    if len(lines) > 8:
+                        head = "\n".join(lines[:4])
+                        tail = "\n".join(lines[-3:])
+                        msg["content"] = (
+                            f"{head}\n"
+                            f"... [{len(lines) - 7} lines elided] ...\n"
+                            f"{tail}"
+                        )
 
     def _append_tool_exchange(self, tool_call: ToolCall, result_content: str) -> None:
         """Append a tool call + result pair to the message history."""

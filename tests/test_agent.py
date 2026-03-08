@@ -2119,3 +2119,89 @@ class TestPlanStepBudget:
         response_events = [e for e in events if e.type == EventType.RESPONSE]
         assert len(response_events) == 1
         assert "maximum number of steps (5)" in response_events[0].data
+
+
+# ─── Context compression ────────────────────────────────────────────────────
+
+
+class TestCompressOldMessages:
+    def test_compresses_write_file_args(self):
+        """Old write_file tool call arguments have content elided."""
+        agent = _make_agent([CompletionResult(content="ok")])
+        agent.messages = [{"role": "system", "content": "sys"}]
+        # Add 12 messages so oldest are outside the preserve window
+        large_content = "x" * 2000
+        for i in range(6):
+            agent.messages.append({
+                "role": "assistant", "content": "",
+                "tool_calls": [{
+                    "id": str(i), "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({
+                            "path": f"/tmp/f{i}.ts",
+                            "content": large_content,
+                        }),
+                    },
+                }],
+            })
+            agent.messages.append({
+                "role": "tool", "tool_call_id": str(i),
+                "content": f"Wrote /tmp/f{i}.ts",
+            })
+
+        agent._compress_old_messages()
+
+        # Oldest messages should be compressed
+        first_tc = agent.messages[1]["tool_calls"][0]
+        args = json.loads(first_tc["function"]["arguments"])
+        assert "elided" in args["content"]
+        assert len(args["content"]) < 100
+
+        # Recent messages should be preserved
+        last_tc = agent.messages[-2]["tool_calls"][0]
+        args = json.loads(last_tc["function"]["arguments"])
+        assert args["content"] == large_content
+
+    def test_compresses_long_tool_results(self):
+        """Old tool results over 800 chars are truncated."""
+        agent = _make_agent([CompletionResult(content="ok")])
+        agent.messages = [{"role": "system", "content": "sys"}]
+        long_output = "\n".join(f"line {i}: some output" for i in range(50))
+        for i in range(6):
+            agent.messages.append({
+                "role": "assistant", "content": "",
+                "tool_calls": [{
+                    "id": str(i), "type": "function",
+                    "function": {
+                        "name": "execute_shell",
+                        "arguments": json.dumps({"command": f"cmd{i}"}),
+                    },
+                }],
+            })
+            agent.messages.append({
+                "role": "tool", "tool_call_id": str(i),
+                "content": long_output,
+            })
+
+        agent._compress_old_messages()
+
+        # Old tool result should be truncated
+        assert "elided" in agent.messages[2]["content"]
+        assert len(agent.messages[2]["content"]) < len(long_output)
+
+        # Recent tool result should be preserved
+        assert agent.messages[-1]["content"] == long_output
+
+    def test_no_compression_when_few_messages(self):
+        """No compression when message count is below threshold."""
+        agent = _make_agent([CompletionResult(content="ok")])
+        agent.messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        agent._compress_old_messages()
+        # Nothing should change
+        assert agent.messages[1]["content"] == "hello"
+        assert agent.messages[2]["content"] == "hi"
