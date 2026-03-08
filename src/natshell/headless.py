@@ -292,13 +292,13 @@ async def run_headless_exeplan(
 
         agent.clear_history()
 
+        # plan_max is a FLOOR — large-context models get their
+        # full context-scaled budget when it exceeds the plan floor.
         plan_max = _effective_plan_max_steps(n_ctx, agent.config.plan_max_steps)
         original_max = agent.config.max_steps
-        agent.config.max_steps = plan_max
-        # Directly set the loop step limit (config.max_steps alone
-        # is ignored if _max_steps was set during initialize())
-        agent.set_step_limit(plan_max)
-        effective_max = plan_max
+        effective_max = max(plan_max, agent._effective_max_steps(n_ctx))
+        agent.config.max_steps = effective_max
+        agent.set_step_limit(effective_max)
 
         prompt = _build_step_prompt(
             step,
