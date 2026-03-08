@@ -893,9 +893,7 @@ class NatShellApp(App):
                         execute_shell as _exec_shell,
                     )
 
-                    verify_result = _exec_shell(
-                        {"command": step.verification, "timeout": 30}
-                    )
+                    verify_result = await _exec_shell(step.verification, timeout=30)
                     if verify_result.exit_code != 0:
                         fix_prompt = _build_verify_fix_prompt(
                             step,
@@ -922,9 +920,7 @@ class NatShellApp(App):
                             if fix_thinking[0]:
                                 fix_thinking[0].remove()
 
-                        verify_result2 = _exec_shell(
-                            {"command": step.verification, "timeout": 30}
-                        )
+                        verify_result2 = await _exec_shell(step.verification, timeout=30)
                         if verify_result2.exit_code != 0:
                             hit_max_steps = True  # downgrade to partial
 

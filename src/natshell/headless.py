@@ -407,9 +407,7 @@ async def run_headless_exeplan(
             _log(f"[verify] Running: {step.verification}")
             from natshell.tools.execute_shell import execute_shell as _exec_shell
 
-            verify_result = _exec_shell(
-                {"command": step.verification, "timeout": 30}
-            )
+            verify_result = await _exec_shell(step.verification, timeout=30)
 
             if verify_result.exit_code != 0:
                 verify_attempts += 1
@@ -446,9 +444,7 @@ async def run_headless_exeplan(
                     agent.config.max_steps = original_max
 
                 # Re-verify after first fix
-                verify_result2 = _exec_shell(
-                    {"command": step.verification, "timeout": 30}
-                )
+                verify_result2 = await _exec_shell(step.verification, timeout=30)
                 if verify_result2.exit_code != 0:
                     verify_attempts += 1
                     _log("[verify-failed] Still failing after fix attempt")

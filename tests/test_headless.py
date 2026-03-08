@@ -620,7 +620,7 @@ class TestHeadlessDoubleVerifyFailure:
 
         from types import SimpleNamespace
 
-        def _mock_exec(args):
+        async def _mock_exec(command, timeout=60):
             return SimpleNamespace(exit_code=1, output="FAIL", error="")
 
         import natshell.tools.execute_shell as es_mod
