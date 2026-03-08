@@ -122,6 +122,8 @@ SLASH_COMMANDS = [
     ("/save", "Save current session"),
     ("/load", "Load a saved session (list if no id)"),
     ("/sessions", "List saved sessions"),
+    ("/exit", "Exit NatShell"),
+    ("/quit", "Exit NatShell"),
 ]
 
 
@@ -136,10 +138,9 @@ class NatShellApp(App):
     ALLOW_SELECT = True
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "Quit", priority=True),
+        Binding("ctrl+c", "copy_selection", "Copy", priority=True),
         Binding("ctrl+e", "copy_chat", "Copy Chat"),
         Binding("ctrl+l", "clear_chat", "Clear Chat"),
-        Binding("ctrl+y", "copy_selection", "Copy", show=False),
     ]
 
     def __init__(
@@ -159,6 +160,11 @@ class NatShellApp(App):
         self._completion_matches: list[str] = []
         self._completion_index: int = -1
         self._completion_prefix: str = ""
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy text using NatShell's clipboard backends, with OSC52 fallback."""
+        if not clipboard.copy(text, self):
+            super().copy_to_clipboard(text)
 
     def compose(self) -> ComposeResult:
         yield LogoBanner()
@@ -315,6 +321,11 @@ class NatShellApp(App):
         # Intercept slash commands before the agent
         if user_text.startswith("/"):
             await self._handle_slash_command(user_text)
+            return
+
+        # Bare "exit" or "quit" exits the app
+        if user_text.lower() in ("exit", "quit"):
+            self.exit()
             return
 
         self._busy = True
@@ -485,6 +496,8 @@ class NatShellApp(App):
                 self._handle_load(args, conversation)
             case "/sessions":
                 self._handle_sessions(conversation)
+            case "/exit" | "/quit":
+                self.exit()
             case _:
                 conversation.mount(
                     SystemMessage(f"Unknown command: {command}. Type /help for available commands.")
@@ -968,11 +981,11 @@ class NatShellApp(App):
             "[bold]Keyboard Shortcuts[/]\n\n"
             "  [bold cyan]Enter[/]       Send message\n"
             "  [bold cyan]Up/Down[/]     Navigate input history\n"
-            "  [bold cyan]Ctrl+C[/]      Quit\n"
+            "  [bold cyan]Ctrl+C[/]      Copy selected text\n"
             "  [bold cyan]Ctrl+E[/]      Copy entire chat\n"
             "  [bold cyan]Ctrl+L[/]      Clear chat\n"
-            "  [bold cyan]Ctrl+P[/]      Command palette (model switcher)\n"
-            "  [bold cyan]Ctrl+Y[/]      Copy selection"
+            "  [bold cyan]Ctrl+P[/]      Command palette (model switcher)\n\n"
+            "  Type [bold cyan]exit[/] or [bold cyan]/exit[/] to quit."
         )
         conversation.mount(SystemMessage(keys_text))
 
@@ -1452,11 +1465,12 @@ class NatShellApp(App):
                     )
 
     def action_copy_selection(self) -> None:
-        """Copy selected text to clipboard (Ctrl+Y)."""
+        """Copy selected text to clipboard (Ctrl+C)."""
         selected = self.screen.get_selected_text()
         if selected:
             if clipboard.copy(selected, self):
                 self.notify("Copied to clipboard", timeout=2)
+                self.clear_selection()
             else:
                 self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
 
