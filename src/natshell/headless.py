@@ -193,9 +193,7 @@ async def run_headless_exeplan(
 
     from natshell.agent.plan import parse_plan_file
     from natshell.agent.plan_executor import (
-        VERIFY_FIX_BUDGET,
         _build_step_prompt,
-        _build_verify_fix_prompt,
         _effective_plan_max_steps,
         validate_plan,
     )
@@ -406,60 +404,6 @@ async def run_headless_exeplan(
             agent.set_step_limit(agent._effective_max_steps(n_ctx))
 
         completed_files.extend(step_files)
-
-        # --- Post-step verification ---
-        if step.verification and auto_approve and not hit_max_steps:
-            _log(f"[verify] Running: {step.verification}")
-            from natshell.tools.execute_shell import execute_shell as _exec_shell
-
-            verify_result = await _exec_shell(step.verification, timeout=30)
-
-            if verify_result.exit_code != 0:
-                verify_attempts += 1
-                _log(f"[verify-failed] Exit code {verify_result.exit_code}")
-                if verify_result.output:
-                    _log(verify_result.output[:500])
-
-                # First retry — targeted fix with small budget
-                fix_prompt = _build_verify_fix_prompt(
-                    step,
-                    step.verification,
-                    verify_result.output or verify_result.error or "No output",
-                    n_ctx=n_ctx,
-                )
-                agent.clear_history()
-                agent.config.max_steps = VERIFY_FIX_BUDGET
-                agent.set_step_limit(VERIFY_FIX_BUDGET)
-                try:
-                    async for event in agent.handle_user_message(
-                        fix_prompt,
-                        confirm_callback=_confirm_callback,
-                    ):
-                        match event.type:
-                            case EventType.RESPONSE:
-                                _log(f"[fix] {event.data}")
-                            case EventType.EXECUTING:
-                                if event.tool_call:
-                                    _log(f"[fix] {event.tool_call.name}")
-                            case EventType.TOOL_RESULT:
-                                if event.tool_result and event.tool_result.output:
-                                    _log(event.tool_result.output)
-                            case _:
-                                pass
-                finally:
-                    agent.config.max_steps = original_max
-                    agent.set_step_limit(agent._effective_max_steps(n_ctx))
-
-                # Re-verify after first fix
-                verify_result2 = await _exec_shell(step.verification, timeout=30)
-                if verify_result2.exit_code != 0:
-                    verify_attempts += 1
-                    _log("[verify-failed] Still failing after fix attempt")
-                    hit_max_steps = True  # downgrade to partial
-                else:
-                    _log("[verify-passed] Fixed on retry")
-            else:
-                _log("[verify-passed]")
 
         # --- Update status ---
         if hit_max_steps:

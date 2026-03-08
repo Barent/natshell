@@ -428,8 +428,9 @@ class AgentLoop:
             # Signal that the model is thinking
             yield AgentEvent(type=EventType.THINKING)
 
-            # Compress old tool exchanges, then trim context if needed
-            self._compress_old_messages()
+            # Compress old tool exchanges periodically, then trim context if needed
+            if step % 5 == 0:
+                self._compress_old_messages()
             if self._context_manager:
                 self.messages = self._context_manager.trim_messages(self.messages)
 

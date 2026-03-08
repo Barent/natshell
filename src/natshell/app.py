@@ -767,10 +767,6 @@ class NatShellApp(App):
         # State persistence for resume support
         from datetime import datetime, timezone
 
-        from natshell.agent.plan_executor import (
-            VERIFY_FIX_BUDGET,
-            _build_verify_fix_prompt,
-        )
         from natshell.agent.plan_state import (
             PlanState,
             StepResult,
@@ -886,51 +882,6 @@ class NatShellApp(App):
 
                 # Record file changes from this step
                 completed_files.extend(step_files)
-
-                # Post-step verification (only with --danger-fast / skip_permissions)
-                if (
-                    step.verification
-                    and self._skip_permissions
-                    and not hit_max_steps
-                ):
-                    from natshell.tools.execute_shell import (
-                        execute_shell as _exec_shell,
-                    )
-
-                    verify_result = await _exec_shell(step.verification, timeout=30)
-                    if verify_result.exit_code != 0:
-                        fix_prompt = _build_verify_fix_prompt(
-                            step,
-                            step.verification,
-                            verify_result.output
-                            or verify_result.error
-                            or "No output",
-                            n_ctx=n_ctx,
-                        )
-                        self.agent.clear_history()
-                        self.agent.config.max_steps = VERIFY_FIX_BUDGET
-                        self.agent.set_step_limit(VERIFY_FIX_BUDGET)
-                        fix_thinking: list[ThinkingIndicator | None] = [None]
-                        try:
-                            async for event in self.agent.handle_user_message(
-                                fix_prompt,
-                                confirm_callback=confirm_cb,
-                                password_callback=password_callback,
-                            ):
-                                self._render_agent_event(
-                                    event, conversation, fix_thinking
-                                )
-                        finally:
-                            self.agent.config.max_steps = original_max
-                            self.agent.set_step_limit(
-                                self.agent._effective_max_steps(n_ctx)
-                            )
-                            if fix_thinking[0]:
-                                fix_thinking[0].remove()
-
-                        verify_result2 = await _exec_shell(step.verification, timeout=30)
-                        if verify_result2.exit_code != 0:
-                            hit_max_steps = True  # downgrade to partial
 
                 # Update divider status
                 if hit_max_steps:

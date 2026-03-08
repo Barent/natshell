@@ -593,49 +593,6 @@ class TestHeadlessTelemetry:
 # ─── Double verify failure downgrades to partial ─────────────────────────
 
 
-class TestHeadlessDoubleVerifyFailure:
-    async def test_double_failure_downgrades_to_partial(
-        self, capsys, tmp_path, monkeypatch
-    ):
-        """When both initial verify and first fix fail, step is downgraded to partial."""
-        monkeypatch.chdir(tmp_path)
-
-        plan_file = tmp_path / "PLAN.md"
-        plan_file.write_text(
-            "# Test Plan\n\nPreamble.\n\n"
-            "## Step 1: Build\n\nWrite code.\n\nVerify: npm test\n"
-        )
-
-        async def _fake_handler(prompt, **kw):
-            from natshell.agent.loop import AgentEvent, EventType
-
-            yield AgentEvent(type=EventType.RESPONSE, data="Done.")
-
-        agent = _make_agent([])
-        agent.handle_user_message = _fake_handler
-
-        from unittest.mock import MagicMock
-
-        agent.engine.engine_info = MagicMock(return_value=MagicMock(n_ctx=4096))
-
-        from types import SimpleNamespace
-
-        async def _mock_exec(command, timeout=60):
-            return SimpleNamespace(exit_code=1, output="FAIL", error="")
-
-        import natshell.tools.execute_shell as es_mod
-
-        monkeypatch.setattr(es_mod, "execute_shell", _mock_exec)
-
-        code = await run_headless_exeplan(
-            agent, str(plan_file), auto_approve=True
-        )
-        captured = capsys.readouterr()
-        assert "[verify-failed]" in captured.err
-        assert "Still failing after fix attempt" in captured.err
-        assert code == 1
-
-
 # ─── Progress indicator ──────────────────────────────────────────────────
 
 
