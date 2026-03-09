@@ -67,12 +67,14 @@ from natshell.ui.widgets import (
     BlockedMessage,
     CommandBlock,
     ConfirmScreen,
+    ErrorMessage,
     HistoryInput,
     LogoBanner,
     PlanningMessage,
     PlanOverviewMessage,
     PlanStepDivider,
     PlanSummaryMessage,
+    QuitConfirmScreen,
     RunStatsMessage,
     SudoPasswordScreen,
     SystemMessage,
@@ -178,6 +180,7 @@ class NatShellApp(App):
         with Vertical(id="input-area"):
             yield Static(id="slash-suggestions")
             with Horizontal(id="input-row"):
+                yield Button("\u2715", id="quit-btn", variant="default")
                 yield HistoryInput(
                     placeholder="Ask me anything about your system...",
                     id="user-input",
@@ -412,7 +415,7 @@ class NatShellApp(App):
                 pass  # Already rendered by on_input_submitted
 
             case EventType.ERROR:
-                conversation.mount(Static(f"[bold red]Error:[/] {_escape(event.data)}"))
+                conversation.mount(ErrorMessage(event.data))
 
         conversation.scroll_end()
 
@@ -440,7 +443,7 @@ class NatShellApp(App):
                 self._render_agent_event(event, conversation, thinking_ref)
 
         except Exception as e:
-            conversation.mount(Static(f"[bold red]Agent error:[/] {_escape(str(e))}"))
+            conversation.mount(ErrorMessage(str(e)))
 
         finally:
             if thinking_ref[0]:
@@ -642,7 +645,7 @@ class NatShellApp(App):
                 self._render_agent_event(event, conversation, thinking_ref)
 
         except Exception as e:
-            conversation.mount(Static(f"[bold red]Plan generation error:[/] {_escape(str(e))}"))
+            conversation.mount(ErrorMessage(str(e)))
 
         finally:
             if thinking_ref[0]:
@@ -857,7 +860,7 @@ class NatShellApp(App):
                             hit_max_steps = True
 
                 except Exception as e:
-                    conversation.mount(Static(f"[bold red]Step error:[/] {_escape(str(e))}"))
+                    conversation.mount(ErrorMessage(str(e)))
                     divider.mark_failed(str(e))
                     failed_count += 1
                     completed_summaries.append(f"{step.number}. {step.title} \u2717")
@@ -906,7 +909,7 @@ class NatShellApp(App):
                 conversation.scroll_end()
 
         except Exception as e:
-            conversation.mount(Static(f"[bold red]Plan aborted:[/] {_escape(str(e))}"))
+            conversation.mount(ErrorMessage(str(e)))
         finally:
             # Calculate remaining skipped steps
             executed = completed_count + failed_count
@@ -1444,6 +1447,15 @@ class NatShellApp(App):
                 self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
         else:
             self.notify("Nothing to copy", timeout=2)
+
+    @on(Button.Pressed, "#quit-btn")
+    async def on_quit_btn(self) -> None:
+        was_busy = self._busy
+        if was_busy:
+            self.workers.cancel_all()
+        confirmed = await self.push_screen_wait(QuitConfirmScreen(was_busy=was_busy))
+        if confirmed:
+            self.exit()
 
     @on(Button.Pressed, "#copy-chat-btn")
     def on_copy_chat_btn(self) -> None:

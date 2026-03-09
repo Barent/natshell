@@ -57,6 +57,23 @@ Footer {
     border: tall #5390d9;
 }
 
+/* Quit button */
+#quit-btn {
+    width: 6;
+    min-width: 6;
+    height: 3;
+    background: #16213e;
+    color: #6a3a3a;
+    border: none;
+    margin: 0;
+    content-align: center middle;
+}
+
+#quit-btn:hover {
+    background: #3d1a1a;
+    color: #ff8888;
+}
+
 /* Paste button */
 #paste-btn {
     width: 5;
@@ -108,7 +125,7 @@ CopyableMessage {
     margin: 0 0 0 1;
     border: none;
     background: transparent;
-    color: #4a4a6a;
+    color: #5a5a8a;
 }
 
 .msg-copy-btn:hover {
@@ -180,6 +197,13 @@ BlockedMessage {
     background: #3d0000;
     color: #ff6b6b;
     border: round #ff6b6b;
+}
+
+/* Error messages */
+ErrorMessage {
+    margin: 1 0 0 0;
+    padding: 0 1;
+    color: #d4884b;
 }
 
 /* System messages (slash command feedback) */
@@ -294,5 +318,28 @@ SudoPasswordScreen {
 }
 
 #sudo-buttons Button {
+    margin: 0 2;
+}
+
+/* Quit confirmation dialog */
+QuitConfirmScreen {
+    align: center middle;
+}
+
+#quit-dialog {
+    width: 60;
+    max-width: 90%;
+    height: auto;
+    padding: 2 4;
+    border: thick #6a3a3a;
+    background: #1a1a2e;
+}
+
+#quit-buttons {
+    margin-top: 2;
+    align: center middle;
+}
+
+#quit-buttons Button {
     margin: 0 2;
 }

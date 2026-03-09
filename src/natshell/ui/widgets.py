@@ -430,6 +430,13 @@ class SystemMessage(CopyableMessage):
         super().__init__(f"[bold yellow]System:[/] {text}", text)
 
 
+class ErrorMessage(CopyableMessage):
+    """A non-fatal error or agent error message."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(f"[bold #d4884b]⚠ Error:[/] {_escape(text)}", text)
+
+
 class HelpMessage(CopyableMessage):
     """A bordered help display showing available commands."""
 
@@ -672,6 +679,46 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(True)
 
     @on(Button.Pressed, "#btn-no")
+    def on_no(self) -> None:
+        self.dismiss(False)
+
+    def action_confirm_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_confirm_no(self) -> None:
+        self.dismiss(False)
+
+
+class QuitConfirmScreen(ModalScreen[bool]):
+    """Quit confirmation dialog."""
+
+    BINDINGS = [
+        Binding("enter", "confirm_yes", "Quit", show=False),
+        Binding("escape", "confirm_no", "Cancel", show=False),
+    ]
+
+    def __init__(self, was_busy: bool = False) -> None:
+        super().__init__()
+        self._was_busy = was_busy
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="quit-dialog"):
+            yield Label("[bold]Quit NatShell?[/]\n")
+            if self._was_busy:
+                yield Label("[dim]Inference was stopped.[/]\n")
+            yield Label("Your session will be lost unless you saved it with [bold cyan]/save[/].")
+            with Horizontal(id="quit-buttons"):
+                yield Button("Quit", variant="error", id="btn-quit-yes")
+                yield Button("Cancel", variant="default", id="btn-quit-no")
+
+    def on_mount(self) -> None:
+        self.query_one("#btn-quit-no", Button).focus()
+
+    @on(Button.Pressed, "#btn-quit-yes")
+    def on_yes(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#btn-quit-no")
     def on_no(self) -> None:
         self.dismiss(False)
 

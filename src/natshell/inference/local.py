@@ -286,6 +286,32 @@ class LocalEngine:
             main_gpu=self.main_gpu,
         )
 
+    def _normalize_messages_for_mistral(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Merge mid-conversation system messages into the initial system message.
+
+        Mistral's chat template only allows a single system message at position 0.
+        Any subsequent system messages (e.g. planning/analysis mode hints injected
+        by the agent loop) must be folded into the initial system message to avoid
+        the "Only user and assistant roles are supported" template error.
+        """
+        result: list[dict[str, Any]] = []
+        system_extras: list[str] = []
+
+        for msg in messages:
+            if msg["role"] == "system" and result:
+                # Subsequent system message — collect content to merge later
+                system_extras.append(msg["content"])
+            else:
+                result.append(msg)
+
+        if system_extras and result and result[0]["role"] == "system":
+            merged = result[0]["content"] + "\n\n" + "\n\n".join(system_extras)
+            result[0] = {**result[0], "content": merged}
+
+        return result
+
     async def chat_completion(
         self,
         messages: list[dict[str, Any]],
@@ -299,6 +325,9 @@ class LocalEngine:
         rather than relying on llama-cpp-python's tool handling, which doesn't
         work correctly with Qwen3 models.
         """
+        if self.model_family == "mistral":
+            messages = self._normalize_messages_for_mistral(messages)
+
         if tools:
             messages = self._inject_tools(messages, tools)
 
