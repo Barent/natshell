@@ -1449,12 +1449,16 @@ class NatShellApp(App):
             self.notify("Nothing to copy", timeout=2)
 
     @on(Button.Pressed, "#quit-btn")
-    async def on_quit_btn(self) -> None:
+    def on_quit_btn(self) -> None:
+        self._confirm_quit()
+
+    @work(exclusive=True, thread=False)
+    async def _confirm_quit(self) -> None:
         was_busy = self._busy
-        if was_busy:
-            self.workers.cancel_all()
         confirmed = await self.push_screen_wait(QuitConfirmScreen(was_busy=was_busy))
         if confirmed:
+            if was_busy:
+                self.workers.cancel_all()
             self.exit()
 
     @on(Button.Pressed, "#copy-chat-btn")
