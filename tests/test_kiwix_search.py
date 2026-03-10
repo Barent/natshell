@@ -205,6 +205,18 @@ class TestSearchResults:
         call_args = str(mock_client.get.call_args)
         assert "myserver:9999" in call_args
 
+    @patch(_PATCH_CLIENT)
+    async def test_url_output_is_absolute(self, mock_client_cls):
+        """Result URLs must be absolute (http://localhost:8080/content/...), not relative."""
+        mock_client_cls_inst, _ = _make_mock_client(_SEARCH_HTML)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        result = await kiwix_search("Einstein")
+        assert result.exit_code == 0
+        assert "http://localhost:8080/content/" in result.output
+        # Relative-only path must not appear as a bare URL line
+        assert "Open: /content/" not in result.output
+
 
 # ─── fetch_article ────────────────────────────────────────────────────────────
 
@@ -307,6 +319,105 @@ class TestErrorHandling:
         assert result.exit_code == 0
         assert "Albert Einstein" in result.output
         mock_discover.assert_called_once()
+
+
+# ─── open_articles ────────────────────────────────────────────────────────────
+
+
+class TestOpenArticles:
+    @patch("natshell.tools.kiwix_search.subprocess.run")
+    @patch(_PATCH_CLIENT)
+    async def test_open_zero_no_subprocess(self, mock_client_cls, mock_run):
+        """open_articles=0 must not call subprocess.run."""
+        mock_client_cls_inst, _ = _make_mock_client(_SEARCH_HTML)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        await kiwix_search("Einstein", open_articles=0)
+        mock_run.assert_not_called()
+
+    @patch("natshell.tools.kiwix_search.is_wsl", return_value=False)
+    @patch("natshell.tools.kiwix_search.is_macos", return_value=False)
+    @patch("natshell.tools.kiwix_search.shutil.which", return_value="/usr/bin/xdg-open")
+    @patch("natshell.tools.kiwix_search.subprocess.run")
+    @patch(_PATCH_CLIENT)
+    async def test_open_one_calls_subprocess(
+        self, mock_client_cls, mock_run, mock_which, mock_is_macos, mock_is_wsl
+    ):
+        """open_articles=1 calls subprocess.run exactly once with the correct URL."""
+        mock_client_cls_inst, _ = _make_mock_client(_SEARCH_HTML)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        await kiwix_search("Einstein", open_articles=1)
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert "http://localhost:8080/content/wikipedia_en/Albert_Einstein" in call_args
+
+    @patch("natshell.tools.kiwix_search.is_wsl", return_value=False)
+    @patch("natshell.tools.kiwix_search.is_macos", return_value=False)
+    @patch("natshell.tools.kiwix_search.shutil.which", return_value="/usr/bin/xdg-open")
+    @patch("natshell.tools.kiwix_search.subprocess.run")
+    @patch(_PATCH_CLIENT)
+    async def test_open_capped_at_three(
+        self, mock_client_cls, mock_run, mock_which, mock_is_macos, mock_is_wsl
+    ):
+        """open_articles=10 must call subprocess.run at most 3 times."""
+        items = "".join(
+            f'<li><a href="/content/wiki/Article_{i}">Article {i}</a>'
+            f"<cite>Snippet {i}</cite></li>"
+            for i in range(10)
+        )
+        large_html = f"<html><body><ul>{items}</ul></body></html>"
+        mock_client_cls_inst, _ = _make_mock_client(large_html)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        await kiwix_search("test", results=10, open_articles=10)
+        assert mock_run.call_count == 3
+
+    @patch("natshell.tools.kiwix_search.is_wsl", return_value=False)
+    @patch("natshell.tools.kiwix_search.is_macos", return_value=False)
+    @patch("natshell.tools.kiwix_search.shutil.which", return_value="/usr/bin/xdg-open")
+    @patch("natshell.tools.kiwix_search.subprocess.run")
+    @patch(_PATCH_CLIENT)
+    async def test_open_reported_in_output(
+        self, mock_client_cls, mock_run, mock_which, mock_is_macos, mock_is_wsl
+    ):
+        """'Opened in browser' must appear in output when articles are opened."""
+        mock_client_cls_inst, _ = _make_mock_client(_SEARCH_HTML)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        result = await kiwix_search("Einstein", open_articles=1)
+        assert "Opened in browser" in result.output
+        assert "Albert Einstein" in result.output
+
+    @patch("natshell.tools.kiwix_search.is_wsl", return_value=False)
+    @patch("natshell.tools.kiwix_search.is_macos", return_value=False)
+    @patch("natshell.tools.kiwix_search.shutil.which", return_value="/usr/bin/xdg-open")
+    @patch("natshell.tools.kiwix_search.subprocess.run")
+    @patch(_PATCH_CLIENT)
+    async def test_open_cap_warning(
+        self, mock_client_cls, mock_run, mock_which, mock_is_macos, mock_is_wsl
+    ):
+        """Requesting more than 3 must include the cap warning in output."""
+        mock_client_cls_inst, _ = _make_mock_client(_SEARCH_HTML)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        result = await kiwix_search("Einstein", open_articles=5)
+        assert "Capped at 3" in result.output
+
+    @patch("natshell.tools.kiwix_search.is_wsl", return_value=False)
+    @patch("natshell.tools.kiwix_search.is_macos", return_value=False)
+    @patch("natshell.tools.kiwix_search.shutil.which", return_value=None)
+    @patch(_PATCH_CLIENT)
+    async def test_open_xdg_missing_linux(
+        self, mock_client_cls, mock_which, mock_is_macos, mock_is_wsl
+    ):
+        """Missing xdg-open on Linux → error in output, no crash."""
+        mock_client_cls_inst, _ = _make_mock_client(_SEARCH_HTML)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        result = await kiwix_search("Einstein", open_articles=1)
+        assert result.exit_code == 0
+        assert "xdg-open not found" in result.output
 
 
 # ─── Output truncation ────────────────────────────────────────────────────────

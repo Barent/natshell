@@ -5,11 +5,14 @@ from __future__ import annotations
 import html
 import logging
 import re
+import shutil
+import subprocess
 from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
 import httpx
 
+from natshell.platform import is_macos, is_wsl
 from natshell.tools.limits import ToolLimits
 from natshell.tools.registry import ToolDefinition, ToolResult
 
@@ -21,7 +24,26 @@ _kiwix_url = "http://localhost:8080"
 _known_books: list[str] = []
 
 _DISCOVERY_PORTS = [8080, 8888, 80, 9090]
+_MAX_OPEN = 3
 _DISCOVERY_PATH = "/catalog/v2/entries"
+
+
+def _open_in_browser(url: str) -> str | None:
+    """Open a URL in the default browser. Returns error string or None on success."""
+    if is_macos():
+        cmd = ["open", url]
+    elif is_wsl():
+        cmd = ["cmd.exe", "/c", "start", url]
+    else:
+        xdg = shutil.which("xdg-open")
+        if not xdg:
+            return "xdg-open not found — install xdg-utils to open articles in browser"
+        cmd = [xdg, url]
+    try:
+        subprocess.run(cmd, timeout=5, check=False, capture_output=True)
+        return None
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return str(e)
 
 
 def set_kiwix_url(url: str) -> None:
@@ -238,6 +260,14 @@ DEFINITION = ToolDefinition(
                     "top result in addition to the search listing."
                 ),
             },
+            "open_articles": {
+                "type": "integer",
+                "description": (
+                    "Open the top N results in the default browser (max 3). "
+                    "Requires xdg-open on Linux, works natively on macOS/WSL. "
+                    "Default 0 (do not open)."
+                ),
+            },
         },
         "required": ["query"],
     },
@@ -253,6 +283,7 @@ async def kiwix_search(
     book: str = "",
     results: int = 5,
     fetch_article: bool = False,
+    open_articles: int = 0,
 ) -> ToolResult:
     """Search kiwix-serve and optionally fetch the top article."""
     global _kiwix_url
@@ -327,12 +358,33 @@ async def kiwix_search(
         url = item.get("url", "")
         lines.append(f"{i}. {title}")
         if url:
-            lines.append(f"   URL: {url}")
+            full_url = urljoin(_kiwix_url, url)
+            lines.append(f"   Open: {full_url}")
         if snippet:
             lines.append(f"   {snippet}")
         lines.append("")
 
     output = "\n".join(lines).rstrip()
+
+    # Optionally open top results in the browser
+    if open_articles > 0:
+        n_open = min(open_articles, _MAX_OPEN)
+        opened = []
+        errors = []
+        for item in items[:n_open]:
+            item_url = urljoin(_kiwix_url, item["url"])
+            err = _open_in_browser(item_url)
+            if err:
+                errors.append(err)
+                break
+            else:
+                opened.append(item["title"])
+        if opened:
+            output += f"\n\nOpened in browser: {', '.join(opened)}"
+        if open_articles > _MAX_OPEN:
+            output += f"\n(Capped at {_MAX_OPEN} articles opened per call)"
+        if errors:
+            output += f"\n(Could not open in browser: {errors[0]})"
 
     # Optionally fetch the top article
     if fetch_article and items:
