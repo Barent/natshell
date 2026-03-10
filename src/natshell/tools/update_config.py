@@ -153,6 +153,12 @@ async def update_config(section: str, key: str, value: str) -> ToolResult:
     if _live_config is not None:
         _apply_to_live_config(_live_config, section, key, coerced)
 
+    # Sync kiwix URL to the running tool
+    if section == "kiwix" and key == "url":
+        from natshell.tools.kiwix_search import set_kiwix_url
+
+        set_kiwix_url(str(coerced))
+
     return ToolResult(
         output=f"Updated [{section}].{key} = {coerced!r} (saved to {config_path})"
     )

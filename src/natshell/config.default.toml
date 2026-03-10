@@ -180,4 +180,4 @@ theme = "dark"
 # Download ZIM files from: https://download.kiwix.org/
 #
 # [kiwix]
-# url = "http://localhost:8888"  # URL of your kiwix-serve instance
+# url = "http://localhost:8080"  # URL of your kiwix-serve instance

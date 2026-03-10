@@ -79,7 +79,7 @@ class McpConfig:
 
 @dataclass
 class KiwixConfig:
-    url: str = "http://localhost:8888"
+    url: str = "http://localhost:8080"
 
 
 @dataclass
