@@ -197,6 +197,8 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.fetch_url import fetch_url
     from natshell.tools.git_tool import DEFINITION as GIT_DEF
     from natshell.tools.git_tool import git_tool
+    from natshell.tools.kiwix_search import DEFINITION as KIWIX_DEF
+    from natshell.tools.kiwix_search import kiwix_search
     from natshell.tools.list_directory import DEFINITION as LIST_DEF
     from natshell.tools.list_directory import list_directory
     from natshell.tools.natshell_help import DEFINITION as HELP_DEF
@@ -207,8 +209,6 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.run_code import run_code
     from natshell.tools.search_files import DEFINITION as SEARCH_DEF
     from natshell.tools.search_files import search_files
-    from natshell.tools.kiwix_search import DEFINITION as KIWIX_DEF
-    from natshell.tools.kiwix_search import kiwix_search
     from natshell.tools.update_config import DEFINITION as CONFIG_DEF
     from natshell.tools.update_config import update_config
     from natshell.tools.write_file import DEFINITION as WRITE_DEF
