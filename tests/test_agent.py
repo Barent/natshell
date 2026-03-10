@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import types
 from unittest.mock import AsyncMock
 
 from natshell.agent.context import SystemContext
@@ -13,6 +14,7 @@ from natshell.inference.local import (
     _MISTRAL_TOOL_CALLS_RE,
     _THINK_RE,
     _TOOL_CALL_RE,
+    LocalEngine,
     _detect_model_family,
     _format_tools_for_prompt,
     _format_tools_for_prompt_mistral,
@@ -1738,10 +1740,12 @@ class TestCompactToolFormatting:
         assert "command (string, required)" in compact
         assert "operation (status|diff|log|branch|commit|stash, required)" in compact
 
-    def test_compact_header_is_single_line(self):
-        """Compact format uses a 1-line tool call instruction."""
+    def test_compact_header_is_imperative(self):
+        """Compact format uses imperative tool call instruction."""
         compact = _format_tools_for_prompt(_SAMPLE_TOOLS, compact=True)
-        assert 'Call a tool: <tool_call>{"name": "...", "arguments": {...}}</tool_call>' in compact
+        assert "You MUST" in compact
+        assert "NEVER" in compact
+        assert '<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>' in compact
 
     def test_full_format_unchanged(self):
         """Full format still has multi-line header and parameter descriptions."""
@@ -1757,10 +1761,12 @@ class TestCompactToolFormatting:
         assert len(compact) < len(full)
         assert "status|diff|log|branch|commit|stash" in compact
 
-    def test_compact_mistral_header(self):
-        """Compact Mistral format uses a 1-line tool call instruction."""
+    def test_compact_mistral_header_is_imperative(self):
+        """Compact Mistral format uses imperative tool call instruction."""
         compact = _format_tools_for_prompt_mistral(_SAMPLE_TOOLS, compact=True)
-        assert 'Call a tool: [TOOL_CALLS] [{"name": "...", "arguments": {...}}]' in compact
+        assert "You MUST" in compact
+        assert "NEVER" in compact
+        assert '[TOOL_CALLS] [{"name": "tool_name", "arguments": {...}}]' in compact
 
     def test_8k_engine_uses_compact_tools(self):
         """An 8K context agent should use compact tool formatting for budget estimation."""
@@ -1775,6 +1781,68 @@ class TestCompactToolFormatting:
         assert compact_len < full_len
         # The agent's stored overhead should match compact (not full)
         assert agent._tool_token_overhead <= compact_len + 50  # small margin for tokenizer variance
+
+
+# ─── Mistral bare-JSON fallback ──────────────────────────────────────────────
+
+
+def _mistral_parse(response: dict):
+    """Call LocalEngine._parse_response with a fake Mistral self."""
+    fake = types.SimpleNamespace(model_family="mistral")
+    return LocalEngine._parse_response(fake, response)
+
+
+def _qwen_parse(response: dict):
+    """Call LocalEngine._parse_response with a fake Qwen self."""
+    fake = types.SimpleNamespace(model_family="qwen")
+    return LocalEngine._parse_response(fake, response)
+
+
+def _make_llama_response(content: str, finish_reason: str = "stop") -> dict:
+    return {
+        "choices": [
+            {"message": {"content": content, "tool_calls": None}, "finish_reason": finish_reason}
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    }
+
+
+class TestMistralBareJsonFallback:
+    """Mistral forgot [TOOL_CALLS] prefix — parser should still recover the call."""
+
+    def test_bare_object_parsed(self):
+        """Bare JSON object with name+arguments is recovered as a tool call."""
+        content = '{"name": "kiwix_search", "arguments": {"query": "linux kernel", "results": 5}}'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "kiwix_search"
+        assert result.tool_calls[0].arguments == {"query": "linux kernel", "results": 5}
+
+    def test_bare_array_parsed(self):
+        """Bare JSON array of tool call objects is recovered."""
+        content = '[{"name": "execute_shell", "arguments": {"command": "ls"}}]'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "execute_shell"
+
+    def test_bare_json_not_applied_to_qwen(self):
+        """Bare JSON fallback does NOT fire for Qwen models (avoid false positives)."""
+        content = '{"name": "execute_shell", "arguments": {"command": "ls"}}'
+        result = _qwen_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 0
+
+    def test_non_tool_json_ignored(self):
+        """JSON that lacks name+arguments keys is not treated as a tool call."""
+        content = '{"foo": "bar", "baz": 123}'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 0
+
+    def test_normal_tool_calls_prefix_still_works(self):
+        """[TOOL_CALLS] prefix path still works and takes precedence."""
+        content = '[TOOL_CALLS] [{"name": "execute_shell", "arguments": {"command": "pwd"}}]'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "execute_shell"
 
 
 # ─── skip_intent_detection ───────────────────────────────────────────────────

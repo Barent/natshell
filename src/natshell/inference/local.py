@@ -79,7 +79,9 @@ def _format_tools_for_prompt(
     if compact:
         lines = [
             "# Available Tools",
-            'Call a tool: <tool_call>{"name": "...", "arguments": {...}}</tool_call>',
+            "You MUST use the <tool_call> format to call tools.",
+            "NEVER substitute pseudocode or Python scripts for tool calls.",
+            '<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>',
             "",
         ]
     else:
@@ -147,7 +149,9 @@ def _format_tools_for_prompt_mistral(
     if compact:
         lines = [
             "# Available Tools",
-            'Call a tool: [TOOL_CALLS] [{"name": "...", "arguments": {...}}]',
+            "You MUST use the [TOOL_CALLS] format to call tools.",
+            "NEVER substitute pseudocode or Python scripts for tool calls.",
+            '[TOOL_CALLS] [{"name": "tool_name", "arguments": {...}}]',
             "",
         ]
     else:
@@ -232,6 +236,7 @@ class LocalEngine:
         self.n_ctx = n_ctx
         self.n_gpu_layers = n_gpu_layers
         self.main_gpu = resolved_gpu
+        self._configured_main_gpu = main_gpu  # preserve -1 for "auto" display
 
         llama_kwargs: dict[str, Any] = {
             "model_path": model_path,
@@ -283,7 +288,8 @@ class LocalEngine:
             model_name=Path(self.model_path).name,
             n_ctx=self.n_ctx,
             n_gpu_layers=self.n_gpu_layers,
-            main_gpu=self.main_gpu,
+            main_gpu=self._configured_main_gpu,  # -1 = auto; resolved value used for llama
+            resolved_main_gpu=self.main_gpu,
         )
 
     def _normalize_messages_for_mistral(
@@ -396,7 +402,7 @@ class LocalEngine:
 
                 tool_calls.append(
                     ToolCall(
-                        id=tc.get("id", str(uuid.uuid4())[:8]),
+                        id=tc.get("id", str(uuid.uuid4())[:9]),
                         name=func.get("name", ""),
                         arguments=args,
                     )
@@ -413,7 +419,7 @@ class LocalEngine:
                         arguments = json.loads(arguments)
                     tool_calls.append(
                         ToolCall(
-                            id=str(uuid.uuid4())[:8],
+                            id=str(uuid.uuid4())[:9],
                             name=name,
                             arguments=arguments,
                         )
@@ -434,7 +440,7 @@ class LocalEngine:
                             arguments = json.loads(arguments)
                         tool_calls.append(
                             ToolCall(
-                                id=str(uuid.uuid4())[:8],
+                                id=str(uuid.uuid4())[:9],
                                 name=name,
                                 arguments=arguments,
                             )
@@ -444,6 +450,37 @@ class LocalEngine:
                         "Failed to parse [TOOL_CALLS] from content: %s",
                         mistral_match.group(0),
                     )
+
+        # Fallback: Mistral forgot the [TOOL_CALLS] prefix but emitted valid JSON.
+        # Accept a bare object {"name": ..., "arguments": ...} or array thereof.
+        if not tool_calls and self.model_family == "mistral":
+            stripped = content.strip()
+            if stripped.startswith(("{", "[")):
+                try:
+                    parsed = json.loads(stripped)
+                    candidates = parsed if isinstance(parsed, list) else [parsed]
+                    if all(
+                        isinstance(c, dict) and "name" in c and "arguments" in c
+                        for c in candidates
+                    ):
+                        for call in candidates:
+                            arguments = call["arguments"]
+                            if isinstance(arguments, str):
+                                arguments = json.loads(arguments)
+                            tool_calls.append(
+                                ToolCall(
+                                    id=str(uuid.uuid4())[:9],
+                                    name=call["name"],
+                                    arguments=arguments,
+                                )
+                            )
+                        logger.debug(
+                            "Recovered %d bare-JSON Mistral tool call(s) "
+                            "(missing [TOOL_CALLS] prefix)",
+                            len(tool_calls),
+                        )
+                except (json.JSONDecodeError, KeyError):
+                    pass
 
         # Strip <think>, <tool_call>, and [TOOL_CALLS] blocks from content
         content = _THINK_RE.sub("", content)
