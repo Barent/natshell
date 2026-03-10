@@ -160,7 +160,11 @@ def format_model_info(engine_info: EngineInfo, config: NatShellConfig) -> str:
 
         gpus = detect_gpus()
         if gpus:
-            resolved = engine_info.resolved_main_gpu if engine_info.resolved_main_gpu is not None else engine_info.main_gpu
+            resolved = (
+                engine_info.resolved_main_gpu
+                if engine_info.resolved_main_gpu is not None
+                else engine_info.main_gpu
+            )
             if resolved is not None and resolved >= 0:
                 # Find the selected GPU by device index
                 selected = next(
