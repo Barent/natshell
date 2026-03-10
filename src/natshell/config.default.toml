@@ -172,3 +172,12 @@ theme = "dark"
 # n_gpu_layers = 0
 # n_ctx = 4096
 # temperature = 0.3
+
+# ─── Kiwix Integration ──────────────────────────────────────────────
+# kiwix_search tool queries a local kiwix-serve instance for offline
+# Wikipedia, Stack Overflow, and documentation (ZIM archive files).
+# Start kiwix-serve with: kiwix-serve /path/to/file.zim
+# Download ZIM files from: https://download.kiwix.org/
+#
+# [kiwix]
+# url = "http://localhost:8888"  # URL of your kiwix-serve instance

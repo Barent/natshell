@@ -78,6 +78,11 @@ class McpConfig:
 
 
 @dataclass
+class KiwixConfig:
+    url: str = "http://localhost:8888"
+
+
+@dataclass
 class ProfileConfig:
     """A named configuration profile that can override settings across sections."""
     # Ollama/remote
@@ -106,6 +111,7 @@ class NatShellConfig:
     backup: BackupConfig = field(default_factory=BackupConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
     mcp: McpConfig = field(default_factory=McpConfig)
+    kiwix: KiwixConfig = field(default_factory=KiwixConfig)
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
 
 
@@ -156,6 +162,9 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
     },
     "mcp": {
         "safety_mode": "str",
+    },
+    "kiwix": {
+        "url": "str",
     },
 }
 
@@ -329,6 +338,11 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
         for key, value in data["mcp"].items():
             if hasattr(config.mcp, key):
                 setattr(config.mcp, key, value)
+
+    if "kiwix" in data:
+        for key, value in data["kiwix"].items():
+            if hasattr(config.kiwix, key):
+                setattr(config.kiwix, key, value)
 
     if "profiles" in data:
         for name, profile_data in data["profiles"].items():

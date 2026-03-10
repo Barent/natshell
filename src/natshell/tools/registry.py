@@ -20,6 +20,7 @@ PLAN_SAFE_TOOLS: set[str] = {
     "git_tool",
     "fetch_url",
     "update_config",
+    "kiwix_search",
 }
 
 # Core tools for small context windows (≤8192 tokens).
@@ -206,6 +207,8 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.run_code import run_code
     from natshell.tools.search_files import DEFINITION as SEARCH_DEF
     from natshell.tools.search_files import search_files
+    from natshell.tools.kiwix_search import DEFINITION as KIWIX_DEF
+    from natshell.tools.kiwix_search import kiwix_search
     from natshell.tools.update_config import DEFINITION as CONFIG_DEF
     from natshell.tools.update_config import update_config
     from natshell.tools.write_file import DEFINITION as WRITE_DEF
@@ -223,4 +226,5 @@ def create_default_registry() -> ToolRegistry:
     registry.register(HELP_DEF, natshell_help)
     registry.register(FETCH_URL_DEF, fetch_url)
     registry.register(CONFIG_DEF, update_config)
+    registry.register(KIWIX_DEF, kiwix_search)
     return registry

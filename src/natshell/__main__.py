@@ -330,6 +330,11 @@ def main() -> None:
 
     set_live_config(config)
 
+    # Inject kiwix URL into the kiwix_search tool
+    from natshell.tools.kiwix_search import set_kiwix_url
+
+    set_kiwix_url(config.kiwix.url)
+
     # MCP server mode — run over stdio and exit
     if args.mcp:
         try:
