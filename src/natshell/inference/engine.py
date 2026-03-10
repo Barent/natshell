@@ -36,6 +36,7 @@ class EngineInfo:
     n_ctx: int = 0
     n_gpu_layers: int = 0
     main_gpu: int | None = None
+    resolved_main_gpu: int | None = None
 
 
 class InferenceEngine(Protocol):
