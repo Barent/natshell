@@ -27,12 +27,14 @@ PLAN_SAFE_TOOLS: set[str] = {
 # The excluded tools (search_files, git_tool, run_code, fetch_url, natshell_help)
 # are all replaceable via execute_shell.  Fewer tool definitions means less token
 # overhead and more reliable tool selection by smaller models.
+# kiwix_search is included because it cannot be replicated via execute_shell.
 SMALL_CONTEXT_TOOLS: set[str] = {
     "execute_shell",
     "read_file",
     "write_file",
     "edit_file",
     "list_directory",
+    "kiwix_search",
 }
 
 

@@ -386,25 +386,40 @@ async def kiwix_search(
         if errors:
             output += f"\n(Could not open in browser: {errors[0]})"
 
+    # Apply per-section budget: listing gets at most half the total budget so
+    # the article fetch has room.  This prevents a long search listing from
+    # crowding out the article content on small context windows.
+    max_chars = _limits.max_output_chars
+    listing_cap = max_chars // 2
+    truncated = False
+    if len(output) > listing_cap:
+        output = output[:listing_cap]
+        truncated = True
+
     # Optionally fetch the top article
     if fetch_article and items:
         top_url = items[0].get("url", "")
         if top_url:
             article_url = urljoin(_kiwix_url, top_url)
+            article_cap = max_chars - len(output)
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     article_resp = await client.get(article_url)
                 if article_resp.status_code == 200:
                     article_text = _strip_html(article_resp.text)
-                    output += f"\n\n--- Article: {items[0].get('title', '')} ---\n{article_text}"
+                    title = items[0].get("title", "")
+                    if len(article_text) > article_cap:
+                        article_text = article_text[:article_cap]
+                        output += f"\n\n--- Article: {title} (truncated) ---\n{article_text}"
+                        truncated = True
+                    else:
+                        output += f"\n\n--- Article: {title} ---\n{article_text}"
                 else:
                     output += f"\n\n(Could not fetch article: HTTP {article_resp.status_code})"
             except httpx.HTTPError as e:
                 output += f"\n\n(Could not fetch article: {e})"
 
-    # Apply context-adaptive output truncation
-    max_chars = _limits.max_output_chars
-    truncated = False
+    # Final safety cap in case article + listing still exceeds budget
     if len(output) > max_chars:
         output = output[:max_chars]
         truncated = True

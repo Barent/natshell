@@ -441,6 +441,83 @@ class TestTruncation:
         assert len(result.output) <= 100
 
 
+class TestSmallContextBudget:
+    """Verify per-section budget split for small context windows."""
+
+    @patch(_PATCH_CLIENT)
+    async def test_listing_capped_at_half_budget(self, mock_client_cls):
+        """Search listing is capped at max_output_chars // 2."""
+        items = "".join(
+            f'<li><a href="/content/wiki/Article_{i}">Article {i}</a>'
+            f'<cite>{"x" * 200}</cite></li>'
+            for i in range(20)
+        )
+        large_html = f"<html><body><ul>{items}</ul></body></html>"
+        mock_client_cls_inst, _ = _make_mock_client(large_html)
+        mock_client_cls.return_value = mock_client_cls_inst.return_value
+
+        set_limits(ToolLimits(max_output_chars=4000))
+        result = await kiwix_search("test", results=20, fetch_article=False)
+        # Listing alone may not exceed half the budget
+        assert len(result.output) <= 2000
+
+    @patch(_PATCH_CLIENT)
+    async def test_article_gets_remaining_budget(self, mock_client_cls):
+        """When fetch_article=True, article content is capped at remaining budget."""
+        search_html = (
+            '<li><a href="/content/wiki/Python">Python</a>'
+            "<cite>Programming language</cite></li>"
+        )
+        article_html = "<html><body><p>" + ("A" * 5000) + "</p></body></html>"
+
+        # Two separate responses: search then article
+        search_resp = MagicMock(spec=httpx.Response)
+        search_resp.status_code = 200
+        search_resp.text = f"<html><body><ul>{search_html}</ul></body></html>"
+
+        article_resp = MagicMock(spec=httpx.Response)
+        article_resp.status_code = 200
+        article_resp.text = article_html
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [search_resp, article_resp]
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        set_limits(ToolLimits(max_output_chars=4000))
+        result = await kiwix_search("Python", fetch_article=True)
+        assert result.truncated
+        assert len(result.output) <= 4000
+        # Article section must be present
+        assert "--- Article:" in result.output
+
+    @patch(_PATCH_CLIENT)
+    async def test_small_context_total_fits_budget(self, mock_client_cls):
+        """At 4000-char budget, total output stays at or under 4000 chars."""
+        search_html = (
+            '<li><a href="/content/wiki/Python">Python</a>'
+            "<cite>Programming language</cite></li>"
+        )
+        article_html = "<html><body><p>" + ("B" * 10000) + "</p></body></html>"
+
+        search_resp = MagicMock(spec=httpx.Response)
+        search_resp.status_code = 200
+        search_resp.text = f"<html><body><ul>{search_html}</ul></body></html>"
+
+        article_resp = MagicMock(spec=httpx.Response)
+        article_resp.status_code = 200
+        article_resp.text = article_html
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [search_resp, article_resp]
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        set_limits(ToolLimits(max_output_chars=4000))
+        result = await kiwix_search("Python", fetch_article=True)
+        assert len(result.output) <= 4000
+
+
 # ─── Auto-discovery ───────────────────────────────────────────────────────────
 
 
@@ -507,10 +584,10 @@ class TestRegistration:
     def test_in_plan_safe_tools(self):
         assert "kiwix_search" in PLAN_SAFE_TOOLS
 
-    def test_not_in_small_context_tools(self):
+    def test_in_small_context_tools(self):
         from natshell.tools.registry import SMALL_CONTEXT_TOOLS
 
-        assert "kiwix_search" not in SMALL_CONTEXT_TOOLS
+        assert "kiwix_search" in SMALL_CONTEXT_TOOLS
 
     def test_schema_generated(self):
         registry = create_default_registry()

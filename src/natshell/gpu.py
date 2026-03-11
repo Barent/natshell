@@ -70,6 +70,7 @@ def _parse_vulkaninfo(output: str) -> list[GpuInfo]:
         name = ""
         device_type = ""
         vram_mb = 0
+        _pending_heap_size: int = 0
 
         for line in body.splitlines():
             line_s = line.strip()
@@ -77,17 +78,28 @@ def _parse_vulkaninfo(output: str) -> list[GpuInfo]:
                 name = line_s.split("=", 1)[-1].strip()
             elif "deviceType" in line_s:
                 device_type = line_s.split("=", 1)[-1].strip().lower()
-            elif "DEVICE_LOCAL" in line_s and "heapSize" in line_s:
-                # e.g. "heapSize  = 8192 (0x200000000) (DEVICE_LOCAL)"
+            elif "heapSize" in line_s:
                 m = re.search(r"heapSize\s*=\s*(\d+)", line_s)
                 if m:
-                    heap_bytes = int(m.group(1))
-                    # vulkaninfo prints heap size in bytes
-                    if heap_bytes > 1_000_000_000:
-                        vram_mb = heap_bytes // (1024 * 1024)
-                    else:
-                        # Already in MB in some builds
-                        vram_mb = heap_bytes
+                    _pending_heap_size = int(m.group(1))
+                    # Handle single-line format: "heapSize = N (...) (DEVICE_LOCAL)"
+                    if "DEVICE_LOCAL" in line_s:
+                        heap_bytes = _pending_heap_size
+                        _pending_heap_size = 0
+                        if heap_bytes > 1_000_000_000:
+                            vram_mb = heap_bytes // (1024 * 1024)
+                        else:
+                            # Already in MB in some builds
+                            vram_mb = heap_bytes
+            elif "DEVICE_LOCAL" in line_s and _pending_heap_size > 0:
+                # Two-line format: heapSize on previous line, DEVICE_LOCAL on this line
+                # e.g. "heapFlags = DEVICE_LOCAL_BIT" (modern vulkan-tools 1.3.x)
+                heap_bytes = _pending_heap_size
+                _pending_heap_size = 0
+                if heap_bytes > 1_000_000_000:
+                    vram_mb = heap_bytes // (1024 * 1024)
+                else:
+                    vram_mb = heap_bytes
 
         is_discrete = "discrete" in device_type
         vendor = _classify_vendor(name)

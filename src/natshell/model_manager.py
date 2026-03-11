@@ -160,22 +160,31 @@ def format_model_info(engine_info: EngineInfo, config: NatShellConfig) -> str:
 
         gpus = detect_gpus()
         if gpus:
-            resolved = (
-                engine_info.resolved_main_gpu
-                if engine_info.resolved_main_gpu is not None
-                else engine_info.main_gpu
-            )
-            if resolved is not None and resolved >= 0:
-                # Find the selected GPU by device index
-                selected = next(
-                    (g for g in gpus if g.device_index == resolved), gpus[0]
-                )
+            # resolved_main_gpu is the actual device index passed to llama;
+            # main_gpu is the configured value (-1 = auto).
+            resolved_idx = engine_info.resolved_main_gpu
+            configured = engine_info.main_gpu
+            auto_selected = configured is None or configured < 0
+
+            if resolved_idx is not None and resolved_idx >= 0:
+                selected = next((g for g in gpus if g.device_index == resolved_idx), gpus[0])
             else:
                 selected = gpus[0]
+
             vram = f", {selected.vram_mb} MB VRAM" if selected.vram_mb else ""
-            parts.append(f"  GPU: {selected.name}{vram}")
+            gpu_type = "discrete" if selected.is_discrete else "integrated"
+            auto_tag = " (auto-selected)" if auto_selected else ""
+            parts.append(f"  GPU: {selected.name} [{gpu_type}]{vram}{auto_tag}")
             if len(gpus) > 1:
                 parts.append(f"  Device index: {selected.device_index} (of {len(gpus)} GPUs)")
+                # Show all detected GPUs so misconfiguration is visible
+                for g in gpus:
+                    marker = " ◄ active" if g.device_index == selected.device_index else ""
+                    g_vram = f", {g.vram_mb} MB" if g.vram_mb else ""
+                    g_type = "discrete" if g.is_discrete else "integrated"
+                    parts.append(
+                        f"    [{g.device_index}] {g.name} [{g_type}]{g_vram}{marker}"
+                    )
 
     remote_url = get_remote_base_url(config, engine_info)
     if remote_url:

@@ -101,7 +101,8 @@ Use this system information to tailor your commands to this specific machine. Fo
 - Read files before modifying. If output ends with "FILE TRUNCATED", read remaining lines before editing.
 - edit_file: use multi-line old_text for unique match. write_file: for new files or full rewrites.
 - run_code Python is stdlib-only (no third-party packages). Use urllib.request for HTTP, csv/json for data.
-- Identify the project root (Cargo.toml, pyproject.toml, package.json, etc.) before writing files."""
+- Identify the project root (Cargo.toml, pyproject.toml, package.json, etc.) before writing files.
+- kiwix_search: use targeted queries; call iteratively rather than fetching full articles in one shot."""
     else:
         code_section = """
 

@@ -1,206 +1,147 @@
-# NatShell — Claude Code Build Instructions
+# NatShell — Claude Code Instructions
 
 ## What is this?
 
-NatShell is an agentic TUI that provides a natural language interface to Linux, macOS, and WSL. Users type requests in plain English (e.g., "scan my local network for computers") and a bundled local LLM plans and executes multi-step shell operations to fulfill them. NatShell also serves as a coding assistant — it can read, edit, and write source files, and execute code snippets in 10 languages.
+NatShell is an agentic TUI that provides a natural language interface to Linux, macOS, and WSL. Users type requests in plain English and a bundled local LLM plans and executes multi-step shell operations. Also serves as a coding assistant — reads, edits, writes files, and runs code in 10 languages.
 
 ## Architecture
 
 - **Agent loop**: ReAct pattern — model reasons, calls tools, observes results, repeats (max 15 steps, auto-scales to 75 for large context windows)
-- **Inference**: Bundled llama.cpp via llama-cpp-python, with optional Ollama or remote API fallback. Runtime engine swapping supported.
+- **Inference**: llama-cpp-python backend, with optional Ollama or remote API fallback. Runtime engine swapping supported.
 - **TUI**: Textual framework with custom widgets, command palette, clipboard integration
 - **Safety**: Regex-based command classifier (safe/confirm/blocked) with command chaining detection, sensitive path gating, and env var filtering
 - **Tools**: execute_shell, read_file, write_file, edit_file, run_code, list_directory, search_files, git_tool, natshell_help, fetch_url
 
 ## Key Design Decisions
 
-1. `execute_shell` runs commands via `bash -c` with the user's real environment — this is intentional, not a sandbox
-2. The safety classifier is pattern-based (fast, deterministic), NOT LLM-based
+1. `execute_shell` runs via `bash -c` with the user's real environment — intentional, not a sandbox
+2. Safety classifier is pattern-based (fast, deterministic), NOT LLM-based
 3. System context is gathered once at startup and injected into the system prompt
-4. Local inference uses `llama-cpp-python` — tool definitions are injected as plain text (not llama-cpp-python's built-in tool format). Qwen3 outputs `<tool_call>` XML tags; Mistral outputs `[TOOL_CALLS]` JSON arrays — both are parsed in `_parse_response()` with model family auto-detection
-5. The agent loop is async — local inference calls are wrapped in `asyncio.to_thread()` to avoid blocking the TUI
-6. Output from commands is truncated to ~4000 chars to fit context windows (auto-scales to 64K for 256K context windows)
-7. Platform detection is centralized in `src/natshell/platform.py` (cached `lru_cache`). Use `is_macos()`, `is_wsl()`, `is_linux()` — don't scatter `sys.platform` checks
-8. GPU detection is in `src/natshell/gpu.py` (cached `lru_cache`). Tries vulkaninfo, nvidia-smi, lspci in order. Prefers discrete over integrated GPUs.
-9. The system prompt presents NatShell as both a system administration and coding assistant, with dedicated guidance for code editing (use `edit_file` for targeted changes, `write_file` for new files) and `natshell_help` for self-documentation.
-10. Engine preference is persisted via `[engine]` section in config.toml (`preferred = "auto" | "local" | "remote"`), allowing startup behavior to respect the user's last engine choice.
-11. Context window adaptive scaling — max_tokens, max_steps, output truncation, and read_file limits all auto-scale with n_ctx (4K→256K tiers). See `_effective_*` methods in loop.py. Read_file tiers: 200/500/1000/2000/3000/4000 lines for <16K/16K/32K/64K/128K/256K contexts.
-12. Auto-timeout detection for long-running commands — pattern-based minimum timeouts (`execute_shell.py` `_LONG_RUNNING_PATTERNS`) ensure nmap, apt install, make, etc. get adequate time even when the LLM doesn't set a timeout.
-13. Plan generation and execution — `/plan` generates structured markdown plans; `/exeplan run` executes them step-by-step with dedicated agent budgets. Plan parser in `agent/plan.py`.
-14. Truncation safety — when `read_file` truncates, it emits `⚠ FILE TRUNCATED` with the exact offset to continue reading. The `FileReadTracker` (`file_tracker.py`) enforces that `edit_file` blocks edits on partially-read files. `edit_file` error previews show 200 lines (not 50) so the model can self-correct.
-15. Edit failure tracking — the agent loop tracks `edit_file` successes/failures per run. Escalating warnings are injected after 2+ failures. A completion guard prevents the model from declaring success when all edits failed.
-16. Headless mode — `--headless "prompt"` runs a single-shot agent invocation with response to stdout and diagnostics to stderr. `--danger-fast` auto-approves confirmations. Exit code 1 on any error.
-17. Session persistence — conversations are saved as JSON in `~/.local/share/natshell/sessions/`. Session IDs are validated as 32-char hex (UUID) to prevent path traversal. Size-limited to 10 MB by default.
-18. Plugin system — custom tools are loaded from `~/.config/natshell/plugins/*.py`. Each plugin's `register(registry)` function adds tools to the tool registry at startup.
-19. MCP server mode — `--mcp` exposes all tools via JSON-RPC over stdin/stdout. Safety mode is configurable via `[mcp]` config section.
-20. Backup & undo — `BackupManager` creates timestamped file snapshots before edits. `/undo` restores the most recent backup. Symlinks are refused (security). Directory permissions are 0o700.
-21. Small context tool filtering — when n_ctx ≤ 8192, the agent auto-filters to 5 core tools (`SMALL_CONTEXT_TOOLS` in registry.py: execute_shell, read_file, write_file, edit_file, list_directory). Reduces token overhead and improves tool selection accuracy for Qwen3-4B/8B. The excluded tools (search_files, git_tool, run_code, fetch_url, natshell_help) are all replaceable via execute_shell. Per-call tool filters (e.g. plan mode) intersect with the context filter.
-22. Sudo password passthrough — `execute_shell` uses `_inject_sudo_dash_s()` to replace `sudo` with `sudo -S` only at command-invocation positions (splits on shell operators `&&`, `||`, `;`, `&`, `|`), preventing password leakage when `sudo` appears inside string arguments (e.g. `echo "use sudo"`). Password is piped once per invocation. Trailing `y\n` lines are appended only for package manager commands (`_PKG_MANAGER_RE`). When retrying after a password prompt, the agent loop and `/cmd` auto-prepend `sudo` if the command doesn't contain it at a command position, then re-classify through the safety classifier before executing.
+4. Local inference uses `llama-cpp-python` with plain-text tool definitions. Qwen3 outputs `<tool_call>` XML; Mistral outputs `[TOOL_CALLS]` JSON — both parsed in `_parse_response()` with model family auto-detection
+5. Agent loop is async — local inference wrapped in `asyncio.to_thread()` to avoid blocking TUI
+6. Output truncated to ~4000 chars; auto-scales to 64K for 256K context windows
+7. Platform detection centralized in `src/natshell/platform.py` (`lru_cache`). Use `is_macos()`, `is_wsl()`, `is_linux()`.
+8. GPU detection in `src/natshell/gpu.py` (`lru_cache`). Tries vulkaninfo → nvidia-smi → lspci. Prefers discrete GPUs.
+9. Engine preference persisted via `[engine]` in config.toml (`preferred = "auto" | "local" | "remote"`)
+10. Context window adaptive scaling — max_tokens, max_steps, output truncation, read_file limits all auto-scale with n_ctx (4K→256K tiers). See `_effective_*` methods in loop.py.
+11. Auto-timeout for long-running commands — `_LONG_RUNNING_PATTERNS` in execute_shell.py ensures nmap, apt, make, etc. get adequate time
+12. Plan generation/execution — `/plan` generates structured markdown plans; `/exeplan run` executes step-by-step with per-step agent budgets
+13. `read_file` truncation emits `⚠ FILE TRUNCATED` with offset hint. `FileReadTracker` blocks `edit_file` on partially-read files.
+14. Edit failure tracking — escalating warnings after 2+ failures; completion guard prevents declaring success when all edits failed
+15. Headless mode — `--headless "prompt"` for single-shot invocations. `--danger-fast` auto-approves. Exit 1 on error.
+16. Session persistence — JSON in `~/.local/share/natshell/sessions/`. IDs validated as 32-char hex. 10 MB size limit. 0o700 perms.
+17. Plugin system — `~/.config/natshell/plugins/*.py`, each with `register(registry)` entry point
+18. MCP server mode — `--mcp` exposes all tools via JSON-RPC over stdin/stdout
+19. Backup & undo — `BackupManager` snapshots files before edits; `/undo` restores. Symlinks refused. 0o700 perms.
+20. Small context tool filtering — n_ctx ≤ 8192 auto-filters to 5 core tools (`SMALL_CONTEXT_TOOLS`: execute_shell, read_file, write_file, edit_file, list_directory)
+21. Sudo passthrough — `_inject_sudo_dash_s()` replaces `sudo` with `sudo -S` only at command positions (not inside strings). Password piped once. `y\n` auto-confirm only for package managers. On sudo failure, agent auto-prepends `sudo` and re-classifies before retry.
+
+## Security Features (summary)
+
+Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`/`&`/`|` before classification; sudo password cached 5 min; sensitive env vars filtered from subprocess; HTTPS warning for plaintext API keys; SSH key/shadow/`.env` path gating; session/backup dir 0o700; session path traversal validation; git commit flag blocklist (`--amend`, `--author=`, `--date=`); SSRF blocking in fetch_url.
 
 ## Modules
 
 ### Core
-- `src/natshell/__main__.py` — CLI entry point with argparse, model download, engine wiring, GPU check
-- `src/natshell/app.py` — Textual TUI application with confirmation dialogs, sudo prompts, model switching
-- `src/natshell/commands.py` — Slash command dispatch (refactored from app.py): `/plan`, `/exeplan`, `/undo`, `/save`, `/load`, `/sessions`, `/compact`, `/keys`, etc.
-- `src/natshell/config.py` — TOML config loading with defaults, env var API key support (`NATSHELL_API_KEY`), file permission warnings, engine preference persistence (`EngineConfig`, `save_engine_preference()`)
-- `src/natshell/backup.py` — Pre-edit backup system with timestamped snapshots, undo support, per-file pruning, symlink rejection, 0o700 directory permissions
-- `src/natshell/headless.py` — Non-interactive single-shot CLI mode (`--headless`). Response to stdout, diagnostics to stderr. `--danger-fast` auto-approves confirmations.
-- `src/natshell/session.py` — Conversation session persistence (save/load/delete/list). Session ID validation (32-char hex), size limits (10 MB default), 0o700 directory permissions.
-- `src/natshell/mcp_server.py` — MCP server mode (`--mcp`). Exposes all tools via JSON-RPC over stdin/stdout.
-- `src/natshell/plugins.py` — Plugin system for custom tools. Loads `register(registry)` from `~/.config/natshell/plugins/*.py`.
-- `src/natshell/model_manager.py` — Model discovery, download management, and switching logic
+- `__main__.py` — CLI entry, argparse, model download, engine wiring
+- `app.py` — Textual TUI, confirmation/sudo dialogs, model switching
+- `commands.py` — Slash command dispatch: `/plan`, `/exeplan`, `/undo`, `/save`, `/load`, `/sessions`, `/compact`, `/keys`, etc.
+- `config.py` — TOML config, `NATSHELL_API_KEY` env var, permission warnings, engine preference persistence
+- `backup.py` — Pre-edit snapshots, undo, symlink rejection, 0o700
+- `headless.py` — `--headless` single-shot mode
+- `session.py` — Session save/load/delete/list with security hardening
+- `mcp_server.py` — MCP JSON-RPC server
+- `plugins.py` — Plugin loader
+- `model_manager.py` — Model discovery, download, switching
 
 ### Agent
-- `src/natshell/agent/loop.py` — ReAct agent loop with safety classification, sudo password retry (auto-prepends `sudo` on retry when missing, re-classifies via safety classifier), engine fallback, context-based tool filtering (`SMALL_CONTEXT_TOOLS` for n_ctx ≤ 8192), edit failure tracking with escalating warnings and completion guard
-- `src/natshell/agent/system_prompt.py` — Platform-aware system prompt with behavior rules, coding/development guidance, natshell_help integration, and `/no_think` directive
-- `src/natshell/agent/context.py` — System context gathering (CPU, RAM, disk, network, services, containers, tools) with per-platform commands
-- `src/natshell/agent/context_manager.py` — Token budget management, auto-trimming of older messages, extractive summarization for `/compact`
-- `src/natshell/agent/plan.py` — Markdown plan parser, extracts `PlanStep` objects from H2 headings
-- `src/natshell/agent/plan_executor.py` — Step-by-step plan execution engine with dedicated agent budgets per step
+- `agent/loop.py` — ReAct loop with safety, sudo retry, engine fallback, small-context filtering, edit failure tracking
+- `agent/system_prompt.py` — Platform-aware system prompt with behavior rules and `/no_think` directive
+- `agent/context.py` — System context gathering (CPU, RAM, disk, network, services, containers)
+- `agent/context_manager.py` — Token budget management, message trimming, `/compact` summarization
+- `agent/plan.py` — Markdown plan parser, extracts `PlanStep` from H2 headings
+- `agent/plan_executor.py` — Step-by-step plan execution with per-step agent budgets
 
 ### Inference
-- `src/natshell/inference/engine.py` — Protocol types: `CompletionResult`, `ToolCall`, `EngineInfo`
-- `src/natshell/inference/local.py` — llama-cpp-python backend with auto context sizing (inferred from model filename), GPU device selection, `<tool_call>` XML parsing, `<think>` tag stripping
-- `src/natshell/inference/remote.py` — OpenAI-compatible API backend with httpx, HTTPS warning for plaintext API keys
-- `src/natshell/inference/ollama.py` — Ollama server ping, model listing, URL normalization
+- `inference/engine.py` — Protocol types: `CompletionResult`, `ToolCall`, `EngineInfo`
+- `inference/local.py` — llama-cpp-python backend, auto context sizing, GPU selection, XML tool parsing, `<think>` stripping
+- `inference/remote.py` — OpenAI-compatible API backend (httpx)
+- `inference/ollama.py` — Ollama ping, model listing, URL normalization
 
 ### Tools
-- `src/natshell/tools/registry.py` — Tool registration and dispatch with OpenAI-compatible schemas (10 tools). Module-level filter sets: `PLAN_SAFE_TOOLS` (read-only tools for plan generation), `SMALL_CONTEXT_TOOLS` (5 core tools for small context windows ≤8192 tokens)
-- `src/natshell/tools/execute_shell.py` — Shell execution with sudo password caching (5-min timeout), position-aware sudo injection (`_inject_sudo_dash_s` / `_has_sudo_invocation` — only replaces sudo at command positions, not inside string arguments), package-manager-only `y\n` auto-confirm, sensitive env var filtering, output truncation, process group isolation, auto-timeout patterns for long-running commands (default 60s)
-- `src/natshell/tools/read_file.py` — File reading with line limits, `offset` and `limit` parameters, actionable truncation warning with offset hint
-- `src/natshell/tools/write_file.py` — File writing (always requires confirmation)
-- `src/natshell/tools/file_tracker.py` — Tracks file read state (`partial`/`full`) to prevent editing partially-read files. Module-level singleton shared by read_file, edit_file, and write_file.
-- `src/natshell/tools/edit_file.py` — Targeted search-and-replace edits to existing files (unique match required, always requires confirmation). Supports `start_line`/`end_line` to target specific regions when duplicates exist. Fuzzy match suggestions on not-found errors, line numbers on multiple-match errors.
-- `src/natshell/tools/run_code.py` — Execute code snippets in 10 languages (python, javascript, bash, ruby, perl, php, c, cpp, rust, go). Handles temp file creation, compilation, execution, and cleanup. Always requires confirmation.
-- `src/natshell/tools/list_directory.py` — Directory listing with sizes, types, hidden file toggle
-- `src/natshell/tools/search_files.py` — Text search (grep) and file search (find)
-- `src/natshell/tools/git_tool.py` — Structured git operations (status, diff, log, branch, commit, stash). Read-only ops are safe; mutating ops require confirmation. Blocks dangerous commit flags (--amend, --author=, --date=).
-- `src/natshell/tools/limits.py` — Context-aware output truncation limits, centralizes scaling logic
-- `src/natshell/tools/natshell_help.py` — Self-documentation tool with static topics (overview, commands, tools, models, troubleshooting) and dynamic topics (config, config_reference, safety). Accepts injected `SafetyConfig` for live safety pattern reporting.
-- `src/natshell/tools/fetch_url.py` — Fetch URL contents with SSRF protection (private IP blocking), response size cap (1 MB), timeout limits, GET-only. Classified as SAFE.
+- `tools/registry.py` — Tool registration/dispatch, `PLAN_SAFE_TOOLS`, `SMALL_CONTEXT_TOOLS`
+- `tools/execute_shell.py` — Shell exec with sudo caching, position-aware injection, env filtering, output truncation, auto-timeouts
+- `tools/read_file.py` — File reading with offset/limit, truncation warning
+- `tools/write_file.py` — File writing (always confirms)
+- `tools/file_tracker.py` — Tracks partial/full read state; blocks edit on partially-read files
+- `tools/edit_file.py` — Search-and-replace edits; unique match required; fuzzy suggestions on miss; `start_line`/`end_line` for duplicates
+- `tools/run_code.py` — Run code in 10 languages (always confirms)
+- `tools/list_directory.py` — Directory listing with sizes, hidden file toggle
+- `tools/search_files.py` — grep + find wrapper
+- `tools/git_tool.py` — Git operations; read-only safe, mutating confirms; commit flag blocklist
+- `tools/limits.py` — Centralized context-aware truncation limits
+- `tools/natshell_help.py` — Self-documentation with static/dynamic topics, injected `SafetyConfig`
+- `tools/fetch_url.py` — URL fetch with SSRF blocking, 1 MB cap, GET-only
 
-### Safety
-- `src/natshell/safety/classifier.py` — Command risk classifier. Splits chained commands (`&&`, `||`, `;`, `&`, `|`) and classifies each sub-command. Detects subshell/backtick expansion. Sensitive file path gating for read_file. Three modes: confirm (default), warn, danger.
-
-### UI
-- `src/natshell/ui/widgets.py` — Custom Textual widgets: HistoryInput (shell-like up/down arrow input history with draft save/restore), LogoBanner, CopyableMessage (UserMessage, AssistantMessage, PlanningMessage, BlockedMessage, SystemMessage, HelpMessage), CommandBlock, ThinkingIndicator, ConfirmScreen, SudoPasswordScreen, PlanStepDivider, PlanOverviewMessage, PlanSummaryMessage, RunStatsMessage. Rich markup escaping (`_escape()`) on all untrusted content.
-- `src/natshell/ui/commands.py` — Command palette provider for local model switching
-- `src/natshell/ui/clipboard.py` — Cross-platform clipboard: macOS (pbcopy), WSL (clip.exe), Wayland (wl-copy), X11 (xclip/xsel), OSC52 fallback
-- `src/natshell/ui/escape.py` — Rich markup escaping utilities (extracted from widgets.py)
-- `src/natshell/ui/styles.tcss` — Textual CSS stylesheet
+### Safety & UI
+- `safety/classifier.py` — Command risk classifier, chained command splitting, subshell detection, sensitive path gating
+- `ui/widgets.py` — All custom Textual widgets (messages, inputs, indicators, dialogs)
+- `ui/commands.py` — Command palette for model switching
+- `ui/clipboard.py` — Cross-platform clipboard (pbcopy/clip.exe/wl-copy/xclip/OSC52)
+- `ui/escape.py` — Rich markup escaping
+- `ui/styles.tcss` — Textual CSS
 
 ### Utilities
-- `src/natshell/platform.py` — Platform detection (macOS/WSL/Linux), used by clipboard, context, system prompt, installer
-- `src/natshell/gpu.py` — GPU hardware detection (vulkaninfo/nvidia-smi/lspci), best-device selection, vendor classification
-
-## Security Hardening
-
-These security features were added in the security refactor:
-
-1. **Rich markup escaping** — LLM output and command results are escaped via `_escape()` before rendering to prevent markup injection
-2. **Command chaining detection** — Safety classifier splits on shell operators and classifies each sub-command independently; also checks full command against patterns first (for fork bombs and pipe-spanning patterns)
-3. **Sudo password timeout** — Cached password expires after 5 minutes via `time.monotonic()` timestamp
-4. **Environment variable filtering** — Sensitive env vars (AWS keys, GitHub tokens, API keys, etc.) are stripped from subprocess environments
-5. **HTTPS warning** — `RemoteEngine` logs a warning when API keys are sent over plaintext HTTP to non-localhost hosts
-6. **Sensitive file path gating** — `read_file` requires confirmation for SSH keys, `/etc/shadow`, `.env`, etc.
-7. **Position-aware sudo injection** — `_inject_sudo_dash_s()` splits commands on shell operators (`&&`, `||`, `;`, `&`, `|`) and only replaces `sudo` with `sudo -S` at command-invocation positions (not inside string arguments like `echo "use sudo"`). Prevents password leakage to stdin-reading commands. Trailing `y\n` auto-confirm is limited to package manager commands via `_PKG_MANAGER_RE`. Detection patterns in `_SUDO_NEEDS_PW` cover both old (`no tty present`) and new (`no password was provided`) sudo versions.
-8. **Sudo retry with safety re-classification** — When a command without `sudo` triggers a sudo error, the retry path in both the agent loop and `/cmd` auto-prepends `sudo`, then re-classifies the modified command through the safety classifier before executing. Prevents privilege escalation bypass.
-9. **Config permissions warning** — Warns if config file containing an API key has permissive permissions (world/group readable)
-10. **Log redaction** — Sudo password plumbing is redacted from verbose log output
-11. **Session ID validation** — Session IDs must be 32-char lowercase hex (UUID format); path traversal attempts are rejected with `ValueError`
-12. **Session size limits** — Serialized session JSON is checked against a configurable max size (default 10 MB) before writing
-13. **Session directory permissions** — Session directory is `chmod 0o700` on creation to prevent other users from reading conversation history
-14. **Backup directory permissions** — Backup directory is `chmod 0o700` on creation; backups may contain sensitive file content
-15. **Backup symlink rejection** — `BackupManager.backup()` refuses to back up symlinks to prevent silent exfiltration of sensitive targets
-16. **Git commit flag restrictions** — `git_tool` blocks `--amend`, `--author=`, `--date=`, `--reset-author`, `--allow-empty-message` for commit operations; users can use `execute_shell` for these (which goes through the safety classifier)
-17. **Plugin sandboxing** — Plugins are loaded from a dedicated directory with explicit `register()` entry points; no implicit code execution
-18. **MCP safety modes** — MCP server respects the same safety classifier as the TUI; configurable via `[mcp]` config section
+- `platform.py` — `is_macos()`, `is_wsl()`, `is_linux()` (cached)
+- `gpu.py` — GPU detection, vendor classification, best device selection
 
 ## Tech Stack
 
-- Python 3.11+
-- llama-cpp-python (with Vulkan, Metal, or CPU backend)
-- Textual >= 1.0
-- httpx for remote API
-- huggingface-hub for model download
+- Python 3.11+, llama-cpp-python (Vulkan/Metal/CPU), Textual ≥ 1.0, httpx, huggingface-hub
 - Platforms: Linux, macOS, WSL
 
-## Model
+## Models
 
-Three local model tiers:
-- **Light**: Qwen3-4B Q4_K_M (~2.5 GB) — tool calling via `<tool_call>` XML tags
-- **Standard**: Qwen3-8B Q4_K_M (~5 GB) — tool calling via `<tool_call>` XML tags
-- **Enhanced**: Mistral Nemo 12B Q4_K_M (~7.5 GB, 128K context) — tool calling via `[TOOL_CALLS]` JSON array
+| Tier | Model | Size | Context | Tool format |
+|------|-------|------|---------|-------------|
+| Light | Qwen3-4B Q4_K_M | ~2.5 GB | 4096 | `<tool_call>` XML |
+| Standard | Qwen3-8B Q4_K_M | ~5 GB | 8192 | `<tool_call>` XML |
+| Enhanced | Mistral Nemo 12B Q4_K_M | ~7.5 GB | 32768 | `[TOOL_CALLS]` JSON |
 
-Default: Qwen3-4B, auto-downloaded on first run to `~/.local/share/natshell/models/`
-Model family is auto-detected from filename (`_detect_model_family()` in `local.py`): "mistral" → `[TOOL_CALLS]` parser, "qwen" → `<tool_call>` parser.
-Context size is auto-detected from model filename (4B → 4096, 8B → 8192, Mistral Nemo → 32768) when `n_ctx = 0`.
+Default: Qwen3-4B, auto-downloaded to `~/.local/share/natshell/models/`. Context size auto-detected from filename when `n_ctx = 0`.
 
-## Key Files Reference
+## Key Files
 
-- `PROJECT_SCAFFOLD.md` — Original architectural specification (reference only — implementation has evolved)
-- `src/natshell/config.default.toml` — Default configuration with all safety patterns (23 confirm + 8 blocked, includes macOS-specific: brew, launchctl, diskutil). Bundled as package data.
+- `src/natshell/config.default.toml` — Default config with all safety patterns (23 confirm + 8 blocked, incl. macOS-specific)
 - `pyproject.toml` — Dependencies and entry point
-- `install.sh` — Cross-platform installer with GPU detection, Ollama setup, model download
+- `install.sh` — Cross-platform installer with GPU detection
 
 ## Testing
 
-Run tests with `pytest` (904 tests across 33 test files). Mock the InferenceEngine for agent loop tests. Tools can be tested directly against the real system (be careful with write_file tests — use /tmp).
+Run with `pytest` (904 tests, 33 files). Mock `InferenceEngine` for agent loop tests. Use `/tmp` for write_file tests.
 
-Test files:
-- `test_agent.py` — Agent loop and event handling, edit failure completion guard, small context tool filtering, sudo retry with auto-prepend
-- `test_safety.py` — Safety classifier patterns, chaining, file sensitivity
-- `test_tools.py` — Individual tool execution, position-aware sudo injection (_inject_sudo_dash_s, _has_sudo_invocation, detection patterns), SMALL_CONTEXT_TOOLS filtering
-- `test_file_tracker.py` — FileReadTracker state tracking and path resolution
-- `test_coding_tools.py` — edit_file and run_code tool tests (includes fuzzy match, start_line/end_line, tracker integration)
-- `test_natshell_help.py` — natshell_help static/dynamic topic tests
-- `test_fetch_url.py` — fetch_url tool tests (SSRF blocking, scheme validation, truncation, binary handling)
-- `test_history_input.py` — HistoryInput widget history navigation
-- `test_engine_preference.py` — Engine preference persistence and loading
-- `test_clipboard.py` — Clipboard backends
-- `test_platform.py` — Platform detection
-- `test_engine_swap.py` — Model switching and engine swapping
-- `test_ollama.py` — Ollama/OpenAI API parsing
-- `test_ollama_config.py` — Config file persistence
-- `test_slash_commands.py` — TUI slash commands
-- `test_context_manager.py` — ContextManager token budgeting and trimming
-- `test_plan_parser.py` — Plan markdown parsing
-- `test_plan_execution.py` — Plan step execution flow
-- `test_backup.py` — Backup creation, undo, pruning, symlink rejection, dir permissions
-- `test_sessions.py` — Session save/load/delete, path traversal prevention, size limits
-- `test_headless.py` — Headless mode operation, confirmation handling, exit codes
-- `test_git_tool.py` — Git tool operations, safety classification, commit flag restrictions
-- `test_plugins.py` — Plugin loading and registration
-- `test_mcp_server.py` — MCP server protocol handling
-- `test_prompt_cache.py` — Prompt caching behavior
-- `test_widgets.py` — TUI widget rendering
-- `test_commands.py` — Slash command dispatch
-- `test_gpu.py` — GPU detection
-- `test_context.py` — System context gathering
+Key test files: `test_agent.py`, `test_safety.py`, `test_tools.py`, `test_coding_tools.py`, `test_file_tracker.py`, `test_sessions.py`, `test_backup.py`, `test_headless.py`, `test_git_tool.py`, `test_mcp_server.py`, `test_plugins.py`, `test_plan_*.py`, `test_engine_*.py`, `test_ollama*.py`, `test_slash_commands.py`, `test_context_manager.py`, `test_widgets.py`, `test_commands.py`, `test_gpu.py`, `test_platform.py`, `test_clipboard.py`, `test_fetch_url.py`, `test_natshell_help.py`, `test_history_input.py`, `test_prompt_cache.py`, `test_context.py`
 
 ## Cross-Platform Notes
 
-- **Clipboard**: macOS uses `pbcopy`/`pbpaste`, WSL uses `clip.exe`/`powershell.exe Get-Clipboard`, Linux uses `wl-copy`/`xclip`/`xsel` with OSC52 fallback
-- **System context** (`agent/context.py`): macOS branch uses `sw_vers`, `sysctl`, `vm_stat`, `ifconfig`, `launchctl`; Linux/WSL branch uses `lscpu`, `free`, `ip`, `systemctl`
-- **System prompt**: Role string adapts per platform ("macOS" / "Linux (WSL)" / "Linux")
-- **Installer** (`install.sh`): Detects macOS via `uname -s`, uses `brew` for packages, `xcode-select` for compiler, Metal for GPU
-- **Safety patterns**: macOS-specific patterns for `brew`, `launchctl`, `diskutil` in `config.default.toml`
+- **Clipboard**: macOS `pbcopy`, WSL `clip.exe`, Linux `wl-copy`/`xclip`/OSC52
+- **System context**: macOS uses `sw_vers`/`sysctl`/`vm_stat`; Linux/WSL uses `lscpu`/`free`/`ip`/`systemctl`
+- **Installer**: macOS uses `brew`, `xcode-select`, Metal; Linux uses system package managers
 - **Package managers**: Auto-detected — brew, apt, dnf, yum, pacman, zypper, apk, emerge, rpm-ostree
 
-## Installing for development
+## Dev Install
 
 ```bash
 cd natshell
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-# For CPU-only llama.cpp:
+# CPU-only:
 pip install llama-cpp-python
-# For Vulkan (AMD/Linux GPUs):
+# Vulkan (AMD/Linux):
 CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir
-# For Metal (macOS):
+# Metal (macOS):
 CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir
 ```
 
-**Important**: Always use `--no-binary llama-cpp-python --no-cache-dir` when installing with GPU flags, otherwise pip may use a cached CPU-only wheel.
+Always use `--no-binary llama-cpp-python --no-cache-dir` with GPU flags to avoid cached CPU-only wheels.

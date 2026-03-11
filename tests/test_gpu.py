@@ -97,6 +97,66 @@ GPU0:
         assert len(gpus) == 1
         assert gpus[0].vram_mb == 8192  # treated as MB since < 1 billion
 
+    def test_two_line_heap_format(self):
+        """Modern vulkan-tools 1.3.x puts heapSize and heapFlags on separate lines."""
+        output = """\
+GPU0:
+\tdeviceName = AMD Radeon RX 7600
+\tdeviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+\theapSize = 8589934592
+\theapFlags = DEVICE_LOCAL_BIT
+"""
+        gpus = _parse_vulkaninfo(output)
+        assert len(gpus) == 1
+        assert gpus[0].name == "AMD Radeon RX 7600"
+        assert gpus[0].is_discrete is True
+        assert gpus[0].vram_mb == 8589934592 // (1024 * 1024)
+
+    def test_two_line_discrete_wins_over_integrated(self):
+        """With two-line format, dGPU is preferred by best_gpu_index()."""
+        output = """\
+GPU0:
+\tdeviceName = AMD Radeon 780M
+\tdeviceType = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+\theapSize = 4294967296
+\theapFlags = DEVICE_LOCAL_BIT
+
+GPU1:
+\tdeviceName = AMD Radeon RX 7600
+\tdeviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+\theapSize = 8589934592
+\theapFlags = DEVICE_LOCAL_BIT
+"""
+        gpus = _parse_vulkaninfo(output)
+        assert len(gpus) == 2
+        igpu = next(g for g in gpus if g.device_index == 0)
+        dgpu = next(g for g in gpus if g.device_index == 1)
+        assert igpu.is_discrete is False
+        assert dgpu.is_discrete is True
+        assert dgpu.vram_mb > igpu.vram_mb
+
+        from natshell.gpu import best_gpu_index, detect_gpus
+
+        detect_gpus.cache_clear()
+        with __import__("unittest.mock", fromlist=["patch"]).patch(
+            "natshell.gpu.detect_gpus", return_value=gpus
+        ):
+            assert best_gpu_index() == 1
+        detect_gpus.cache_clear()
+
+    def test_non_device_local_heap_ignored(self):
+        """heapSize lines without DEVICE_LOCAL (on same or next line) are skipped."""
+        output = """\
+GPU0:
+\tdeviceName = Test GPU
+\tdeviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+\theapSize = 2000000000
+\theapFlags = 0
+"""
+        gpus = _parse_vulkaninfo(output)
+        assert len(gpus) == 1
+        assert gpus[0].vram_mb == 0  # non-device-local heap ignored
+
 
 # ─── _parse_nvidia_smi ───────────────────────────────────────────────────────
 

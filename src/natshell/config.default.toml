@@ -15,8 +15,9 @@ n_ctx = 0
 n_threads = 0
 # GPU layers to offload (0 = CPU only, -1 = all layers to GPU)
 n_gpu_layers = -1
-# GPU device index (-1 = auto-detect best GPU, 0 = first device, etc.)
-# Useful on multi-GPU systems to select the discrete GPU over an iGPU.
+# GPU device index for inference. -1 = auto-detect best GPU (prefers discrete, then most VRAM).
+# If auto-detection picks the wrong GPU, set this to the correct Vulkan device index (0, 1, 2...).
+# Run `vulkaninfo --summary` to list device indices and names.
 main_gpu = -1
 # Enable RAM-based prompt caching for local inference.
 # Caches tokenized prompts so repeated prefixes (e.g. system prompt) are faster.
