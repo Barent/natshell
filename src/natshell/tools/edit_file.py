@@ -7,7 +7,22 @@ from pathlib import Path
 
 from natshell.backup import get_backup_manager
 from natshell.tools.file_tracker import get_tracker
+from natshell.tools.limits import ToolLimits
 from natshell.tools.registry import ToolDefinition, ToolResult
+
+# ── Shared limits (overwritten by agent loop once n_ctx is known) ─────────
+
+_limits = ToolLimits()
+
+
+def set_limits(limits: ToolLimits) -> None:
+    global _limits
+    _limits = limits
+
+
+def reset_limits() -> None:
+    global _limits
+    _limits = ToolLimits()
 
 DEFINITION = ToolDefinition(
     name="edit_file",
@@ -190,10 +205,12 @@ async def edit_file(
         region_count = region.count(old_text)
         if region_count == 0:
             hint = _fuzzy_match_hint(old_text, content)
-            preview_lines = content.splitlines()[:200]
+            max_preview_lines = max(50, _limits.max_output_chars // 80)
+            all_file_lines = content.splitlines()
+            preview_lines = all_file_lines[:max_preview_lines]
             preview = "\n".join(preview_lines)
-            if len(content.splitlines()) > 200:
-                preview += f"\n... [{len(content.splitlines()) - 200} more lines]"
+            if len(all_file_lines) > max_preview_lines:
+                preview += f"\n... [{len(all_file_lines) - max_preview_lines} more lines]"
             return ToolResult(
                 error=(
                     f"old_text not found in lines {sl + 1}-{el} of {target}."
@@ -224,10 +241,12 @@ async def edit_file(
         count = content.count(old_text)
         if count == 0:
             hint = _fuzzy_match_hint(old_text, content)
-            preview_lines = content.splitlines()[:200]
+            max_preview_lines = max(50, _limits.max_output_chars // 80)
+            all_file_lines = content.splitlines()
+            preview_lines = all_file_lines[:max_preview_lines]
             preview = "\n".join(preview_lines)
-            if len(content.splitlines()) > 200:
-                preview += f"\n... [{len(content.splitlines()) - 200} more lines]"
+            if len(all_file_lines) > max_preview_lines:
+                preview += f"\n... [{len(all_file_lines) - max_preview_lines} more lines]"
             return ToolResult(
                 error=(
                     f"old_text not found in file."

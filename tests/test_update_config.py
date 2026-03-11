@@ -30,7 +30,7 @@ class TestValidConfigKeys:
     def test_all_sections_present(self):
         expected = {
             "model", "remote", "ollama", "agent", "safety",
-            "ui", "backup", "engine", "mcp", "kiwix",
+            "ui", "backup", "engine", "mcp", "kiwix", "prompt",
         }
         assert set(VALID_CONFIG_KEYS.keys()) == expected
 

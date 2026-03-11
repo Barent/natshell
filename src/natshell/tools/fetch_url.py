@@ -148,6 +148,32 @@ async def fetch_url(url: str, timeout: int = _DEFAULT_TIMEOUT) -> ToolResult:
     except httpx.HTTPError as e:
         return ToolResult(error=f"HTTP error: {e}", exit_code=1)
 
+    # Check for redirect-based SSRF: if the final URL hostname differs from
+    # the original, verify the new hostname doesn't resolve to a private IP.
+    # Note: there is still a theoretical TOCTOU gap (DNS rebinding on the same
+    # hostname) but this is not a practical concern for a CLI tool.
+    final_url = response.url
+    try:
+        final_host = final_url.host
+    except Exception:
+        final_host = None
+    if final_host and final_host != hostname:
+        try:
+            redirect_addrinfo = socket.getaddrinfo(final_host, None)
+            for _, _, _, _, sockaddr in redirect_addrinfo:
+                ip = sockaddr[0]
+                if _is_private_ip(ip):
+                    return ToolResult(
+                        error=(
+                            f"Blocked: redirect target {final_host} resolves to "
+                            f"private/reserved address {ip}. "
+                            "fetch_url cannot follow redirects to internal network addresses."
+                        ),
+                        exit_code=1,
+                    )
+        except (socket.gaierror, OSError):
+            pass  # DNS failure on redirect target — response already received
+
     content_type = response.headers.get("content-type", "")
     status = response.status_code
 

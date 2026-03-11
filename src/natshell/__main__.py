@@ -120,6 +120,11 @@ def main() -> None:
         action="store_true",
         help="Skip the first-run setup wizard",
     )
+    parser.add_argument(
+        "--profile",
+        metavar="NAME",
+        help="Apply a named configuration profile before starting",
+    )
 
     args = parser.parse_args()
 
@@ -168,6 +173,23 @@ def main() -> None:
 
     # Load config
     config = load_config(args.config)
+
+    # Apply profile if specified
+    if args.profile:
+        from natshell.config import apply_profile, list_profiles
+
+        try:
+            apply_profile(config, args.profile)
+            print(f"Applied profile: {args.profile}")
+        except KeyError:
+            available = list_profiles(config)
+            if available:
+                print(f"Unknown profile: {args.profile}")
+                print(f"Available profiles: {', '.join(available)}")
+            else:
+                print(f"Unknown profile: {args.profile}")
+                print("No profiles defined. Add [profiles.*] sections to config.toml.")
+            sys.exit(1)
 
     # Override config with CLI args
     if args.model:
@@ -356,6 +378,7 @@ def main() -> None:
         safety=safety,
         config=config.agent,
         fallback_config=fallback_config,
+        prompt_config=config.prompt,
     )
 
     # Gather system context and initialize agent
@@ -365,47 +388,54 @@ def main() -> None:
     context = asyncio.run(gather_system_context())
     agent.initialize(context)
 
-    # Headless plan generation
-    if args.plan:
-        from natshell.headless import run_headless_plan
+    try:
+        # Headless plan generation
+        if args.plan:
+            from natshell.headless import run_headless_plan
 
-        exit_code = asyncio.run(
-            run_headless_plan(agent, args.plan, auto_approve=args.danger_fast)
-        )
-        sys.exit(exit_code)
-
-    # Headless plan execution
-    if args.exeplan:
-        from natshell.headless import run_headless_exeplan
-
-        exit_code = asyncio.run(
-            run_headless_exeplan(
-                agent, args.exeplan,
-                auto_approve=args.danger_fast,
-                resume=args.resume,
+            exit_code = asyncio.run(
+                run_headless_plan(agent, args.plan, auto_approve=args.danger_fast)
             )
-        )
-        sys.exit(exit_code)
+            sys.exit(exit_code)
 
-    # Headless mode — single-shot CLI, no TUI
-    if args.headless:
-        from natshell.headless import run_headless
+        # Headless plan execution
+        if args.exeplan:
+            from natshell.headless import run_headless_exeplan
 
-        exit_code = asyncio.run(
-            run_headless(agent, args.headless, auto_approve=args.danger_fast)
-        )
-        sys.exit(exit_code)
+            exit_code = asyncio.run(
+                run_headless_exeplan(
+                    agent, args.exeplan,
+                    auto_approve=args.danger_fast,
+                    resume=args.resume,
+                )
+            )
+            sys.exit(exit_code)
 
-    # Launch the TUI
-    from natshell.app import NatShellApp
+        # Headless mode — single-shot CLI, no TUI
+        if args.headless:
+            from natshell.headless import run_headless
 
-    if args.danger_fast:
-        print("WARNING: --danger-fast is active. All confirmations will be skipped.")
-    app = NatShellApp(agent=agent, config=config, skip_permissions=args.danger_fast)
-    # Silence the console handler before the TUI takes the terminal —
-    # ANY stderr output during Textual rendering corrupts the display.
-    console_handler.setLevel(logging.CRITICAL)
-    app.run()
+            exit_code = asyncio.run(
+                run_headless(agent, args.headless, auto_approve=args.danger_fast)
+            )
+            sys.exit(exit_code)
+
+        # Launch the TUI
+        from natshell.app import NatShellApp
+
+        if args.danger_fast:
+            print("WARNING: --danger-fast is active. All confirmations will be skipped.")
+        app = NatShellApp(agent=agent, config=config, skip_permissions=args.danger_fast)
+        # Silence the console handler before the TUI takes the terminal —
+        # ANY stderr output during Textual rendering corrupts the display.
+        console_handler.setLevel(logging.CRITICAL)
+        app.run()
+    finally:
+        if hasattr(engine, "close"):
+            try:
+                asyncio.run(engine.close())
+            except Exception:
+                pass
 
 
 def _print_vulkan_dep_hint() -> None:
@@ -441,21 +471,14 @@ def _self_update() -> None:
         text=True,
     )
     if result.returncode != 0:
-        # Diverged history (e.g. after a force-push) — reset to remote
-        print("Fast-forward failed, resetting to remote...")
-        subprocess.run(
-            ["git", "-C", str(root), "fetch", "origin"],
-            capture_output=True,
-            text=True,
-        )
-        result = subprocess.run(
-            ["git", "-C", str(root), "reset", "--hard", "origin/main"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"git reset failed:\n{result.stderr.strip()}")
-            sys.exit(1)
+        print("Fast-forward merge failed — you may have local changes or the history has diverged.")
+        print()
+        print("To update manually:")
+        print("  git stash && git pull --rebase && git stash pop")
+        print()
+        print("To force-update (discards local changes):")
+        print(f"  git -C {root} fetch origin && git -C {root} reset --hard origin/main")
+        sys.exit(1)
     print(result.stdout.strip())
 
     # Reinstall using the same Python that's running us

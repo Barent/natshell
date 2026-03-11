@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NatShell — Your Terminal, Unchained</title>
+<title>NatShell — A Natural Language Shell</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -612,7 +612,7 @@ footer {
   </svg>
 
   <h1 class="fade-in delay-1"><span class="nat">Nat</span><span class="shell">Shell</span></h1>
-  <p class="hero-tagline fade-in delay-2">Your terminal speaks English now.<br>Run it <em>entirely offline</em>.</p>
+  <p class="hero-tagline fade-in delay-2">Talk to your terminal in plain English.<br>Runs <em>entirely offline</em> — no cloud required.</p>
 
   <div class="hero-badges fade-in delay-3">
     <span class="badge">Local-First</span>
@@ -662,40 +662,40 @@ footer {
 
 <!-- ════════════════ USE CASES ════════════════ -->
 <section>
-  <div class="section-label fade-in">What can you do?</div>
-  <h2 class="section-title fade-in delay-1">Write English. Get results.</h2>
-  <p class="section-desc fade-in delay-2">NatShell isn't a chat wrapper — it's an autonomous agent with real tools that reasons, acts, observes, and iterates until the job is done.</p>
+  <div class="section-label fade-in">What can it do?</div>
+  <h2 class="section-title fade-in delay-1">Describe what you want. NatShell figures out the rest.</h2>
+  <p class="section-desc fade-in delay-2">It's an agentic tool, not a chatbot — it plans multi-step tasks, runs real commands, reads the output, and keeps going until the job is actually done.</p>
 
   <div class="card-grid">
     <div class="card fade-in delay-1">
       <div class="card-icon">🔧</div>
       <h3>Scripting & Automation</h3>
-      <p>Cron-powered health reports, CI/CD failure analysis, log forensics after an incident. Use <code>--headless</code> to run NatShell from cron jobs, git hooks, or pipelines — it's a fully non-interactive Unix citizen.</p>
+      <p>Set up cron-powered health reports, triage CI failures, or dig through logs after something breaks. With <code>--headless</code> mode it works great in cron jobs, git hooks, and pipelines.</p>
     </div>
     <div class="card fade-in delay-2">
       <div class="card-icon">💻</div>
       <h3>Development Workflows</h3>
-      <p>Scaffold entire projects by example, perform codebase-wide refactors with diffs, run automated code review before merges. NatShell reads your code, understands patterns, and replicates them.</p>
+      <p>Scaffold projects, do codebase-wide refactors with diffs, or run a quick code review before merging. It reads your code, understands the patterns, and edits files in place.</p>
     </div>
     <div class="card fade-in delay-3">
       <div class="card-icon">🖥️</div>
       <h3>System Administration</h3>
-      <p>Provision servers, troubleshoot network issues, audit firewall rules — all in natural language. NatShell cross-references running services with iptables rules and flags mismatches automatically.</p>
+      <p>Troubleshoot network issues, audit firewall rules, check on services — describe what you need in plain English and NatShell handles the commands and interprets the results.</p>
     </div>
     <div class="card fade-in delay-4">
       <div class="card-icon">🔗</div>
-      <h3>Pipeable Unix Citizen</h3>
-      <p>Pipe logs in, get structured CSV out. Feed a <code>git diff</code> and get release notes. NatShell reads from stdin and writes to stdout like any good Unix tool — except it understands what the data means.</p>
+      <h3>Pipes & Composability</h3>
+      <p>Pipe logs in, get structured CSV out. Feed it a <code>git diff</code> and get release notes back. It reads stdin and writes to stdout like any other Unix tool — it just happens to understand the data.</p>
     </div>
     <div class="card fade-in delay-5">
       <div class="card-icon">🧭</div>
       <h3>Exploration & Learning</h3>
-      <p>Just cloned a repo with zero docs? Ask NatShell to trace the execution path and draw an ASCII dependency diagram. Explore a 500MB CSV without loading it all into memory.</p>
+      <p>Just cloned a repo with no docs? Ask NatShell to trace the execution path and explain the architecture. Great for poking around unfamiliar codebases and large datasets.</p>
     </div>
     <div class="card fade-in delay-6">
       <div class="card-icon">🧩</div>
       <h3>MCP Server & Plugins</h3>
-      <p>Run <code>natshell --mcp</code> to turn your machine into a tool backend for Claude Desktop, Cursor, or any MCP-compatible agent. Extend with custom plugins for databases, APIs, k8s, and more.</p>
+      <p>Run <code>natshell --mcp</code> to use it as a tool backend for Claude Desktop, Cursor, or other MCP-compatible agents. Add your own tools with the plugin system.</p>
     </div>
   </div>
 
@@ -737,31 +737,31 @@ with what happened."</span> 2>> /var/log/watchdog.log</div>
 
 <!-- ════════════════ COMPARISON ════════════════ -->
 <section>
-  <div class="section-label fade-in">Why NatShell?</div>
-  <h2 class="section-title fade-in delay-1">Not just another AI TUI.</h2>
+  <div class="section-label fade-in">How it's different</div>
+  <h2 class="section-title fade-in delay-1">More than a chat window.</h2>
 
   <div class="compare-grid fade-in delay-2">
     <div class="compare-card others">
-      <h3>Typical AI TUIs <span class="dim">— chat wrappers</span></h3>
+      <h3>Most AI terminal tools <span class="dim">— the basics</span></h3>
       <ul class="compare-list">
-        <li><span class="icon">→</span> Send prompt to cloud API, display response</li>
-        <li><span class="icon">→</span> Maybe copy code to clipboard</li>
-        <li><span class="icon">→</span> Maybe run a single command you approve</li>
-        <li><span class="icon">→</span> Require API keys & internet</li>
-        <li><span class="icon">→</span> Interactive-only — can't pipe or cron</li>
+        <li><span class="icon">→</span> Send your prompt to a cloud API, show the response</li>
+        <li><span class="icon">→</span> Copy suggested commands to clipboard</li>
+        <li><span class="icon">→</span> Maybe run a single command with your approval</li>
+        <li><span class="icon">→</span> Need API keys and an internet connection</li>
+        <li><span class="icon">→</span> Interactive-only — can't be scripted or piped</li>
       </ul>
     </div>
     <div class="compare-card natshell">
-      <h3>NatShell <span class="dim">— agentic engine</span></h3>
+      <h3>NatShell <span class="dim">— what you get</span></h3>
       <ul class="compare-list">
-        <li><span class="icon">✓</span> Agentic loop — reason, act, observe, iterate (up to 75 steps)</li>
-        <li><span class="icon">✓</span> 10 structured tools the model calls directly</li>
-        <li><span class="icon">✓</span> Deterministic regex safety classifier — not "ask the LLM"</li>
-        <li><span class="icon">✓</span> Local-first — bundled LLM, zero network dependency out of the box</li>
-        <li><span class="icon">✓</span> Scales up — connect to Ollama or any OpenAI-compatible API when you want more power</li>
-        <li><span class="icon">✓</span> Headless mode — fully pipeable, cronneable, scriptable</li>
-        <li><span class="icon">✓</span> MCP server — serve as a tool backend for other AI systems</li>
-        <li><span class="icon">✓</span> Multi-step plans with dedicated budgets per step</li>
+        <li><span class="icon">✓</span> Agentic loop — plans, runs commands, reads output, adapts (up to 75 steps)</li>
+        <li><span class="icon">✓</span> 10 built-in tools the model calls directly (shell, file editing, git, search, and more)</li>
+        <li><span class="icon">✓</span> Regex-based safety system — fast, deterministic, and inspectable</li>
+        <li><span class="icon">✓</span> Runs offline with a bundled LLM — no API keys needed to get started</li>
+        <li><span class="icon">✓</span> Optionally connects to Ollama or any OpenAI-compatible API for more power</li>
+        <li><span class="icon">✓</span> Headless mode — works in cron jobs, pipelines, and scripts</li>
+        <li><span class="icon">✓</span> MCP server mode — use it as a tool backend for other AI agents</li>
+        <li><span class="icon">✓</span> Multi-step plan execution with per-step budgets</li>
       </ul>
     </div>
   </div>
@@ -770,8 +770,8 @@ with what happened."</span> 2>> /var/log/watchdog.log</div>
 <!-- ════════════════ AUDIENCE ════════════════ -->
 <section>
   <div class="section-label fade-in">Who is this for?</div>
-  <h2 class="section-title fade-in delay-1">If you live in the terminal, this is for you.</h2>
-  <p class="section-desc fade-in delay-2">NatShell meets you where you already work — no context-switching, no browser tabs, no cloud dependencies.</p>
+  <h2 class="section-title fade-in delay-1">People who like terminals and tinkering.</h2>
+  <p class="section-desc fade-in delay-2">Whether you're managing a homelab, learning Linux, or just want an AI assistant that respects your workflow and doesn't phone home.</p>
 
   <div class="audience-strip fade-in delay-3">
     <span class="audience-chip"><span class="emoji">⌨️</span> Developers</span>
@@ -802,15 +802,15 @@ with what happened."</span> 2>> /var/log/watchdog.log</div>
     <polygon points="32,10 18,32 28,32" fill="#66ffff" opacity="0.5"/>
     <g fill="#ffcc00" filter="url(#glow2)"><circle cx="8" cy="10" r="2"/><circle cx="8" cy="10" r="1" fill="#ffffaa"/></g>
   </svg>
-  <h2 class="fade-in delay-1">Stop Googling commands.<br>Start talking to your machine.</h2>
-  <p class="fade-in delay-2">Runs a bundled LLM on your hardware — or connect to your Ollama server or any OpenAI-compatible API. Your choice.</p>
+  <h2 class="fade-in delay-1">Give it a try.</h2>
+  <p class="fade-in delay-2">Installs in a minute. Runs a bundled LLM on your hardware, or connect to Ollama or any OpenAI-compatible API. MIT licensed, free forever.</p>
   <a class="cta-install fade-in delay-3" href="#"><span class="dollar">$</span> pip install natshell</a>
   <br><br>
   <a class="cta-install fade-in delay-4" href="https://github.com/Barent/natshell" style="background: rgba(255,255,255,0.04); border-color: var(--border); font-size: 0.85rem; padding: 12px 28px;">⭐ GitHub</a>
 </section>
 
 <footer>
-  <p>NatShell — Local AI for your terminal. Built for people who ship. <a href="https://github.com/Barent/natshell" style="color: var(--teal); text-decoration: none;">GitHub</a></p>
+  <p>NatShell — a local-first AI shell for Linux, macOS, and WSL. <a href="https://github.com/Barent/natshell" style="color: var(--teal); text-decoration: none;">GitHub</a></p>
 </footer>
 
 <script>

@@ -31,9 +31,11 @@ from natshell.tools.write_file import write_file
 @pytest.fixture(autouse=True)
 def _reset_tool_limits():
     yield
+    from natshell.tools.edit_file import reset_limits as reset_edit
     from natshell.tools.execute_shell import reset_limits as reset_shell
     from natshell.tools.read_file import reset_limits as reset_read
 
+    reset_edit()
     reset_shell()
     reset_read()
 

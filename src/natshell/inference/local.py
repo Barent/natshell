@@ -33,6 +33,12 @@ def _detect_model_family(model_path: str) -> str:
     name = Path(model_path).name.lower()
     if "mistral" in name:
         return "mistral"
+    if "qwen" not in name:
+        logger.warning(
+            "Unknown model family for %r — defaulting to qwen tool format. "
+            "If tool calls fail, the model may need a custom parser.",
+            Path(model_path).name,
+        )
     return "qwen"
 
 
@@ -63,6 +69,52 @@ def _infer_context_size(model_path: str) -> int:
     return 4096
 
 
+def _format_tool_entries(
+    tools: list[dict[str, Any]], *, compact: bool = False
+) -> list[str]:
+    """Format tool entries (shared by Qwen and Mistral formatters).
+
+    Returns a list of lines describing each tool's name, description,
+    and parameters. The caller provides the header.
+    """
+    lines: list[str] = []
+    for tool in tools:
+        func = tool.get("function", {})
+        name = func.get("name", "")
+        desc = func.get("description", "")
+        params = func.get("parameters", {})
+
+        lines.append(f"## {name}")
+        if compact:
+            first_sentence = desc.split(". ")[0]
+            if not first_sentence.endswith("."):
+                first_sentence += "."
+            lines.append(first_sentence)
+        else:
+            lines.append(desc)
+
+        props = params.get("properties", {})
+        required = params.get("required", [])
+        if props:
+            if not compact:
+                lines.append("Parameters:")
+            for pname, pdef in props.items():
+                req = ", required" if pname in required else ""
+                ptype = pdef.get("type", "")
+                if compact:
+                    enum_vals = pdef.get("enum")
+                    if enum_vals:
+                        enum_str = "|".join(str(v) for v in enum_vals)
+                        lines.append(f"- {pname} ({enum_str}{req})")
+                    else:
+                        lines.append(f"- {pname} ({ptype}{req})")
+                else:
+                    pdesc = pdef.get("description", "")
+                    lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
+        lines.append("")
+    return lines
+
+
 def _format_tools_for_prompt(
     tools: list[dict[str, Any]], *, compact: bool = False
 ) -> str:
@@ -77,7 +129,7 @@ def _format_tools_for_prompt(
             to reduce token usage on small context windows (≤16K).
     """
     if compact:
-        lines = [
+        header = [
             "# Available Tools",
             "You MUST use the <tool_call> format to call tools.",
             "NEVER substitute pseudocode or Python scripts for tool calls.",
@@ -85,7 +137,7 @@ def _format_tools_for_prompt(
             "",
         ]
     else:
-        lines = [
+        header = [
             "# Available Tools",
             "",
             "You MUST use tools to perform actions. To call a tool, output:",
@@ -95,44 +147,7 @@ def _format_tools_for_prompt(
             "</tool_call>",
             "",
         ]
-
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {})
-
-        lines.append(f"## {name}")
-        if compact:
-            # First sentence only
-            first_sentence = desc.split(". ")[0]
-            if not first_sentence.endswith("."):
-                first_sentence += "."
-            lines.append(first_sentence)
-        else:
-            lines.append(desc)
-
-        props = params.get("properties", {})
-        required = params.get("required", [])
-        if props:
-            if not compact:
-                lines.append("Parameters:")
-            for pname, pdef in props.items():
-                req = ", required" if pname in required else ""
-                ptype = pdef.get("type", "")
-                if compact:
-                    enum_vals = pdef.get("enum")
-                    if enum_vals:
-                        enum_str = "|".join(str(v) for v in enum_vals)
-                        lines.append(f"- {pname} ({enum_str}{req})")
-                    else:
-                        lines.append(f"- {pname} ({ptype}{req})")
-                else:
-                    pdesc = pdef.get("description", "")
-                    lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
-        lines.append("")
-
-    return "\n".join(lines)
+    return "\n".join(header + _format_tool_entries(tools, compact=compact))
 
 
 def _format_tools_for_prompt_mistral(
@@ -147,7 +162,7 @@ def _format_tools_for_prompt_mistral(
         compact: When True, use abbreviated descriptions and parameter lists.
     """
     if compact:
-        lines = [
+        header = [
             "# Available Tools",
             "You MUST use the [TOOL_CALLS] format to call tools.",
             "NEVER substitute pseudocode or Python scripts for tool calls.",
@@ -155,7 +170,7 @@ def _format_tools_for_prompt_mistral(
             "",
         ]
     else:
-        lines = [
+        header = [
             "# Available Tools",
             "",
             "You MUST use tools to perform actions. To call a tool, output:",
@@ -165,43 +180,7 @@ def _format_tools_for_prompt_mistral(
             "You can call multiple tools at once by including multiple objects in the array.",
             "",
         ]
-
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {})
-
-        lines.append(f"## {name}")
-        if compact:
-            first_sentence = desc.split(". ")[0]
-            if not first_sentence.endswith("."):
-                first_sentence += "."
-            lines.append(first_sentence)
-        else:
-            lines.append(desc)
-
-        props = params.get("properties", {})
-        required = params.get("required", [])
-        if props:
-            if not compact:
-                lines.append("Parameters:")
-            for pname, pdef in props.items():
-                req = ", required" if pname in required else ""
-                ptype = pdef.get("type", "")
-                if compact:
-                    enum_vals = pdef.get("enum")
-                    if enum_vals:
-                        enum_str = "|".join(str(v) for v in enum_vals)
-                        lines.append(f"- {pname} ({enum_str}{req})")
-                    else:
-                        lines.append(f"- {pname} ({ptype}{req})")
-                else:
-                    pdesc = pdef.get("description", "")
-                    lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
-        lines.append("")
-
-    return "\n".join(lines)
+    return "\n".join(header + _format_tool_entries(tools, compact=compact))
 
 
 class LocalEngine:

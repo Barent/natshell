@@ -35,3 +35,6 @@ Thumbs.db
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Node
+package-lock.json

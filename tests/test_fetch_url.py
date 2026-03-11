@@ -309,3 +309,89 @@ class TestDnsFailure:
         result = await fetch_url("https://nonexistent.invalid")
         assert result.exit_code == 1
         assert "dns" in result.error.lower() or "failed" in result.error.lower()
+
+
+# ─── Redirect SSRF protection ───────────────────────────────────────────────
+
+
+def _mock_response_with_url(
+    final_url: str,
+    status_code: int = 200,
+    content_type: str = "text/html",
+    text: str = "OK",
+):
+    """Build a mock httpx.Response with a final URL (simulating redirects)."""
+    content = text.encode("utf-8")
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status_code
+    resp.headers = {"content-type": content_type}
+    resp.text = text
+    resp.content = content
+    resp.url = httpx.URL(final_url)
+    return resp
+
+
+class TestRedirectSsrf:
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
+    async def test_redirect_to_private_ip_blocked(self, mock_client_cls, mock_dns):
+        """A redirect from public URL to private IP should be blocked."""
+        mock_client = AsyncMock()
+        mock_client.get.return_value = _mock_response_with_url(
+            final_url="http://internal.corp/secret",
+            text="secret data",
+        )
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Pre-flight DNS returns public IP, but redirect target resolves to private
+        with patch(
+            "natshell.tools.fetch_url.socket.getaddrinfo",
+            side_effect=[
+                _PUBLIC_DNS,  # initial hostname check
+                _make_addrinfo("192.168.1.1"),  # redirect target check
+            ],
+        ):
+            result = await fetch_url("https://example.com/redirect")
+            assert result.exit_code == 1
+            assert "blocked" in result.error.lower() or "private" in result.error.lower()
+
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
+    async def test_redirect_to_public_ip_allowed(self, mock_client_cls, mock_dns):
+        """A redirect to another public URL should succeed."""
+        mock_client = AsyncMock()
+        mock_client.get.return_value = _mock_response_with_url(
+            final_url="https://other-public.example.com/page",
+            text="Public content",
+        )
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Both initial and redirect target resolve to public IPs
+        with patch(
+            "natshell.tools.fetch_url.socket.getaddrinfo",
+            side_effect=[
+                _PUBLIC_DNS,  # initial hostname check
+                _make_addrinfo("93.184.216.35"),  # redirect target check
+            ],
+        ):
+            result = await fetch_url("https://example.com/redirect")
+            assert result.exit_code == 0
+            assert "Public content" in result.output
+
+    @patch(_PATCH_DNS, return_value=_PUBLIC_DNS)
+    @patch(_PATCH_CLIENT)
+    async def test_redirect_same_host_no_extra_check(self, mock_client_cls, mock_dns):
+        """A redirect to the same hostname should not trigger extra DNS check."""
+        mock_client = AsyncMock()
+        mock_client.get.return_value = _mock_response_with_url(
+            final_url="https://example.com/other-page",
+            text="Same host content",
+        )
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await fetch_url("https://example.com/redirect")
+        assert result.exit_code == 0
+        assert "Same host content" in result.output

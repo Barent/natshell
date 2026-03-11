@@ -508,6 +508,27 @@ class TestModelFamilyDetection:
     def test_unknown_model_defaults_to_qwen(self):
         assert _detect_model_family("some-random-model.gguf") == "qwen"
 
+    def test_unknown_model_logs_warning(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="natshell.inference.local"):
+            _detect_model_family("llama-3.2-7b.gguf")
+        assert "Unknown model family" in caplog.text
+
+    def test_qwen_model_no_warning(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="natshell.inference.local"):
+            _detect_model_family("Qwen3-4B-Q4_K_M.gguf")
+        assert "Unknown model family" not in caplog.text
+
+    def test_mistral_model_no_warning(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="natshell.inference.local"):
+            _detect_model_family("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf")
+        assert "Unknown model family" not in caplog.text
+
 
 # ─── Context size override ───────────────────────────────────────────────────
 

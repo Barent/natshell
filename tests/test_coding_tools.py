@@ -6,10 +6,19 @@ import os
 import tempfile
 from pathlib import Path
 
-from natshell.tools.edit_file import edit_file
+import pytest
+
+from natshell.tools.edit_file import edit_file, reset_limits, set_limits
 from natshell.tools.file_tracker import get_tracker, reset_tracker
+from natshell.tools.limits import ToolLimits
 from natshell.tools.read_file import read_file
 from natshell.tools.run_code import run_code
+
+
+@pytest.fixture(autouse=True)
+def _reset_edit_limits():
+    yield
+    reset_limits()
 
 # ─── edit_file ────────────────────────────────────────────────────────────────
 
@@ -49,8 +58,11 @@ class TestEditFile:
         finally:
             os.unlink(path)
 
-    async def test_old_text_not_found_preview_200_lines(self):
-        """Error preview should include up to 200 lines of file content."""
+    async def test_old_text_not_found_preview_lines(self):
+        """Error preview should include up to max_preview_lines of file content.
+
+        Default limits (4000 chars) → max(50, 4000//80) = 50 preview lines.
+        """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             for i in range(300):
                 f.write(f"line {i}\n")
@@ -58,12 +70,12 @@ class TestEditFile:
         try:
             result = await edit_file(path, "nonexistent text", "replacement")
             assert result.exit_code == 1
-            # Line 199 (0-indexed) should be in the preview
-            assert "line 199" in result.error
-            # Line 200 (0-indexed) should NOT be in the preview
-            assert "line 200" not in result.error
+            # Line 49 (0-indexed) should be in the preview (50 lines shown)
+            assert "line 49" in result.error
+            # Line 50 (0-indexed) should NOT be in the preview
+            assert "line 50" not in result.error
             # Should show remaining count
-            assert "100 more lines" in result.error
+            assert "250 more lines" in result.error
         finally:
             os.unlink(path)
 
@@ -270,6 +282,62 @@ class TestEditFile:
 
             result = await edit_file(path, "line 0", "changed 0")
             assert result.exit_code == 0
+        finally:
+            os.unlink(path)
+
+
+# ─── edit_file preview limits ─────────────────────────────────────────────────
+
+
+class TestEditFilePreviewLimits:
+    def setup_method(self):
+        reset_tracker()
+
+    def teardown_method(self):
+        reset_tracker()
+
+    async def test_default_preview_lines(self):
+        """Default limits (4000 chars) should give 50 preview lines (max(50, 4000//80)=50)."""
+        # Create a file with 100 lines where old_text doesn't exist
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            for i in range(100):
+                f.write(f"line {i}\n")
+            path = f.name
+        try:
+            result = await edit_file(path, "NONEXISTENT", "replacement")
+            assert result.exit_code == 1
+            assert "50 more lines" in result.error
+        finally:
+            os.unlink(path)
+
+    async def test_large_limits_show_more_preview(self):
+        """With large output limits, preview should show more lines."""
+        set_limits(ToolLimits(max_output_chars=32000))
+        # max_preview_lines = max(50, 32000//80) = 400
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            for i in range(500):
+                f.write(f"line {i}\n")
+            path = f.name
+        try:
+            result = await edit_file(path, "NONEXISTENT", "replacement")
+            assert result.exit_code == 1
+            # Should show 400 lines, with 100 remaining
+            assert "100 more lines" in result.error
+        finally:
+            os.unlink(path)
+
+    async def test_small_limits_floor_at_50(self):
+        """Even with tiny output limits, preview should show at least 50 lines."""
+        set_limits(ToolLimits(max_output_chars=100))
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            for i in range(100):
+                f.write(f"line {i}\n")
+            path = f.name
+        try:
+            result = await edit_file(path, "NONEXISTENT", "replacement")
+            assert result.exit_code == 1
+            # Floor is 50, so 100-50 = 50 more lines
+            assert "50 more lines" in result.error
         finally:
             os.unlink(path)
 

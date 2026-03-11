@@ -121,6 +121,16 @@ max_per_file = 10
 # Theme: "dark" or "light"
 theme = "dark"
 
+# ─── System Prompt Customization ─────────────────────────────────────
+# Customize the LLM's system prompt. Core safety rules are always
+# included regardless of customization.
+#
+# [prompt]
+# Replace the default role description with a custom persona.
+# persona = "expert Python developer and DevOps engineer"
+# Append extra instructions after the code section.
+# extra_instructions = "Always end responses with 'cheers'"
+
 # ─── Configuration Profiles ─────────────────────────────────────────
 # Uncomment and adjust any profile below, or define your own [profiles.*]
 # sections. Switch at runtime with /profile <name>.

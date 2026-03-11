@@ -83,6 +83,12 @@ class KiwixConfig:
 
 
 @dataclass
+class PromptConfig:
+    extra_instructions: str = ""
+    persona: str = ""
+
+
+@dataclass
 class ProfileConfig:
     """A named configuration profile that can override settings across sections."""
     # Ollama/remote
@@ -112,6 +118,7 @@ class NatShellConfig:
     engine: EngineConfig = field(default_factory=EngineConfig)
     mcp: McpConfig = field(default_factory=McpConfig)
     kiwix: KiwixConfig = field(default_factory=KiwixConfig)
+    prompt: PromptConfig = field(default_factory=PromptConfig)
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
 
 
@@ -165,6 +172,10 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
     },
     "kiwix": {
         "url": "str",
+    },
+    "prompt": {
+        "extra_instructions": "str",
+        "persona": "str",
     },
 }
 
@@ -289,60 +300,25 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
     return config
 
 
+_SECTIONS = (
+    "model", "remote", "ollama", "agent", "safety",
+    "ui", "backup", "engine", "mcp", "kiwix", "prompt",
+)
+
+
 def _merge_toml(config: NatShellConfig, path: Path) -> None:
     """Merge a TOML file into the config, overwriting only specified fields."""
     with open(path, "rb") as f:
         data = tomllib.load(f)
 
-    if "model" in data:
-        for key, value in data["model"].items():
-            if hasattr(config.model, key):
-                setattr(config.model, key, value)
-
-    if "remote" in data:
-        for key, value in data["remote"].items():
-            if hasattr(config.remote, key):
-                setattr(config.remote, key, value)
-
-    if "ollama" in data:
-        for key, value in data["ollama"].items():
-            if hasattr(config.ollama, key):
-                setattr(config.ollama, key, value)
-
-    if "agent" in data:
-        for key, value in data["agent"].items():
-            if hasattr(config.agent, key):
-                setattr(config.agent, key, value)
-
-    if "safety" in data:
-        for key, value in data["safety"].items():
-            if hasattr(config.safety, key):
-                setattr(config.safety, key, value)
-
-    if "ui" in data:
-        for key, value in data["ui"].items():
-            if hasattr(config.ui, key):
-                setattr(config.ui, key, value)
-
-    if "backup" in data:
-        for key, value in data["backup"].items():
-            if hasattr(config.backup, key):
-                setattr(config.backup, key, value)
-
-    if "engine" in data:
-        for key, value in data["engine"].items():
-            if hasattr(config.engine, key):
-                setattr(config.engine, key, value)
-
-    if "mcp" in data:
-        for key, value in data["mcp"].items():
-            if hasattr(config.mcp, key):
-                setattr(config.mcp, key, value)
-
-    if "kiwix" in data:
-        for key, value in data["kiwix"].items():
-            if hasattr(config.kiwix, key):
-                setattr(config.kiwix, key, value)
+    for section_name in _SECTIONS:
+        if section_name in data:
+            section_obj = getattr(config, section_name, None)
+            if section_obj is None:
+                continue
+            for key, value in data[section_name].items():
+                if hasattr(section_obj, key):
+                    setattr(section_obj, key, value)
 
     if "profiles" in data:
         for name, profile_data in data["profiles"].items():
@@ -354,189 +330,32 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
                 config.profiles[name] = profile
 
 
+def save_config_values(
+    section: str, values: dict[str, str | int | float | bool]
+) -> Path:
+    """Persist multiple config values in one section. Returns the config path."""
+    path = None
+    for key, value in values.items():
+        path = save_config_value(section, key, value)
+    return path  # type: ignore[return-value]
+
+
 def save_ollama_default(model_name: str, url: str | None = None) -> Path:
-    """Persist the default Ollama model (and optionally URL) to user config.
-
-    Uses simple line-based TOML editing to avoid a tomli_w dependency.
-    Returns the path to the config file.
-    """
-    config_dir = Path.home() / ".config" / "natshell"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / "config.toml"
-
-    if config_path.exists():
-        lines = config_path.read_text().splitlines(keepends=True)
-    else:
-        lines = []
-
-    # Find [ollama] section and locate existing keys
-    ollama_idx = None
-    next_section_idx = None
-    default_model_idx = None
-    url_idx = None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == "[ollama]":
-            ollama_idx = i
-        elif ollama_idx is not None and next_section_idx is None:
-            if re.match(r"^\[.+\]", stripped):
-                next_section_idx = i
-            elif stripped.startswith("default_model") or stripped.startswith("# default_model"):
-                default_model_idx = i
-            elif stripped.startswith("url") or stripped.startswith("# url"):
-                url_idx = i
-
-    model_line = f'default_model = "{model_name}"\n'
-    url_line = f'url = "{url}"\n' if url else None
-
-    if ollama_idx is not None:
-        # Section exists — update or insert keys
-        # Insert point: end of section or before next section
-        insert_at = next_section_idx if next_section_idx is not None else len(lines)
-
-        if default_model_idx is not None:
-            lines[default_model_idx] = model_line
-        else:
-            lines.insert(insert_at, model_line)
-            # Adjust indices after insertion
-            if url_idx is not None and url_idx >= insert_at:
-                url_idx += 1
-            insert_at += 1
-
-        if url_line:
-            if url_idx is not None:
-                lines[url_idx] = url_line
-            else:
-                # Insert URL before default_model for readability
-                target = default_model_idx if default_model_idx is not None else insert_at
-                lines.insert(target, url_line)
-    else:
-        # No [ollama] section — add one at the end
-        if lines and not lines[-1].endswith("\n"):
-            lines.append("\n")
-        lines.append("\n[ollama]\n")
-        if url_line:
-            lines.append(url_line)
-        lines.append(model_line)
-
-    config_path.write_text("".join(lines))
-    return config_path
+    """Persist the default Ollama model (and optionally URL) to user config."""
+    values: dict[str, str | int | float | bool] = {"default_model": model_name}
+    if url:
+        values["url"] = url
+    return save_config_values("ollama", values)
 
 
 def save_model_config(hf_repo: str, hf_file: str) -> Path:
-    """Persist the default local model (hf_repo / hf_file) to user config.
-
-    Uses simple line-based TOML editing to avoid a tomli_w dependency.
-    Returns the path to the config file.
-    """
-    config_dir = Path.home() / ".config" / "natshell"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / "config.toml"
-
-    if config_path.exists():
-        lines = config_path.read_text().splitlines(keepends=True)
-    else:
-        lines = []
-
-    # Find [model] section and locate existing keys
-    model_idx = None
-    next_section_idx = None
-    hf_repo_idx = None
-    hf_file_idx = None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == "[model]":
-            model_idx = i
-        elif model_idx is not None and next_section_idx is None:
-            if re.match(r"^\[.+\]", stripped):
-                next_section_idx = i
-            elif stripped.startswith("hf_repo") or stripped.startswith("# hf_repo"):
-                hf_repo_idx = i
-            elif stripped.startswith("hf_file") or stripped.startswith("# hf_file"):
-                hf_file_idx = i
-
-    repo_line = f'hf_repo = "{hf_repo}"\n'
-    file_line = f'hf_file = "{hf_file}"\n'
-
-    if model_idx is not None:
-        # Section exists — update or insert keys
-        insert_at = next_section_idx if next_section_idx is not None else len(lines)
-
-        if hf_repo_idx is not None:
-            lines[hf_repo_idx] = repo_line
-        else:
-            lines.insert(insert_at, repo_line)
-            if hf_file_idx is not None and hf_file_idx >= insert_at:
-                hf_file_idx += 1
-            insert_at += 1
-
-        if hf_file_idx is not None:
-            lines[hf_file_idx] = file_line
-        else:
-            lines.insert(insert_at, file_line)
-    else:
-        # No [model] section — add one at the end
-        if lines and not lines[-1].endswith("\n"):
-            lines.append("\n")
-        lines.append("\n[model]\n")
-        lines.append(repo_line)
-        lines.append(file_line)
-
-    config_path.write_text("".join(lines))
-    return config_path
+    """Persist the default local model (hf_repo / hf_file) to user config."""
+    return save_config_values("model", {"hf_repo": hf_repo, "hf_file": hf_file})
 
 
 def save_engine_preference(preferred: str) -> Path:
-    """Persist the engine preference ("local", "remote", or "auto") to user config.
-
-    Uses simple line-based TOML editing to avoid a tomli_w dependency.
-    Returns the path to the config file.
-    """
-    config_dir = Path.home() / ".config" / "natshell"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / "config.toml"
-
-    if config_path.exists():
-        lines = config_path.read_text().splitlines(keepends=True)
-    else:
-        lines = []
-
-    # Find [engine] section and locate existing key
-    engine_idx = None
-    next_section_idx = None
-    preferred_idx = None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == "[engine]":
-            engine_idx = i
-        elif engine_idx is not None and next_section_idx is None:
-            if re.match(r"^\[.+\]", stripped):
-                next_section_idx = i
-            elif stripped.startswith("preferred") or stripped.startswith("# preferred"):
-                preferred_idx = i
-
-    pref_line = f'preferred = "{preferred}"\n'
-
-    if engine_idx is not None:
-        # Section exists — update or insert key
-        insert_at = next_section_idx if next_section_idx is not None else len(lines)
-
-        if preferred_idx is not None:
-            lines[preferred_idx] = pref_line
-        else:
-            lines.insert(insert_at, pref_line)
-    else:
-        # No [engine] section — add one at the end
-        if lines and not lines[-1].endswith("\n"):
-            lines.append("\n")
-        lines.append("\n[engine]\n")
-        lines.append(pref_line)
-
-    config_path.write_text("".join(lines))
-    return config_path
+    """Persist the engine preference ("local", "remote", or "auto") to user config."""
+    return save_config_value("engine", "preferred", preferred)
 
 
 def list_profiles(config: NatShellConfig) -> list[str]:

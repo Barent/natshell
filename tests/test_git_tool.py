@@ -353,3 +353,77 @@ class TestCommitFlagRestriction:
         result = await git_tool("commit", args='-m "Normal commit"')
         assert result.exit_code == 0
         assert "Normal commit" in result.output
+
+
+# ─── Branch flag restrictions ────────────────────────────────────────────────
+
+
+class TestBranchFlagRestriction:
+    async def test_force_delete_rejected(self, git_repo_with_commit):
+        await git_tool("branch", args="temp-branch")
+        result = await git_tool("branch", args="-D temp-branch")
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_force_move_rejected(self, git_repo_with_commit):
+        result = await git_tool("branch", args="-M new-name")
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_force_flag_rejected(self, git_repo_with_commit):
+        result = await git_tool("branch", args="--force some-branch")
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_delete_flag_rejected(self, git_repo_with_commit):
+        result = await git_tool("branch", args="--delete some-branch")
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_safe_delete_allowed(self, git_repo_with_commit):
+        """git branch -d (safe delete) should be allowed."""
+        await git_tool("branch", args="safe-branch")
+        result = await git_tool("branch", args="-d safe-branch")
+        assert result.exit_code == 0
+
+    async def test_create_branch_still_works(self, git_repo_with_commit):
+        result = await git_tool("branch", args="new-feature")
+        assert result.exit_code == 0
+        list_result = await git_tool("branch")
+        assert "new-feature" in list_result.output
+
+    async def test_list_branches_still_works(self, git_repo_with_commit):
+        result = await git_tool("branch")
+        assert result.exit_code == 0
+
+
+# ─── Stash flag restrictions ────────────────────────────────────────────────
+
+
+class TestStashFlagRestriction:
+    async def test_stash_drop_rejected(self, git_repo_with_commit):
+        result = await git_tool("stash", args="drop")
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_stash_clear_rejected(self, git_repo_with_commit):
+        result = await git_tool("stash", args="clear")
+        assert result.exit_code == 1
+        assert "not allowed" in result.error
+
+    async def test_stash_push_still_works(self, git_repo_with_commit):
+        readme = git_repo_with_commit / "README.md"
+        readme.write_text("# Stash me\n")
+        result = await git_tool("stash", args="push")
+        assert result.exit_code == 0
+
+    async def test_stash_list_still_works(self, git_repo_with_commit):
+        result = await git_tool("stash", args="list")
+        assert result.exit_code == 0
+
+    async def test_stash_pop_still_works(self, git_repo_with_commit):
+        readme = git_repo_with_commit / "README.md"
+        readme.write_text("# Pop me\n")
+        await git_tool("stash", args="push")
+        result = await git_tool("stash", args="pop")
+        assert result.exit_code == 0

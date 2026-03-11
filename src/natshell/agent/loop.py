@@ -15,13 +15,15 @@ from typing import Any, AsyncIterator
 from natshell.agent.context import SystemContext
 from natshell.agent.context_manager import ContextManager
 from natshell.agent.system_prompt import build_system_prompt
-from natshell.config import AgentConfig, ModelConfig
+from natshell.config import AgentConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
+from natshell.tools import edit_file as _edit_file_mod
 from natshell.tools import execute_shell as _exec_shell_mod
 from natshell.tools import read_file as _read_file_mod
 from natshell.tools.execute_shell import needs_sudo_password as _needs_sudo_password
 from natshell.tools.file_tracker import reset_tracker
+from natshell.tools.limits import ToolLimits
 from natshell.tools.registry import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -122,12 +124,14 @@ class AgentLoop:
         safety: SafetyClassifier,
         config: AgentConfig,
         fallback_config: ModelConfig | None = None,
+        prompt_config: PromptConfig | None = None,
     ) -> None:
         self.engine = engine
         self.tools = tools
         self.safety = safety
         self.config = config
         self.fallback_config = fallback_config
+        self._prompt_config = prompt_config
         self._system_context: SystemContext | None = None
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
@@ -156,7 +160,9 @@ class AgentLoop:
         except (AttributeError, TypeError):
             n_ctx = 4096
         compact = n_ctx <= 16384
-        system_prompt = build_system_prompt(system_context, compact=compact)
+        system_prompt = build_system_prompt(
+            system_context, compact=compact, prompt_config=self._prompt_config,
+        )
         self.messages = [{"role": "system", "content": system_prompt}]
         self._setup_context_manager()
 
@@ -287,6 +293,8 @@ class AgentLoop:
         read_lines = self._effective_read_file_lines(n_ctx)
         _exec_shell_mod.configure_limits(max_output)
         _read_file_mod.configure_limits(read_lines)
+        edit_limits = ToolLimits(max_output_chars=max_output, read_file_lines=read_lines)
+        _edit_file_mod.set_limits(edit_limits)
         self.tools.limits.max_output_chars = max_output
         self.tools.limits.read_file_lines = read_lines
 

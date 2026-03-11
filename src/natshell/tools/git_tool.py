@@ -57,6 +57,13 @@ _CONFIRM_OPERATIONS = {"commit", "stash"}
 _BLOCKED_COMMIT_FLAGS = {"--amend", "--reset-author", "--allow-empty-message"}
 _BLOCKED_COMMIT_PREFIXES = ("--author=", "--date=")
 
+# Flags blocked in git branch — use execute_shell for destructive branch ops
+_BLOCKED_BRANCH_FLAGS = {"-D", "-M", "--force", "--delete"}
+_BLOCKED_BRANCH_PREFIXES = ("--force",)
+
+# Subcommands blocked in git stash — use execute_shell for destructive stash ops
+_BLOCKED_STASH_FLAGS = {"drop", "clear"}
+
 
 def _run_git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run a git command synchronously (to be called via asyncio.to_thread)."""
@@ -211,6 +218,16 @@ async def git_tool(operation: str, args: str = "") -> ToolResult:
 
         elif operation == "branch":
             if extra_args:
+                # Block destructive branch flags
+                for arg in extra_args:
+                    if arg in _BLOCKED_BRANCH_FLAGS or any(
+                        arg.startswith(p) for p in _BLOCKED_BRANCH_PREFIXES
+                    ):
+                        return ToolResult(
+                            error=f"Flag {arg!r} is not allowed via git_tool. "
+                            "Use execute_shell for destructive branch operations.",
+                            exit_code=1,
+                        )
                 # Create a new branch
                 result = await asyncio.to_thread(
                     _run_git, ["branch"] + extra_args
@@ -242,6 +259,13 @@ async def git_tool(operation: str, args: str = "") -> ToolResult:
             return ToolResult(output=_format_commit(result), exit_code=result.returncode)
 
         elif operation == "stash":
+            # Block destructive stash subcommands
+            if extra_args and extra_args[0] in _BLOCKED_STASH_FLAGS:
+                return ToolResult(
+                    error=f"Subcommand {extra_args[0]!r} is not allowed via git_tool. "
+                    "Use execute_shell for destructive stash operations.",
+                    exit_code=1,
+                )
             stash_args = ["stash"] + extra_args if extra_args else ["stash", "list"]
             result = await asyncio.to_thread(_run_git, stash_args)
             return ToolResult(output=_format_stash(result), exit_code=result.returncode)

@@ -10,6 +10,7 @@ import pytest
 from natshell.config import (
     EngineConfig,
     NatShellConfig,
+    PromptConfig,
     load_config,
     save_engine_preference,
 )
@@ -261,3 +262,120 @@ class TestLocalRemoteConflict:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
+
+
+# ─── PromptConfig ────────────────────────────────────────────────────────────
+
+
+class TestPromptConfig:
+    def test_default_values(self):
+        cfg = PromptConfig()
+        assert cfg.extra_instructions == ""
+        assert cfg.persona == ""
+
+    def test_natshell_config_has_prompt(self):
+        cfg = NatShellConfig()
+        assert isinstance(cfg.prompt, PromptConfig)
+
+    def test_loads_prompt_section(self, tmp_path: Path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            [prompt]
+            persona = "pirate assistant"
+            extra_instructions = "say arr"
+        """)
+        )
+
+        cfg = load_config(str(config_file))
+        assert cfg.prompt.persona == "pirate assistant"
+        assert cfg.prompt.extra_instructions == "say arr"
+
+    def test_missing_prompt_section_uses_defaults(self, tmp_path: Path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('[ui]\ntheme = "dark"\n')
+
+        cfg = load_config(str(config_file))
+        assert cfg.prompt.persona == ""
+        assert cfg.prompt.extra_instructions == ""
+
+
+class TestBuildSystemPromptCustomization:
+    def test_custom_persona_replaces_role(self):
+        from natshell.agent.context import SystemContext
+        from natshell.agent.system_prompt import build_system_prompt
+
+        ctx = SystemContext(hostname="test", distro="Test Linux", kernel="5.0")
+        prompt = build_system_prompt(
+            ctx, prompt_config=PromptConfig(persona="expert Python developer")
+        )
+        assert "expert Python developer" in prompt
+
+    def test_extra_instructions_appended(self):
+        from natshell.agent.context import SystemContext
+        from natshell.agent.system_prompt import build_system_prompt
+
+        ctx = SystemContext(hostname="test", distro="Test Linux", kernel="5.0")
+        prompt = build_system_prompt(
+            ctx, prompt_config=PromptConfig(extra_instructions="always say cheers")
+        )
+        assert "always say cheers" in prompt
+        assert "Additional Instructions" in prompt
+
+    def test_safety_rules_always_present(self):
+        from natshell.agent.context import SystemContext
+        from natshell.agent.system_prompt import build_system_prompt
+
+        ctx = SystemContext(hostname="test", distro="Test Linux", kernel="5.0")
+        prompt = build_system_prompt(
+            ctx, prompt_config=PromptConfig(persona="evil assistant")
+        )
+        # Safety rules should always be present regardless of persona
+        assert "IMPORTANT" in prompt
+        assert "real effects" in prompt.lower()
+
+    def test_no_config_uses_defaults(self):
+        from natshell.agent.context import SystemContext
+        from natshell.agent.system_prompt import build_system_prompt
+
+        ctx = SystemContext(hostname="test", distro="Test Linux", kernel="5.0")
+        prompt = build_system_prompt(ctx, prompt_config=None)
+        assert "Additional Instructions" not in prompt
+
+
+# ─── --profile CLI flag ──────────────────────────────────────────────────────
+
+
+class TestProfileCliFlag:
+    def test_invalid_profile_exits_1(self, tmp_path: Path, monkeypatch):
+        import sys
+
+        from natshell.__main__ import main
+
+        # Create a minimal config with no profiles
+        config_dir = tmp_path / ".config" / "natshell"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.toml").write_text('[ui]\ntheme = "dark"\n')
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        sys.argv = ["natshell", "--profile", "nonexistent", "--no-setup"]
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    def test_valid_profile_applies(self, tmp_path: Path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            [profiles.test]
+            ollama_model = "test-model"
+            n_ctx = 16384
+        """)
+        )
+
+        cfg = load_config(str(config_file))
+        from natshell.config import apply_profile
+
+        apply_profile(cfg, "test")
+        assert cfg.ollama.default_model == "test-model"
+        assert cfg.ollama.n_ctx == 16384

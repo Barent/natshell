@@ -4,6 +4,34 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.0] - 2026-03-11
+
+### Security
+
+- Block destructive `git branch` flags (`-D`, `-M`, `--force`, `--delete`) in git_tool — use execute_shell for these operations
+- Block destructive `git stash` subcommands (`drop`, `clear`) in git_tool
+- Remove silent `git reset --hard` from `--update` — now prints manual instructions and exits
+- Add redirect-based SSRF protection in fetch_url — checks final URL hostname after redirects
+
+### Fixed
+
+- edit_file error preview now scales with context window instead of hardcoded 200 lines
+- RemoteEngine HTTP client properly closed on shutdown (try/finally around main run section)
+
+### Added
+
+- System prompt customization via `[prompt]` config section — custom `persona` and `extra_instructions` (core safety rules always included)
+- `--profile NAME` CLI flag to apply a named configuration profile at startup
+- Warning logged when loading a model with unrecognized family (neither qwen nor mistral)
+
+### Improved
+
+- Deduplicated tool prompt formatters in local.py — shared `_format_tool_entries()` helper
+- Deduplicated TOML save functions — `save_ollama_default`, `save_model_config`, and `save_engine_preference` now use `save_config_value`/`save_config_values`
+- Deduplicated `_merge_toml` — loop over `_SECTIONS` tuple instead of 10 copy-pasted blocks
+- Updated classifier from "Alpha" to "Beta" in pyproject.toml
+- Added `package-lock.json` to `.gitignore`
+
 ## [0.1.28] - 2026-03-02
 
 ### Added

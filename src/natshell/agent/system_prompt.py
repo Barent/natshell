@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from natshell.agent.context import SystemContext
+from natshell.config import PromptConfig
 from natshell.platform import current_platform
 
 
@@ -17,15 +18,26 @@ def _platform_role() -> str:
             return "Linux system administration and coding assistant"
 
 
-def build_system_prompt(context: SystemContext, *, compact: bool = False) -> str:
+def build_system_prompt(
+    context: SystemContext,
+    *,
+    compact: bool = False,
+    prompt_config: PromptConfig | None = None,
+) -> str:
     """Construct the full system prompt with role, rules, and system context.
 
     Args:
         context: System context (hostname, distro, etc.)
         compact: When True, omit verbose guidance sections to save ~800-1000
             tokens.  Used for small context windows (≤16K).
+        prompt_config: Optional user customization — custom persona or extra
+            instructions appended to the prompt. Core safety rules are always
+            included regardless of customization.
     """
-    role = _platform_role()
+    if prompt_config and prompt_config.persona:
+        role = prompt_config.persona
+    else:
+        role = _platform_role()
 
     # Sections that are always included
     if compact:
@@ -175,4 +187,8 @@ If the user asks about NatShell, its commands, settings, safety rules, or troubl
 - Topics: overview, commands, config, config_reference, models, safety, tools, troubleshooting
 - To change a setting, use the update_config tool (e.g. update_config section="agent" key="temperature" value="0.7")"""
 
-    return header + code_section + extra_sections + "\n\n/no_think"
+    custom_section = ""
+    if prompt_config and prompt_config.extra_instructions:
+        custom_section = f"\n\n## Additional Instructions\n\n{prompt_config.extra_instructions}"
+
+    return header + code_section + extra_sections + custom_section + "\n\n/no_think"
