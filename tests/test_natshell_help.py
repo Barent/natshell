@@ -36,6 +36,7 @@ class TestStaticTopics:
             "headless",
             "mcp",
             "backup",
+            "prompt_customization",
             "keyboard_shortcuts",
         ],
     )
@@ -232,6 +233,7 @@ class TestDefinition:
             "mcp",
             "backup",
             "keyboard_shortcuts",
+            "prompt_customization",
             "config",
             "config_reference",
             "safety",

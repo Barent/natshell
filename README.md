@@ -181,6 +181,7 @@ Or if installed from source, copy `src/natshell/config.default.toml` directly.
 - **[remote]** — URL, model name, API key for OpenAI-compatible endpoints
 - **[ollama]** — Ollama server URL and default model (used by `/model list` and `/model use`)
 - **[agent]** — max steps (15), temperature (0.3), max tokens (2048)
+- **[prompt]** — `persona` (custom role description) and `extra_instructions` (appended to system prompt). Core safety rules are always included
 - **[safety]** — mode, confirmation regex patterns, blocked regex patterns
 - **[backup]** — backup directory, max backups per file
 - **[mcp]** — MCP server safety mode

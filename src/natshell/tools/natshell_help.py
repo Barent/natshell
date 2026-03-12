@@ -182,9 +182,9 @@ _STATIC_TOPICS: dict[str, str] = {
         "     \"find all Python files larger than 1MB\"\n"
         "     \"edit config.py and change the timeout to 30\"\n\n"
         "  5. Use /help to see all commands, or ask about any topic:\n"
-        "     getting_started, commands, tools, models, profiles, sessions, "
-        "plans, plugins, headless, mcp, backup, keyboard_shortcuts, safety, "
-        "config, troubleshooting"
+        "     getting_started, commands, tools, models, profiles, "
+        "prompt_customization, sessions, plans, plugins, headless, mcp, "
+        "backup, keyboard_shortcuts, safety, config, troubleshooting"
     ),
     "profiles": (
         "Configuration profiles let you switch between different settings "
@@ -297,6 +297,31 @@ _STATIC_TOPICS: dict[str, str] = {
         "Configuration:\n"
         "  Backup pruning keeps a limited number of backups per file.\n"
         "  Old backups are automatically cleaned up."
+    ),
+    "prompt_customization": (
+        "Customize NatShell's system prompt via the [prompt] section in "
+        "~/.config/natshell/config.toml.\n\n"
+        "Available keys:\n"
+        "  persona             — Replace the default role description\n"
+        "  extra_instructions  — Append extra instructions to the prompt\n\n"
+        "Example config:\n"
+        "  [prompt]\n"
+        '  persona = "expert Python developer and DevOps engineer"\n'
+        '  extra_instructions = "Always suggest the simplest solution first"\n\n'
+        "Details:\n"
+        "  - 'persona' replaces the role in the opening line: \"You are NatShell, "
+        "a {persona}...\"\n"
+        "  - 'extra_instructions' is appended as an \"Additional Instructions\" "
+        "section at the end of the system prompt.\n"
+        "  - Core safety rules, behavior rules, and code editing guidance are "
+        "always included regardless of customization.\n"
+        "  - Changes take effect on the next message (prompt is rebuilt each "
+        "turn).\n\n"
+        "You can also set these at runtime:\n"
+        '  update_config section="prompt" key="persona" '
+        'value="senior Rust developer"\n'
+        '  update_config section="prompt" key="extra_instructions" '
+        'value="Prefer functional style"'
     ),
     "keyboard_shortcuts": (
         "Keyboard shortcuts:\n"
