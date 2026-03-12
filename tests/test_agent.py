@@ -1865,6 +1865,93 @@ class TestMistralBareJsonFallback:
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0].name == "execute_shell"
 
+    def test_code_fenced_json_parsed(self):
+        """JSON wrapped in ```json ... ``` code fences is recovered."""
+        content = (
+            '```json\n{"name": "execute_shell",'
+            ' "arguments": {"command": "find / -name config"}}\n```'
+        )
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "execute_shell"
+        assert result.tool_calls[0].arguments == {
+            "command": "find / -name config",
+        }
+
+    def test_code_fenced_no_lang_tag(self):
+        """Code fences without 'json' language tag are also recovered."""
+        content = '```\n{"name": "list_directory", "arguments": {"path": "/etc"}}\n```'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "list_directory"
+
+    def test_text_before_code_fenced_json(self):
+        """Planning text before fenced JSON: tool recovered, text preserved."""
+        content = (
+            "I will search for the config file.\n"
+            '```json\n{"name": "execute_shell",'
+            ' "arguments": {"command": "find / -name config"}}\n```'
+        )
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "execute_shell"
+        # Planning text should be preserved
+        assert result.content is not None
+        assert "search for the config file" in result.content
+
+    def test_code_fenced_json_stripped(self):
+        """Code-fenced JSON is not leaked to UI as visible text."""
+        content = '```json\n{"name": "execute_shell", "arguments": {"command": "ls"}}\n```'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        # Content should be None (no text besides the fenced JSON)
+        assert result.content is None
+
+    def test_bare_json_stripped(self):
+        """Bare JSON tool calls are not leaked to UI as visible text."""
+        content = '{"name": "execute_shell", "arguments": {"command": "ls"}}'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.content is None
+
+    def test_code_fenced_array_parsed(self):
+        """JSON array wrapped in code fences is recovered."""
+        content = '```json\n[{"name": "execute_shell", "arguments": {"command": "ls"}}]\n```'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "execute_shell"
+
+    def test_code_fenced_non_tool_json_ignored(self):
+        """Non-tool JSON inside code fences is not treated as a tool call."""
+        content = '```json\n{"config": "value", "debug": true}\n```'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 0
+
+    def test_code_fenced_not_applied_to_qwen(self):
+        """Code-fence JSON fallback does NOT fire for Qwen models."""
+        content = '```json\n{"name": "execute_shell", "arguments": {"command": "ls"}}\n```'
+        result = _qwen_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 0
+
+
+# ─── compact Mistral anti-fence instruction ──────────────────────────────────
+
+
+class TestMistralPromptInstructions:
+    """Verify Mistral prompt formatting includes anti-pattern instructions."""
+
+    def test_compact_mistral_anti_fence_instruction(self):
+        """Compact Mistral prompt mentions code fences."""
+        compact = _format_tools_for_prompt_mistral(_SAMPLE_TOOLS, compact=True)
+        assert "code fence" in compact.lower()
+        assert "Do NOT describe commands in prose" in compact
+
+    def test_full_mistral_anti_fence_instruction(self):
+        """Full Mistral prompt also mentions code fences."""
+        full = _format_tools_for_prompt_mistral(_SAMPLE_TOOLS, compact=False)
+        assert "code fence" in full.lower()
+        assert "Do NOT describe commands in prose" in full
+
 
 # ─── skip_intent_detection ───────────────────────────────────────────────────
 

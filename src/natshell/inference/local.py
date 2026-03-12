@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 # Regex to match [TOOL_CALLS] JSON array (Mistral style)
 _MISTRAL_TOOL_CALLS_RE = re.compile(r"\[TOOL_CALLS\]\s*(\[.*?\])", re.DOTALL)
+# Regex to extract JSON from markdown code fences (Mistral sometimes wraps tool calls)
+_CODE_FENCE_JSON_RE = re.compile(
+    r"```(?:json)?\s*\n?\s*(\{.*?\}|\[.*?\])\s*\n?\s*```", re.DOTALL
+)
 # Regex to match <think>...</think> blocks (including empty ones)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 # Regex to match unclosed <think> blocks (truncated responses)
@@ -164,8 +168,9 @@ def _format_tools_for_prompt_mistral(
     if compact:
         header = [
             "# Available Tools",
-            "You MUST use the [TOOL_CALLS] format to call tools.",
-            "NEVER substitute pseudocode or Python scripts for tool calls.",
+            "You MUST call tools using the exact format below.",
+            "Do NOT describe commands in prose — call the tool directly.",
+            "NEVER wrap tool calls in markdown code fences.",
             '[TOOL_CALLS] [{"name": "tool_name", "arguments": {...}}]',
             "",
         ]
@@ -177,6 +182,8 @@ def _format_tools_for_prompt_mistral(
             "",
             '[TOOL_CALLS] [{"name": "tool_name", "arguments": {"param": "value"}}]',
             "",
+            "Do NOT describe commands in prose — call the tool directly.",
+            "NEVER wrap tool calls in markdown code fences.",
             "You can call multiple tools at once by including multiple objects in the array.",
             "",
         ]
@@ -431,12 +438,26 @@ class LocalEngine:
                     )
 
         # Fallback: Mistral forgot the [TOOL_CALLS] prefix but emitted valid JSON.
-        # Accept a bare object {"name": ..., "arguments": ...} or array thereof.
+        # Accept a bare object {"name": ..., "arguments": ...} or array thereof,
+        # either as bare JSON at the start, or wrapped in markdown code fences.
+        _bare_json_recovered = False
         if not tool_calls and self.model_family == "mistral":
+            json_text = None
+
+            # Strategy A: bare JSON at start of content
             stripped = content.strip()
             if stripped.startswith(("{", "[")):
+                json_text = stripped
+
+            # Strategy B: JSON inside markdown code fences
+            if json_text is None:
+                fence_match = _CODE_FENCE_JSON_RE.search(content)
+                if fence_match:
+                    json_text = fence_match.group(1)
+
+            if json_text is not None:
                 try:
-                    parsed = json.loads(stripped)
+                    parsed = json.loads(json_text)
                     candidates = parsed if isinstance(parsed, list) else [parsed]
                     if all(
                         isinstance(c, dict) and "name" in c and "arguments" in c
@@ -453,6 +474,7 @@ class LocalEngine:
                                     arguments=arguments,
                                 )
                             )
+                        _bare_json_recovered = True
                         logger.debug(
                             "Recovered %d bare-JSON Mistral tool call(s) "
                             "(missing [TOOL_CALLS] prefix)",
@@ -466,6 +488,24 @@ class LocalEngine:
         content = _THINK_UNCLOSED_RE.sub("", content)  # handle truncated think blocks
         content = _TOOL_CALL_RE.sub("", content)
         content = _MISTRAL_TOOL_CALLS_RE.sub("", content)
+
+        # Strip recovered bare JSON / code-fenced JSON so it doesn't leak to UI
+        if _bare_json_recovered:
+            content = _CODE_FENCE_JSON_RE.sub("", content)
+            # If remaining content is bare JSON matching a tool call, clear it
+            remaining = content.strip()
+            if remaining.startswith(("{", "[")):
+                try:
+                    parsed = json.loads(remaining)
+                    candidates = parsed if isinstance(parsed, list) else [parsed]
+                    if all(
+                        isinstance(c, dict) and "name" in c and "arguments" in c
+                        for c in candidates
+                    ):
+                        content = ""
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass
+
         content = content.strip() or None
 
         usage = response.get("usage", {})
