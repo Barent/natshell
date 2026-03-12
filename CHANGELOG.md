@@ -4,6 +4,20 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.2] - 2026-03-12
+
+### Added
+
+- Document `[prompt]` customization (persona and extra_instructions) in README Configuration section
+- Add `prompt_customization` topic to `natshell_help` tool with examples and usage guidance
+
+## [1.0.1] - 2026-03-12
+
+### Fixed
+
+- Fix Mistral Nemo code-fence tool calls (```` ```json [TOOL_CALLS] ``` ````) not being parsed — strip wrapping fences before JSON extraction
+- Fix bare JSON tool-call arrays leaking to the UI when Mistral omits the `[TOOL_CALLS]` prefix — detect and parse `[{"name":...}]` patterns in response text
+
 ## [1.0.0] - 2026-03-11
 
 ### Security

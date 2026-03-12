@@ -1,6 +1,7 @@
 # NatShell
 
 [![PyPI version](https://img.shields.io/pypi/v/natshell)](https://pypi.org/project/natshell/)
+[![CI](https://github.com/Barent/natshell/actions/workflows/ci.yml/badge.svg)](https://github.com/Barent/natshell/actions/workflows/ci.yml)
 
 Natural language shell interface for Linux, macOS, and WSL — a local-first agentic TUI powered by a bundled LLM.
 
@@ -80,7 +81,7 @@ NatShell uses a ReAct-style agent loop — the model reasons about your request,
 - Prints helpful reinstall instructions if GPU support is missing
 
 ### Tools
-The agent has access to 10 tools:
+The agent has access to 12 tools:
 - **execute_shell** — Run any shell command via bash
 - **read_file** — Read file contents
 - **write_file** — Write or append to files (always requires confirmation)
@@ -91,6 +92,8 @@ The agent has access to 10 tools:
 - **git_tool** — Structured git operations (status, diff, log, branch, commit, stash)
 - **natshell_help** — Look up NatShell documentation by topic
 - **fetch_url** — Fetch URL contents (blocks private/internal IPs for SSRF protection)
+- **kiwix_search** — Search offline Wikipedia/Kiwix ZIM archives
+- **update_config** — Modify NatShell configuration at runtime
 
 ### TUI Commands
 
@@ -261,7 +264,7 @@ src/natshell/
 
 ```bash
 source .venv/bin/activate
-pytest                    # Run tests (765+ tests)
+pytest                    # Run tests (1,175+ tests)
 ruff check src/ tests/    # Lint
 ```
 

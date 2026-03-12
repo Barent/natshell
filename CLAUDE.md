@@ -118,7 +118,7 @@ Default: Qwen3-4B, auto-downloaded to `~/.local/share/natshell/models/`. Context
 
 ## Testing
 
-Run with `pytest` (904 tests, 33 files). Mock `InferenceEngine` for agent loop tests. Use `/tmp` for write_file tests.
+Run with `pytest` (1,175 tests, 39 files). Mock `InferenceEngine` for agent loop tests. Use `/tmp` for write_file tests.
 
 Key test files: `test_agent.py`, `test_safety.py`, `test_tools.py`, `test_coding_tools.py`, `test_file_tracker.py`, `test_sessions.py`, `test_backup.py`, `test_headless.py`, `test_git_tool.py`, `test_mcp_server.py`, `test_plugins.py`, `test_plan_*.py`, `test_engine_*.py`, `test_ollama*.py`, `test_slash_commands.py`, `test_context_manager.py`, `test_widgets.py`, `test_commands.py`, `test_gpu.py`, `test_platform.py`, `test_clipboard.py`, `test_fetch_url.py`, `test_natshell_help.py`, `test_history_input.py`, `test_prompt_cache.py`, `test_context.py`
 

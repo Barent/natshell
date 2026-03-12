@@ -46,6 +46,7 @@ dev = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/Barent/natshell"
 Repository = "https://github.com/Barent/natshell"
 Issues = "https://github.com/Barent/natshell/issues"
 
