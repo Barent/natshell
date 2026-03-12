@@ -281,26 +281,50 @@ class LocalEngine:
     def _normalize_messages_for_mistral(
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Merge mid-conversation system messages into the initial system message.
+        """Normalize messages for Mistral's strict role-alternation requirement.
 
-        Mistral's chat template only allows a single system message at position 0.
-        Any subsequent system messages (e.g. planning/analysis mode hints injected
-        by the agent loop) must be folded into the initial system message to avoid
-        the "Only user and assistant roles are supported" template error.
+        Mistral's chat template requires: system? → (user → assistant)*.
+        Two passes fix violations:
+
+        Pass 1: Fold mid-conversation system messages into the initial system
+        message (the template only allows one system message at position 0).
+
+        Pass 2: Merge consecutive same-role messages. This happens when e.g.
+        /cmd appends a user message with command output and then the next user
+        input appends another user message. Never merge assistant messages that
+        carry tool_calls, and never merge or touch tool-role messages.
         """
-        result: list[dict[str, Any]] = []
+        # --- Pass 1: fold mid-conversation system messages ---
+        pass1: list[dict[str, Any]] = []
         system_extras: list[str] = []
 
         for msg in messages:
-            if msg["role"] == "system" and result:
-                # Subsequent system message — collect content to merge later
+            if msg["role"] == "system" and pass1:
                 system_extras.append(msg["content"])
             else:
-                result.append(msg)
+                pass1.append(msg)
 
-        if system_extras and result and result[0]["role"] == "system":
-            merged = result[0]["content"] + "\n\n" + "\n\n".join(system_extras)
-            result[0] = {**result[0], "content": merged}
+        if system_extras and pass1 and pass1[0]["role"] == "system":
+            merged = pass1[0]["content"] + "\n\n" + "\n\n".join(system_extras)
+            pass1[0] = {**pass1[0], "content": merged}
+
+        # --- Pass 2: merge consecutive same-role messages ---
+        result: list[dict[str, Any]] = []
+        for msg in pass1:
+            role = msg["role"]
+            if (
+                result
+                and role == result[-1]["role"]
+                and role in ("user", "assistant")
+                and "tool_calls" not in msg
+                and "tool_calls" not in result[-1]
+            ):
+                result[-1] = {
+                    **result[-1],
+                    "content": result[-1]["content"] + "\n\n" + msg["content"],
+                }
+            else:
+                result.append(msg)
 
         return result
 

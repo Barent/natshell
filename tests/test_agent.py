@@ -1953,6 +1953,174 @@ class TestMistralPromptInstructions:
         assert "Do NOT describe commands in prose" in full
 
 
+# ─── Mistral message normalization (role alternation) ────────────────────────
+
+
+def _normalize(messages):
+    """Call _normalize_messages_for_mistral without instantiating LocalEngine."""
+    engine = object.__new__(LocalEngine)
+    return engine._normalize_messages_for_mistral(messages)
+
+
+class TestMistralMessageNormalization:
+    """Verify that _normalize_messages_for_mistral enforces strict role alternation."""
+
+    def test_consecutive_user_messages_merged(self):
+        """Two consecutive user messages are merged with \\n\\n separator."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "first"},
+            {"role": "user", "content": "second"},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 2
+        assert result[1]["role"] == "user"
+        assert result[1]["content"] == "first\n\nsecond"
+
+    def test_three_consecutive_user_messages_merged(self):
+        """Three consecutive user messages collapse into one."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "a"},
+            {"role": "user", "content": "b"},
+            {"role": "user", "content": "c"},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 2
+        assert result[1]["content"] == "a\n\nb\n\nc"
+
+    def test_system_between_users_folded_then_users_merged(self):
+        """Mid-conversation system is folded (Pass 1), then adjacent users merge (Pass 2)."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "u1"},
+            {"role": "system", "content": "hint"},
+            {"role": "user", "content": "u2"},
+        ]
+        result = _normalize(msgs)
+        # system hint folded into initial system message
+        assert result[0]["role"] == "system"
+        assert "hint" in result[0]["content"]
+        # the two user messages (previously separated by system) are now merged
+        assert len(result) == 2
+        assert result[1]["content"] == "u1\n\nu2"
+
+    def test_tool_call_pairs_preserved(self):
+        """Assistant with tool_calls → tool response pair is never merged."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "do something"},
+            {"role": "assistant", "content": "I'll run a command", "tool_calls": [{"id": "1", "function": {"name": "execute_shell", "arguments": '{"command":"ls"}'}}]},
+            {"role": "tool", "content": "file1\nfile2", "tool_call_id": "1"},
+            {"role": "assistant", "content": "Here are your files."},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 5
+        assert result[2]["role"] == "assistant"
+        assert "tool_calls" in result[2]
+        assert result[3]["role"] == "tool"
+        assert result[4]["role"] == "assistant"
+
+    def test_assistant_with_tool_calls_not_merged(self):
+        """An assistant message with tool_calls is never merged with adjacent assistant."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "thinking"},
+            {"role": "assistant", "content": "calling", "tool_calls": [{"id": "1"}]},
+        ]
+        result = _normalize(msgs)
+        # Should NOT merge because second has tool_calls
+        assert len(result) == 4
+        assert result[2]["content"] == "thinking"
+        assert "tool_calls" in result[3]
+
+    def test_plain_consecutive_assistants_merged(self):
+        """Consecutive plain assistant messages (no tool_calls) are merged."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "part 1"},
+            {"role": "assistant", "content": "part 2"},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 3
+        assert result[2]["content"] == "part 1\n\npart 2"
+
+    def test_normal_alternation_unchanged(self):
+        """Properly alternating messages pass through unchanged."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+            {"role": "user", "content": "bye"},
+            {"role": "assistant", "content": "goodbye"},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 5
+        assert [m["role"] for m in result] == ["system", "user", "assistant", "user", "assistant"]
+
+    def test_cmd_then_new_question(self):
+        """Realistic /cmd scenario: command output (user) → new question (user) merged."""
+        msgs = [
+            {"role": "system", "content": "You are NatShell."},
+            {"role": "user", "content": "list files"},
+            {"role": "assistant", "content": "Here are the files."},
+            # /cmd appends command output as user message
+            {"role": "user", "content": "Command output:\n$ ls\nfile1.py  file2.py"},
+            # Next user question
+            {"role": "user", "content": "What does file1.py do?"},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 4
+        assert result[3]["role"] == "user"
+        assert "Command output:" in result[3]["content"]
+        assert "What does file1.py do?" in result[3]["content"]
+
+    def test_context_summary_system_merged(self):
+        """Context summary system message mid-conversation is folded into initial system."""
+        msgs = [
+            {"role": "system", "content": "You are NatShell."},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+            {"role": "system", "content": "[Context summary] Previous conversation discussed files."},
+            {"role": "user", "content": "continue"},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 4
+        assert result[0]["role"] == "system"
+        assert "[Context summary]" in result[0]["content"]
+        assert result[3]["role"] == "user"
+
+    def test_empty_messages(self):
+        """Empty input returns empty output."""
+        assert _normalize([]) == []
+
+    def test_system_only(self):
+        """Single system message passes through."""
+        msgs = [{"role": "system", "content": "sys"}]
+        result = _normalize(msgs)
+        assert len(result) == 1
+        assert result[0]["role"] == "system"
+
+    def test_tool_messages_never_merged(self):
+        """Tool-role messages are never touched or merged."""
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "call", "tool_calls": [{"id": "1"}]},
+            {"role": "tool", "content": "result1", "tool_call_id": "1"},
+            {"role": "assistant", "content": "call2", "tool_calls": [{"id": "2"}]},
+            {"role": "tool", "content": "result2", "tool_call_id": "2"},
+            {"role": "assistant", "content": "done"},
+        ]
+        result = _normalize(msgs)
+        assert len(result) == 7
+        assert [m["role"] for m in result] == [
+            "system", "user", "assistant", "tool", "assistant", "tool", "assistant"
+        ]
+
+
 # ─── skip_intent_detection ───────────────────────────────────────────────────
 
 
