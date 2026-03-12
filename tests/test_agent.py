@@ -2010,7 +2010,11 @@ class TestMistralMessageNormalization:
         msgs = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "do something"},
-            {"role": "assistant", "content": "I'll run a command", "tool_calls": [{"id": "1", "function": {"name": "execute_shell", "arguments": '{"command":"ls"}'}}]},
+            {
+                "role": "assistant",
+                "content": "I'll run a command",
+                "tool_calls": [{"id": "1"}],
+            },
             {"role": "tool", "content": "file1\nfile2", "tool_call_id": "1"},
             {"role": "assistant", "content": "Here are your files."},
         ]
@@ -2083,7 +2087,10 @@ class TestMistralMessageNormalization:
             {"role": "system", "content": "You are NatShell."},
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},
-            {"role": "system", "content": "[Context summary] Previous conversation discussed files."},
+            {
+                "role": "system",
+                "content": "[Context summary] Previous conversation discussed files.",
+            },
             {"role": "user", "content": "continue"},
         ]
         result = _normalize(msgs)
