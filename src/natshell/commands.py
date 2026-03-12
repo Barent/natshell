@@ -31,6 +31,10 @@ def show_help(conversation: ScrollableContainer) -> None:
         "  [bold cyan]/profile <name>[/]        Apply a configuration profile\n"
         "  [bold cyan]/keys[/]                  Show keyboard shortcuts\n"
         "  [bold cyan]/history[/]               Show conversation context size\n"
+        "  [bold cyan]/memory[/]                Show working memory content\n"
+        "  [bold cyan]/memory reload[/]         Re-read agents.md from disk\n"
+        "  [bold cyan]/memory clear[/]          Clear working memory file\n"
+        "  [bold cyan]/memory path[/]           Show memory file path\n"
         "  [bold cyan]/undo[/]                  Undo last file edit or write\n"
         "  [bold cyan]/save [name][/]           Save current session\n"
         "  [bold cyan]/load [id][/]             Load a saved session\n"
@@ -102,6 +106,88 @@ def show_history_info(agent: AgentLoop, conversation: ScrollableContainer) -> No
             parts.append(f"  Trimmed: {cm.trimmed_count} messages compressed")
 
     conversation.mount(SystemMessage("\n".join(parts)))
+
+
+def show_memory(
+    agent: AgentLoop,
+    conversation: ScrollableContainer,
+    subcommand: str = "",
+) -> None:
+    """Handle /memory subcommands."""
+    from pathlib import Path
+
+    from natshell.agent.working_memory import (
+        effective_memory_chars,
+        find_memory_file,
+        load_working_memory,
+        memory_file_path,
+        should_inject_memory,
+    )
+
+    sub = subcommand.strip().lower()
+
+    if sub == "path":
+        path = memory_file_path(Path.cwd())
+        exists = path.is_file()
+        status = "exists" if exists else "does not exist yet"
+        conversation.mount(SystemMessage(f"Memory path: {path} ({status})"))
+        return
+
+    if sub == "clear":
+        path = find_memory_file(Path.cwd())
+        if path is None:
+            conversation.mount(SystemMessage("No memory file found — nothing to clear."))
+            return
+        try:
+            path.write_text("", encoding="utf-8")
+            agent.reload_working_memory()
+            conversation.mount(SystemMessage(f"Cleared: {path}"))
+        except OSError as exc:
+            conversation.mount(SystemMessage(f"Error clearing memory: {exc}"))
+        return
+
+    if sub == "reload":
+        content = agent.reload_working_memory()
+        if content:
+            conversation.mount(SystemMessage(
+                f"[bold]Memory reloaded[/] ({len(content)} chars)\n\n"
+                f"{_escape(content[:2000])}"
+            ))
+        else:
+            conversation.mount(SystemMessage(
+                "No working memory found (or context too small to inject)."
+            ))
+        return
+
+    # Default: show current memory
+    try:
+        n_ctx = agent.engine.engine_info().n_ctx or 4096
+    except (AttributeError, TypeError):
+        n_ctx = 4096
+
+    budget = effective_memory_chars(n_ctx)
+    mem = load_working_memory(Path.cwd(), max_chars=budget)
+    if mem is None:
+        target = memory_file_path(Path.cwd())
+        conversation.mount(SystemMessage(
+            f"No working memory found.\n"
+            f"The agent will create it at: {target}\n"
+            f"Or create it yourself: write anything to that file."
+        ))
+        return
+
+    injected = should_inject_memory(n_ctx)
+    status = "injected into prompt" if injected else f"NOT injected (n_ctx={n_ctx} < 16384)"
+    scope = "project-local" if mem.is_project_local else "global"
+    lines = [
+        f"[bold]Working Memory[/] ({scope}, {len(mem.content)}/{budget} chars, {status})",
+        f"  Source: {mem.source}",
+        "",
+        _escape(mem.content[:2000]),
+    ]
+    if len(mem.content) > 2000:
+        lines.append(f"\n[dim]... ({len(mem.content) - 2000} more chars)[/]")
+    conversation.mount(SystemMessage("\n".join(lines)))
 
 
 def handle_undo(conversation: ScrollableContainer) -> None:

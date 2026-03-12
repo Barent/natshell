@@ -238,6 +238,7 @@ class TestDefinition:
             "config_reference",
             "safety",
             "kiwix",
+            "memory",
         }
         assert set(VALID_TOPICS) == expected
 

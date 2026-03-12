@@ -17,7 +17,11 @@ def _effective_plan_max_steps(n_ctx: int, configured: int = _DEFAULT_PLAN_MAX_ST
     """
     if configured != _DEFAULT_PLAN_MAX_STEPS:
         return configured
-    if n_ctx >= 131072:
+    if n_ctx >= 1048576:
+        return 120
+    elif n_ctx >= 524288:
+        return 90
+    elif n_ctx >= 131072:
         return 65
     elif n_ctx >= 65536:
         return 55
@@ -63,6 +67,7 @@ def _build_step_prompt(
     *,
     completed_files: list[str] | None = None,
     n_ctx: int = 4096,
+    working_memory: str | None = None,
 ) -> str:
     """Build a focused prompt for a single plan step.
 
@@ -77,6 +82,7 @@ def _build_step_prompt(
         max_steps: Tool call budget for this step.
         completed_files: Paths modified/created by previous steps with annotations.
         n_ctx: Engine context window size — controls detail level.
+        working_memory: Optional agents.md content to inject for cross-step context.
     """
     parts = [f"Execute this task (step {step.number} of {len(plan.steps)}):"]
 
@@ -99,6 +105,12 @@ def _build_step_prompt(
         parts.append("\nFiles created/modified by previous steps:")
         for entry in completed_files:
             parts.append(f"  {entry}")
+
+    # Working memory (agents.md) for cross-step context.
+    # Intentionally read-only: step agents receive content for context
+    # but are not told the file path or instructed to update it.
+    if working_memory:
+        parts.append(f"\nWorking memory:\n{working_memory}")
 
     parts.append(f"\n## {step.title}\n")
     parts.append(step.body)
@@ -141,7 +153,11 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
     # Determine context tier
     thorough = n_ctx >= 32768
     # Budget hint: approximate tool calls available
-    if n_ctx >= 131072:
+    if n_ctx >= 1048576:
+        budget = 120
+    elif n_ctx >= 524288:
+        budget = 90
+    elif n_ctx >= 131072:
         budget = 65
     elif n_ctx >= 65536:
         budget = 55

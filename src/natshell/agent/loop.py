@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator
 from natshell.agent.context import SystemContext
 from natshell.agent.context_manager import ContextManager
 from natshell.agent.system_prompt import build_system_prompt
-from natshell.config import AgentConfig, ModelConfig, PromptConfig
+from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.tools import edit_file as _edit_file_mod
@@ -125,6 +125,7 @@ class AgentLoop:
         config: AgentConfig,
         fallback_config: ModelConfig | None = None,
         prompt_config: PromptConfig | None = None,
+        memory_config: MemoryConfig | None = None,
     ) -> None:
         self.engine = engine
         self.tools = tools
@@ -132,6 +133,7 @@ class AgentLoop:
         self.config = config
         self.fallback_config = fallback_config
         self._prompt_config = prompt_config
+        self._memory_config = memory_config or MemoryConfig()
         self._system_context: SystemContext | None = None
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
@@ -159,12 +161,79 @@ class AgentLoop:
             n_ctx = self.engine.engine_info().n_ctx or 4096
         except (AttributeError, TypeError):
             n_ctx = 4096
-        compact = n_ctx <= 16384
+        compact = n_ctx < 16384
+
+        # Working memory injection
+        working_memory: str | None = None
+        memory_path_str = ""
+        effective_chars = self._memory_config.max_chars
+        if self._memory_config.enabled:
+            from natshell.agent.working_memory import (
+                effective_memory_chars,
+                load_working_memory,
+                memory_file_path,
+                should_inject_memory,
+            )
+
+            mem_path = memory_file_path(Path.cwd())
+            memory_path_str = str(mem_path)
+            if should_inject_memory(n_ctx, self._memory_config.min_ctx):
+                effective_chars = effective_memory_chars(n_ctx, self._memory_config.max_chars)
+                mem = load_working_memory(Path.cwd(), effective_chars)
+                if mem is not None:
+                    working_memory = mem.content
+
         system_prompt = build_system_prompt(
-            system_context, compact=compact, prompt_config=self._prompt_config,
+            system_context,
+            compact=compact,
+            prompt_config=self._prompt_config,
+            working_memory=working_memory,
+            memory_path=memory_path_str,
+            max_memory_chars=effective_chars,
         )
         self.messages = [{"role": "system", "content": system_prompt}]
         self._setup_context_manager()
+
+    def reload_working_memory(self) -> str | None:
+        """Re-read agents.md and update the system prompt in-place.
+
+        Returns the memory content if loaded, or None.
+        """
+        if not self.messages or not self._system_context:
+            return None
+
+        from natshell.agent.working_memory import (
+            load_working_memory,
+            memory_file_path,
+            should_inject_memory,
+        )
+
+        try:
+            n_ctx = self.engine.engine_info().n_ctx or 4096
+        except (AttributeError, TypeError):
+            n_ctx = 4096
+
+        if not should_inject_memory(n_ctx, self._memory_config.min_ctx):
+            return None
+
+        from natshell.agent.working_memory import effective_memory_chars
+
+        effective_chars = effective_memory_chars(n_ctx, self._memory_config.max_chars)
+        mem = load_working_memory(Path.cwd(), effective_chars)
+        content = mem.content if mem else None
+        mem_path = str(memory_file_path(Path.cwd()))
+
+        compact = n_ctx < 16384
+        system_prompt = build_system_prompt(
+            self._system_context,
+            compact=compact,
+            prompt_config=self._prompt_config,
+            working_memory=content,
+            memory_path=mem_path,
+            max_memory_chars=effective_chars,
+        )
+        self.messages[0] = {"role": "system", "content": system_prompt}
+        return content
 
     async def swap_engine(self, new_engine: InferenceEngine) -> None:
         """Replace the inference engine at runtime. Clears conversation history."""
@@ -203,7 +272,11 @@ class AgentLoop:
         """
         if self.config.max_steps != self._DEFAULT_MAX_STEPS:
             return self.config.max_steps
-        if n_ctx >= 262144:
+        if n_ctx >= 1048576:
+            return 200
+        elif n_ctx >= 524288:
+            return 150
+        elif n_ctx >= 262144:
             return 120
         elif n_ctx >= 131072:
             return 60
@@ -217,7 +290,11 @@ class AgentLoop:
 
     def _effective_max_output_chars(self, n_ctx: int) -> int:
         """Scale shell output truncation with context window."""
-        if n_ctx >= 262144:
+        if n_ctx >= 1048576:
+            return 128000
+        elif n_ctx >= 524288:
+            return 96000
+        elif n_ctx >= 262144:
             return 64000
         elif n_ctx >= 131072:
             return 32000
@@ -231,7 +308,11 @@ class AgentLoop:
 
     def _effective_read_file_lines(self, n_ctx: int) -> int:
         """Scale read_file default line count with context window."""
-        if n_ctx >= 262144:
+        if n_ctx >= 1048576:
+            return 8000
+        elif n_ctx >= 524288:
+            return 6000
+        elif n_ctx >= 262144:
             return 4000
         elif n_ctx >= 131072:
             return 3000
@@ -323,7 +404,7 @@ class AgentLoop:
         if tool_schemas:
             from natshell.inference.local import _format_tools_for_prompt
 
-            compact = n_ctx <= 16384
+            compact = n_ctx < 16384
             tool_text = _format_tools_for_prompt(tool_schemas, compact=compact)
             if tokenizer_fn:
                 try:

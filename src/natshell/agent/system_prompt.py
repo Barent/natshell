@@ -23,6 +23,9 @@ def build_system_prompt(
     *,
     compact: bool = False,
     prompt_config: PromptConfig | None = None,
+    working_memory: str | None = None,
+    memory_path: str = "",
+    max_memory_chars: int = 4000,
 ) -> str:
     """Construct the full system prompt with role, rules, and system context.
 
@@ -33,6 +36,10 @@ def build_system_prompt(
         prompt_config: Optional user customization — custom persona or extra
             instructions appended to the prompt. Core safety rules are always
             included regardless of customization.
+        working_memory: Optional content from agents.md to inject into the
+            prompt. Pass None to omit.
+        memory_path: Filesystem path to the agents.md file, shown so the
+            agent knows where to write updates.
     """
     if prompt_config and prompt_config.persona:
         role = prompt_config.persona
@@ -187,8 +194,18 @@ If the user asks about NatShell, its commands, settings, safety rules, or troubl
 - Topics: overview, commands, config, config_reference, models, safety, tools, troubleshooting
 - To change a setting, use the update_config tool (e.g. update_config section="agent" key="temperature" value="0.7")"""
 
+    memory_section = ""
+    if working_memory and not compact:
+        memory_section = (
+            f"\n\n## Working Memory\n\n"
+            f"Your persistent working memory file is at `{memory_path}`. Use write_file or\n"
+            f"edit_file to update it. Keep entries concise (under {max_memory_chars} chars total). Remove\n"
+            f"stale entries when updating. Do NOT store secrets or credentials.\n\n"
+            f"<working_memory>\n{working_memory}\n</working_memory>"
+        )
+
     custom_section = ""
     if prompt_config and prompt_config.extra_instructions:
         custom_section = f"\n\n## Additional Instructions\n\n{prompt_config.extra_instructions}"
 
-    return header + code_section + extra_sections + custom_section + "\n\n/no_think"
+    return header + code_section + memory_section + extra_sections + custom_section + "\n\n/no_think"

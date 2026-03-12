@@ -379,6 +379,7 @@ def main() -> None:
         config=config.agent,
         fallback_config=fallback_config,
         prompt_config=config.prompt,
+        memory_config=config.memory,
     )
 
     # Gather system context and initialize agent

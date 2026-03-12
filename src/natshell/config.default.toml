@@ -184,6 +184,15 @@ theme = "dark"
 # n_ctx = 4096
 # temperature = 0.3
 
+# ─── Working Memory ────────────────────────────────────────────────
+# The agent can read/write a persistent scratchpad file (agents.md)
+# to remember facts across sessions and plan steps.
+#
+# [memory]
+# enabled = true
+# max_chars = 4000        # Base character budget (~1000 tokens); auto-scales up with context window
+# min_ctx = 16384         # Skip injection below this context window size
+
 # ─── Kiwix Integration ──────────────────────────────────────────────
 # kiwix_search tool queries a local kiwix-serve instance for offline
 # Wikipedia, Stack Overflow, and documentation (ZIM archive files).

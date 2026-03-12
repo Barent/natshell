@@ -225,6 +225,14 @@ class TestEffectiveMaxSteps:
         agent = self._make_loop(max_steps=15)
         assert agent._effective_max_steps(262144) == 120
 
+    def test_scales_to_150_for_512k_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(524288) == 150
+
+    def test_scales_to_200_for_1m_ctx(self):
+        agent = self._make_loop(max_steps=15)
+        assert agent._effective_max_steps(1048576) == 200
+
     def test_explicit_override_respected(self):
         """When user sets max_steps != 15, auto-scaling is disabled."""
         agent = self._make_loop(max_steps=10)
@@ -655,6 +663,14 @@ class TestOutputCharsScaling:
         agent = self._make_loop()
         assert agent._effective_max_output_chars(262144) == 64000
 
+    def test_512k_context_96000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(524288) == 96000
+
+    def test_1m_context_128000(self):
+        agent = self._make_loop()
+        assert agent._effective_max_output_chars(1048576) == 128000
+
 
 # ─── Read file lines scaling ────────────────────────────────────────────────
 
@@ -690,6 +706,14 @@ class TestReadFileLinesScaling:
     def test_262k_context_4000(self):
         agent = self._make_loop()
         assert agent._effective_read_file_lines(262144) == 4000
+
+    def test_512k_context_6000(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(524288) == 6000
+
+    def test_1m_context_8000(self):
+        agent = self._make_loop()
+        assert agent._effective_read_file_lines(1048576) == 8000
 
 
 # ─── Edit failure completion guard ──────────────────────────────────────────
@@ -1625,11 +1649,11 @@ class TestCompactSystemPrompt:
         assert "## Analysis & Review" in prompt
         assert "## NatShell Configuration" in prompt
 
-    def test_16k_context_selects_compact(self):
-        """A 16K context window (boundary) should still use compact mode."""
+    def test_16k_context_selects_full(self):
+        """A 16K context window (boundary) should use full mode, not compact."""
         agent = _make_agent_with_ctx(n_ctx=16384)
         prompt = agent.messages[0]["content"]
-        assert "## Git Integration" not in prompt
+        assert "## Git Integration" in prompt
 
     def test_compact_prompt_shorter_than_full(self):
         """Compact prompt should be at least 2000 chars shorter than full."""
@@ -1932,6 +1956,50 @@ class TestMistralBareJsonFallback:
         content = '```json\n{"name": "execute_shell", "arguments": {"command": "ls"}}\n```'
         result = _qwen_parse(_make_llama_response(content))
         assert len(result.tool_calls) == 0
+
+    def test_bare_json_no_arguments_key(self):
+        """Bare JSON with no 'arguments' key is accepted (arguments={})."""
+        content = '[{"name": "list_directory"}]'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "list_directory"
+        assert result.tool_calls[0].arguments == {}
+
+    def test_bare_json_flat_arguments(self):
+        """Bare JSON with args at top level (not nested under 'arguments')."""
+        content = (
+            '[{"name": "execute_shell",'
+            ' "command": "nmap -sn 192.168.5.0/24", "timeout": 30}]'
+        )
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "execute_shell"
+        assert result.tool_calls[0].arguments == {
+            "command": "nmap -sn 192.168.5.0/24",
+            "timeout": 30,
+        }
+
+    def test_tool_calls_prefix_no_arguments_key(self):
+        """[TOOL_CALLS] with no 'arguments' key — args at top level."""
+        content = (
+            '[TOOL_CALLS] [{"name": "execute_shell",'
+            ' "command": "ls -la", "timeout": 10}]'
+        )
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "execute_shell"
+        assert result.tool_calls[0].arguments == {
+            "command": "ls -la",
+            "timeout": 10,
+        }
+
+    def test_tool_calls_prefix_empty_arguments(self):
+        """[TOOL_CALLS] with no 'arguments' key and no other keys."""
+        content = '[TOOL_CALLS] [{"name": "list_directory"}]'
+        result = _mistral_parse(_make_llama_response(content))
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "list_directory"
+        assert result.tool_calls[0].arguments == {}
 
 
 # ─── compact Mistral anti-fence instruction ──────────────────────────────────

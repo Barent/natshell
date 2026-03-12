@@ -55,6 +55,10 @@ _STATIC_TOPICS: dict[str, str] = {
         "  /profile <name>        — Apply a configuration profile\n"
         "  /keys                  — Show keyboard shortcuts\n"
         "  /history               — Show conversation context size\n"
+        "  /memory                — Show working memory (agents.md)\n"
+        "  /memory reload         — Re-read agents.md from disk\n"
+        "  /memory clear          — Clear working memory file\n"
+        "  /memory path           — Show memory file path\n"
         "  /undo                  — Undo last file edit or write\n"
         "  /save [name]           — Save current session\n"
         "  /load [id]             — Load a saved session\n"
@@ -183,7 +187,7 @@ _STATIC_TOPICS: dict[str, str] = {
         "     \"edit config.py and change the timeout to 30\"\n\n"
         "  5. Use /help to see all commands, or ask about any topic:\n"
         "     getting_started, commands, tools, models, profiles, "
-        "prompt_customization, sessions, plans, plugins, headless, mcp, "
+        "prompt_customization, memory, sessions, plans, plugins, headless, mcp, "
         "backup, keyboard_shortcuts, safety, config, troubleshooting"
     ),
     "profiles": (
@@ -323,6 +327,36 @@ _STATIC_TOPICS: dict[str, str] = {
         '  update_config section="prompt" key="extra_instructions" '
         'value="Prefer functional style"'
     ),
+    "memory": (
+        "Working memory (agents.md) — persistent scratchpad across sessions.\n\n"
+        "The agent can read and write a persistent markdown file to remember "
+        "facts, decisions, and context across sessions and plan steps.\n\n"
+        "File location (searched in order):\n"
+        "  1. {project_root}/.natshell/agents.md   (project-local)\n"
+        "  2. ~/.config/natshell/agents.md          (global fallback)\n\n"
+        "The project root is detected by looking for .git, pyproject.toml, "
+        "package.json, Cargo.toml, go.mod, Makefile, or CMakeLists.txt.\n\n"
+        "Commands:\n"
+        "  /memory          — Show current memory content and source path\n"
+        "  /memory reload   — Re-read from disk and update the system prompt\n"
+        "  /memory clear    — Truncate the memory file\n"
+        "  /memory path     — Show where the file is (or would be created)\n\n"
+        "How the agent uses it:\n"
+        "  - Memory content is injected into the system prompt at startup\n"
+        "  - The agent can update it via write_file or edit_file (auto-approved)\n"
+        "  - During plan execution, memory is re-read before each step\n"
+        "  - Memory is skipped when context window < 16384 tokens\n\n"
+        "Configuration ([memory] section in config.toml):\n"
+        "  enabled    — Enable/disable memory (default: true)\n"
+        "  max_chars  — Base character budget (default: 4000, ~1000 tokens).\n"
+        "               Auto-scales with context window: 4K/8K/12K/16K/24K/32K\n"
+        "               for <32K/32K/64K/128K/256K/512K+ contexts.\n"
+        "  min_ctx    — Minimum context window for injection (default: 16384)\n\n"
+        "Tips:\n"
+        "  - Ask the agent to 'remember' something and it will write to agents.md\n"
+        "  - Keep entries concise — the file is injected into every prompt\n"
+        "  - Do not store secrets or credentials in agents.md"
+    ),
     "keyboard_shortcuts": (
         "Keyboard shortcuts:\n"
         "  Enter          — Send message\n"
@@ -422,8 +456,8 @@ DEFINITION = ToolDefinition(
         "Look up NatShell documentation by topic. Use this when the user asks "
         "about NatShell itself — its commands, configuration, available tools, "
         "model setup, safety rules, troubleshooting, profiles, sessions, "
-        "plans, plugins, headless mode, MCP server, backups, or keyboard "
-        "shortcuts."
+        "plans, plugins, headless mode, MCP server, backups, working memory, "
+        "or keyboard shortcuts."
     ),
     parameters={
         "type": "object",

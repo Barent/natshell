@@ -215,10 +215,11 @@ class TestAutocomplete:
         assert "/compact" in matches
         assert len(matches) == 3
 
-    def test_slash_m_matches_model(self):
+    def test_slash_m_matches_model_and_memory(self):
         matches = self._filter("/m")
         assert "/model" in matches
-        assert all(m.startswith("/model") for m in matches)
+        assert "/memory" in matches
+        assert all(m.startswith("/m") for m in matches)
 
     def test_full_command_matches_exactly(self):
         matches = self._filter("/help")

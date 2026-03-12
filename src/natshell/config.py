@@ -83,6 +83,13 @@ class KiwixConfig:
 
 
 @dataclass
+class MemoryConfig:
+    enabled: bool = True
+    max_chars: int = 4000    # ~1000 tokens
+    min_ctx: int = 16384     # Skip memory injection below this n_ctx
+
+
+@dataclass
 class PromptConfig:
     extra_instructions: str = ""
     persona: str = ""
@@ -119,6 +126,7 @@ class NatShellConfig:
     mcp: McpConfig = field(default_factory=McpConfig)
     kiwix: KiwixConfig = field(default_factory=KiwixConfig)
     prompt: PromptConfig = field(default_factory=PromptConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
 
 
@@ -176,6 +184,11 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
     "prompt": {
         "extra_instructions": "str",
         "persona": "str",
+    },
+    "memory": {
+        "enabled": "bool",
+        "max_chars": "int",
+        "min_ctx": "int",
     },
 }
 
@@ -302,7 +315,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
 
 _SECTIONS = (
     "model", "remote", "ollama", "agent", "safety",
-    "ui", "backup", "engine", "mcp", "kiwix", "prompt",
+    "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory",
 )
 
 

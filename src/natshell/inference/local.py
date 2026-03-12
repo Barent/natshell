@@ -372,7 +372,7 @@ class LocalEngine:
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Inject tool definitions into the system message as plain text."""
-        compact = self.n_ctx <= 16384
+        compact = self.n_ctx < 16384
         if self.model_family == "mistral":
             tool_text = _format_tools_for_prompt_mistral(tools, compact=compact)
         else:
@@ -445,9 +445,15 @@ class LocalEngine:
                     calls = json.loads(mistral_match.group(1))
                     for call in calls:
                         name = call.get("name", "")
-                        arguments = call.get("arguments", {})
-                        if isinstance(arguments, str):
-                            arguments = json.loads(arguments)
+                        if "arguments" in call:
+                            arguments = call.get("arguments", {})
+                            if isinstance(arguments, str):
+                                arguments = json.loads(arguments)
+                        else:
+                            # Flat format: args at top level alongside "name"
+                            arguments = {
+                                k: v for k, v in call.items() if k != "name"
+                            }
                         tool_calls.append(
                             ToolCall(
                                 id=str(uuid.uuid4())[:9],
@@ -462,8 +468,11 @@ class LocalEngine:
                     )
 
         # Fallback: Mistral forgot the [TOOL_CALLS] prefix but emitted valid JSON.
-        # Accept a bare object {"name": ..., "arguments": ...} or array thereof,
-        # either as bare JSON at the start, or wrapped in markdown code fences.
+        # Accept bare JSON at the start of content, or inside markdown code fences.
+        # Handles three Mistral variants:
+        #   1. {"name": "tool", "arguments": {"key": "val"}}  — standard
+        #   2. {"name": "tool"}                                — no arguments
+        #   3. {"name": "tool", "key": "val"}                  — flat (args at top level)
         _bare_json_recovered = False
         if not tool_calls and self.model_family == "mistral":
             json_text = None
@@ -483,14 +492,18 @@ class LocalEngine:
                 try:
                     parsed = json.loads(json_text)
                     candidates = parsed if isinstance(parsed, list) else [parsed]
-                    if all(
-                        isinstance(c, dict) and "name" in c and "arguments" in c
-                        for c in candidates
-                    ):
+                    if all(isinstance(c, dict) and "name" in c for c in candidates):
                         for call in candidates:
-                            arguments = call["arguments"]
-                            if isinstance(arguments, str):
-                                arguments = json.loads(arguments)
+                            if "arguments" in call:
+                                # Standard format: {"name": ..., "arguments": {...}}
+                                arguments = call["arguments"]
+                                if isinstance(arguments, str):
+                                    arguments = json.loads(arguments)
+                            else:
+                                # Flat format: args at top level alongside "name"
+                                arguments = {
+                                    k: v for k, v in call.items() if k != "name"
+                                }
                             tool_calls.append(
                                 ToolCall(
                                     id=str(uuid.uuid4())[:9],

@@ -27,6 +27,7 @@ from natshell.commands import (
     handle_undo,
     show_help,
     show_history_info,
+    show_memory,
 )
 from natshell.config import (
     NatShellConfig,
@@ -120,6 +121,10 @@ SLASH_COMMANDS = [
     ("/profile", "Apply a configuration profile"),
     ("/history", "Show conversation context size"),
     ("/keys", "Show keyboard shortcuts"),
+    ("/memory", "Show working memory content"),
+    ("/memory reload", "Re-read agents.md from disk"),
+    ("/memory clear", "Clear working memory file"),
+    ("/memory path", "Show memory file path"),
     ("/undo", "Undo the last file edit or write"),
     ("/save", "Save current session"),
     ("/load", "Load a saved session (list if no id)"),
@@ -491,6 +496,8 @@ class NatShellApp(App):
                 self._show_history_info(conversation)
             case "/keys":
                 self._show_keys(conversation)
+            case "/memory":
+                self._handle_memory(args, conversation)
             case "/undo":
                 self._handle_undo(conversation)
             case "/save":
@@ -809,6 +816,21 @@ class NatShellApp(App):
                 self.agent.config.max_steps = effective_max
                 self.agent.set_step_limit(effective_max)
 
+                # Re-read working memory for cross-step context
+                wm_content: str | None = None
+                if self._config.memory.enabled:
+                    from natshell.agent.working_memory import (
+                        load_working_memory,
+                        should_inject_memory,
+                    )
+
+                    if should_inject_memory(n_ctx, self._config.memory.min_ctx):
+                        wm = load_working_memory(
+                            Path.cwd(), self._config.memory.max_chars
+                        )
+                        if wm is not None:
+                            wm_content = wm.content
+
                 # Build focused prompt for this step
                 prompt = _build_step_prompt(
                     step,
@@ -817,6 +839,7 @@ class NatShellApp(App):
                     max_steps=effective_max,
                     completed_files=completed_files or None,
                     n_ctx=n_ctx,
+                    working_memory=wm_content,
                 )
 
                 # Run the agent loop for this step
@@ -1339,6 +1362,10 @@ class NatShellApp(App):
     def _show_history_info(self, conversation: ScrollableContainer) -> None:
         """Show conversation context size and context window usage."""
         show_history_info(self.agent, conversation)
+
+    def _handle_memory(self, args: str, conversation: ScrollableContainer) -> None:
+        """Handle /memory subcommands."""
+        show_memory(self.agent, conversation, args)
 
     def _handle_undo(self, conversation: ScrollableContainer) -> None:
         """Undo the last file edit or write by restoring from backup."""

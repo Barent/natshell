@@ -243,6 +243,8 @@ class TestEffectivePlanMaxSteps:
         assert _effective_plan_max_steps(65536) == 55
         assert _effective_plan_max_steps(131072) == 65
         assert _effective_plan_max_steps(262144) == 65
+        assert _effective_plan_max_steps(524288) == 90
+        assert _effective_plan_max_steps(1048576) == 120
 
     def test_explicit_override_respected(self):
         from natshell.agent.plan_executor import _effective_plan_max_steps
