@@ -844,11 +844,14 @@ class AgentLoop:
                                     "If edit_file is failing, use write_file instead."
                                 )
 
-                    # Repetitive URL fetch detection (cumulative across all calls, not just consecutive)
+                    # Repetitive URL fetch detection
+                    # (cumulative across all calls, not just consecutive)
                     if tool_call.name == "fetch_url":
                         url = tool_call.arguments.get("url", "")
                         if url:
-                            self._fetch_url_counts[url] = self._fetch_url_counts.get(url, 0) + 1
+                            self._fetch_url_counts[url] = (
+                                self._fetch_url_counts.get(url, 0) + 1
+                            )
                             count = self._fetch_url_counts[url]
                             if count == 2:
                                 result_content += (
@@ -858,9 +861,11 @@ class AgentLoop:
                                 )
                             elif count >= 3:
                                 result_content += (
-                                    f"\n\n\u26a0 CRITICAL: You have fetched this URL {count} times. "
-                                    "STOP fetching it. The result is already in your conversation "
-                                    "history. Use your existing knowledge to complete the task."
+                                    f"\n\n\u26a0 CRITICAL: You have fetched this URL"
+                                    f" {count} times. "
+                                    "STOP fetching it. The result is already in your"
+                                    " conversation history. Use your existing knowledge"
+                                    " to complete the task."
                                 )
 
                     # Reset read count when write/edit succeeds on a path

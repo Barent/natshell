@@ -232,7 +232,8 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
             "- 3-10 steps (more granularity encouraged)",
             "- For new projects, fetch official docs/PyPI/npm pages — NOT raw source files",
             "- Once you have fetched a URL, do NOT fetch it again regardless of how much you got",
-            "- If a page is truncated, use what you have; rely on your training knowledge for the rest",
+            "- If a page is truncated, use what you have; rely on your training knowledge"
+            " for the rest",
             "",
         ]
 
