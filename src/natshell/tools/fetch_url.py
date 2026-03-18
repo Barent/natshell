@@ -206,6 +206,12 @@ async def fetch_url(url: str, timeout: int = _DEFAULT_TIMEOUT) -> ToolResult:
         truncated = True
 
     header = f"Status: {status}\nContent-Type: {content_type}\n\n"
+    if truncated:
+        body += (
+            "\n\n⚠ CONTENT TRUNCATED (size limit reached). "
+            "Refetching this URL will return the same truncated result — "
+            "fetch_url has no pagination. Use what you have."
+        )
     return ToolResult(
         output=header + body,
         truncated=truncated,

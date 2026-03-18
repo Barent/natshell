@@ -226,11 +226,13 @@ def _build_plan_prompt(description: str, directory_tree: str, *, n_ctx: int = 40
     else:
         parts += [
             "THOROUGH MODE (large context window): maximize research quality.",
-            "- Research 5-10 source files, fetch multiple documentation URLs",
+            "- Research 5-10 source files, fetch 2-5 key documentation URLs",
             "- Steps can span 2-4 files each, include substantial code snippets",
             "- Include detailed type signatures, import chains, error handling patterns",
             "- 3-10 steps (more granularity encouraged)",
-            "- Use fetch_url aggressively for new projects",
+            "- For new projects, fetch official docs/PyPI/npm pages — NOT raw source files",
+            "- Once you have fetched a URL, do NOT fetch it again regardless of how much you got",
+            "- If a page is truncated, use what you have; rely on your training knowledge for the rest",
             "",
         ]
 

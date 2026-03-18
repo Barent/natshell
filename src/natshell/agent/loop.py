@@ -144,6 +144,8 @@ class AgentLoop:
         self._completion_warning_sent: bool = False
         # Repetitive read detection
         self._read_counts: dict[str, int] = {}
+        # Repetitive URL fetch detection (cumulative, not just consecutive)
+        self._fetch_url_counts: dict[str, int] = {}
         # Duplicate tool call detection
         self._last_tool_key: str = ""
         self._consecutive_dupes: int = 0
@@ -494,6 +496,7 @@ class AgentLoop:
         self._edit_successes = 0
         self._completion_warning_sent = False
         self._read_counts = {}
+        self._fetch_url_counts = {}
         self._last_tool_key = ""
         self._consecutive_dupes = 0
         self._context_recovery_attempted = False
@@ -841,6 +844,25 @@ class AgentLoop:
                                     "If edit_file is failing, use write_file instead."
                                 )
 
+                    # Repetitive URL fetch detection (cumulative across all calls, not just consecutive)
+                    if tool_call.name == "fetch_url":
+                        url = tool_call.arguments.get("url", "")
+                        if url:
+                            self._fetch_url_counts[url] = self._fetch_url_counts.get(url, 0) + 1
+                            count = self._fetch_url_counts[url]
+                            if count == 2:
+                                result_content += (
+                                    f"\n\n\u26a0 You have fetched this URL {count} times. "
+                                    "The content will not change. Do NOT fetch it again — "
+                                    "use the information already in your context."
+                                )
+                            elif count >= 3:
+                                result_content += (
+                                    f"\n\n\u26a0 CRITICAL: You have fetched this URL {count} times. "
+                                    "STOP fetching it. The result is already in your conversation "
+                                    "history. Use your existing knowledge to complete the task."
+                                )
+
                     # Reset read count when write/edit succeeds on a path
                     if tool_call.name in ("edit_file", "write_file") and tool_result.exit_code == 0:
                         write_path = tool_call.arguments.get("path", "")
@@ -1149,6 +1171,7 @@ class AgentLoop:
             self.messages = []
         reset_tracker()
         self._read_counts = {}
+        self._fetch_url_counts = {}
         self._last_tool_key = ""
         self._consecutive_dupes = 0
         # Drain any pending queued messages
