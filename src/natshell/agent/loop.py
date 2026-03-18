@@ -805,32 +805,17 @@ class AgentLoop:
                             f"\n\n\u26a0 CRITICAL: You have called {tool_call.name} "
                             f"with identical arguments {self._consecutive_dupes} "
                             "times in a row. The output will not change. "
-                            "STOP retrying. Summarize what you have accomplished "
-                            "and what remains unresolved, then finish."
+                            "STOP making this tool call. Complete the task using "
+                            "your existing knowledge and information already gathered."
                         )
                         self._append_tool_exchange(tool_call, result_content)
-                        # Force-terminate: emit response and break
-                        yield AgentEvent(
-                            type=EventType.RESPONSE,
-                            data=(
-                                f"Stopped: repeated identical tool call "
-                                f"({tool_call.name}) detected after "
-                                f"{self._consecutive_dupes} attempts. "
-                                f"The issue could not be resolved automatically."
-                            ),
-                        )
-                        run_wall_ms = int((time.monotonic() - run_t0) * 1000)
-                        yield AgentEvent(
-                            type=EventType.RUN_STATS,
-                            metrics=_build_run_stats(
-                                steps_used,
-                                run_wall_ms,
-                                total_inference_ms,
-                                total_prompt_tokens,
-                                total_completion_tokens,
-                            ),
-                        )
-                        return
+                        # Reset counter so the LLM can use other tools freely
+                        self._last_tool_key = ""
+                        self._consecutive_dupes = 0
+                        # Break out of the tool-dispatch inner loop.
+                        # The outer step loop will call the LLM again — it will see
+                        # the warning in history and produce a final response.
+                        break
                     elif self._consecutive_dupes >= _DUPE_WARN_THRESHOLD:
                         result_content += (
                             f"\n\n\u26a0 You have called {tool_call.name} with "

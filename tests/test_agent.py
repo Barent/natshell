@@ -2418,7 +2418,7 @@ class TestDuplicateToolCallDetection:
         )
 
     async def test_abort_at_5_identical_calls(self):
-        """After 5 identical consecutive tool calls, the loop terminates."""
+        """After 5 identical consecutive tool calls, the agent recovers and gets one more LLM turn."""
         responses = [
             CompletionResult(
                 tool_calls=[
@@ -2429,18 +2429,24 @@ class TestDuplicateToolCallDetection:
                     )
                 ],
             )
-            for i in range(10)  # Would do 10 but should stop at 5
-        ] + [CompletionResult(content="Done.")]
+            for i in range(5)  # 5 identical calls triggers the dupe-abort
+        ] + [CompletionResult(content="Task complete.")]
 
         agent = _make_agent(responses, max_steps=15, safety_mode="danger")
         events = await _collect_events(agent, "check types")
 
+        # The loop should NOT hard-terminate with the old "stopped" message
         response_events = [e for e in events if e.type == EventType.RESPONSE]
-        assert len(response_events) == 1
-        assert "repeated identical tool call" in response_events[0].data
+        assert not any("repeated identical tool call" in e.data for e in response_events)
 
-        # Should have aborted after 5 calls, not continued to 10
+        # The warning should appear in the tool result message history
         tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+        assert any("STOP making this tool call" in m["content"] for m in tool_msgs)
+
+        # The agent should have produced a normal final response
+        assert any("Task complete." in e.data for e in response_events)
+
+        # Tool was called exactly 5 times, not 6+
         assert len(tool_msgs) == 5
 
     async def test_counter_resets_on_different_call(self):
