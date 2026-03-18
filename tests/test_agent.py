@@ -2418,7 +2418,8 @@ class TestDuplicateToolCallDetection:
         )
 
     async def test_abort_at_5_identical_calls(self):
-        """After 5 identical consecutive tool calls, the agent recovers and gets one more LLM turn."""
+        """After 5 identical consecutive tool calls, the agent recovers
+        and gets one more LLM turn."""
         responses = [
             CompletionResult(
                 tool_calls=[
