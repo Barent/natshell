@@ -24,6 +24,7 @@ class CompletionResult:
     finish_reason: str = "stop"
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    degenerate: bool = False
 
 
 @dataclass

@@ -627,6 +627,29 @@ class AgentLoop:
                 yield AgentEvent(type=EventType.ERROR, data=f"Inference error: {e}")
                 return
 
+            # Handle degenerate output (repetitive garbage from local models)
+            if result.degenerate:
+                compact_stats = self.compact_history()
+                if compact_stats.get("compacted"):
+                    yield AgentEvent(
+                        type=EventType.ERROR,
+                        data=(
+                            "Model produced degenerate output "
+                            "(repeated characters). Automatically "
+                            "compacted conversation — retrying."
+                        ),
+                    )
+                    continue
+                yield AgentEvent(
+                    type=EventType.ERROR,
+                    data=(
+                        "Model produced degenerate output "
+                        "(repeated characters). The context window "
+                        "may be full. Try /clear to reset."
+                    ),
+                )
+                return
+
             # Handle truncated responses (thinking consumed all tokens)
             if result.finish_reason == "length" and not result.tool_calls:
                 raw = result.content or ""

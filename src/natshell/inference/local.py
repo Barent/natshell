@@ -29,6 +29,26 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _THINK_UNCLOSED_RE = re.compile(r"<think>(?:(?!</think>).)*$", re.DOTALL)
 
 
+def _is_degenerate_output(text: str) -> bool:
+    """Detect degenerate repetitive output from local models.
+
+    Returns True when the output is dominated by a single repeated
+    character, which indicates context exhaustion or model collapse.
+    Only triggers on outputs longer than 100 characters to avoid
+    false positives on short valid responses.
+    """
+    if len(text) < 100:
+        return False
+    non_ws = text.replace(" ", "").replace("\n", "").replace("\t", "")
+    if not non_ws:
+        return False
+    from collections import Counter
+
+    counts = Counter(non_ws)
+    _char, top_count = counts.most_common(1)[0]
+    return top_count / len(non_ws) > 0.5
+
+
 def _detect_model_family(model_path: str) -> str:
     """Detect the model family from the filename.
 
@@ -351,6 +371,7 @@ class LocalEngine:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "repeat_penalty": 1.1,
         }
 
         # llama-cpp-python's create_chat_completion is synchronous
@@ -545,6 +566,16 @@ class LocalEngine:
 
         content = content.strip() or None
 
+        degenerate = False
+        if content and _is_degenerate_output(content):
+            logger.warning(
+                "Degenerate output detected (%d chars, dominated by "
+                "repeated characters) — suppressing garbage output",
+                len(content),
+            )
+            content = None
+            degenerate = True
+
         usage = response.get("usage", {})
         return CompletionResult(
             content=content,
@@ -552,4 +583,5 @@ class LocalEngine:
             finish_reason=finish_reason,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
+            degenerate=degenerate,
         )

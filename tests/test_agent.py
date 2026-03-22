@@ -19,6 +19,7 @@ from natshell.inference.local import (
     _format_tools_for_prompt,
     _format_tools_for_prompt_mistral,
     _infer_context_size,
+    _is_degenerate_output,
 )
 from natshell.safety.classifier import SafetyClassifier
 from natshell.tools.registry import create_default_registry
@@ -2631,3 +2632,68 @@ class TestCompressOldMessages:
         # Nothing should change
         assert agent.messages[1]["content"] == "hello"
         assert agent.messages[2]["content"] == "hi"
+
+
+# ─── Degenerate output detection ─────────────────────────────────────────────
+
+
+class TestDegenerateDetection:
+    def test_repeated_single_char_is_degenerate(self):
+        assert _is_degenerate_output("G" * 200) is True
+
+    def test_repeated_char_with_prefix_is_degenerate(self):
+        """Mimics the actual bug: Korean char + repeated G's."""
+        assert _is_degenerate_output("\ubd90" + "G" * 200) is True
+
+    def test_normal_text_is_not_degenerate(self):
+        text = "Here is a normal response with varied characters and words."
+        assert _is_degenerate_output(text) is False
+
+    def test_short_text_is_never_degenerate(self):
+        assert _is_degenerate_output("GGG") is False
+        assert _is_degenerate_output("") is False
+
+    def test_code_output_is_not_degenerate(self):
+        code = "def hello():\n    print('hello world')\n" * 5
+        assert _is_degenerate_output(code) is False
+
+    def test_repeated_words_not_degenerate(self):
+        text = "the quick brown fox " * 20
+        assert _is_degenerate_output(text) is False
+
+    def test_threshold_boundary(self):
+        assert _is_degenerate_output("A" * 99) is False
+        assert _is_degenerate_output("A" * 100) is True
+
+
+class TestDegenerateAgentLoop:
+    async def test_degenerate_output_yields_error_and_stops(self):
+        """Degenerate output with short history should yield error and stop."""
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content=None,
+                    degenerate=True,
+                    finish_reason="length",
+                ),
+            ]
+        )
+        events = await _collect_events(agent, "do something")
+        types = [e.type for e in events]
+        assert EventType.ERROR in types
+        error_event = next(e for e in events if e.type == EventType.ERROR)
+        assert "degenerate" in error_event.data.lower()
+
+    async def test_degenerate_output_does_not_yield_response(self):
+        """Garbage output should be suppressed — no RESPONSE event."""
+        agent = _make_agent(
+            [
+                CompletionResult(
+                    content=None,
+                    degenerate=True,
+                ),
+            ]
+        )
+        events = await _collect_events(agent, "do something")
+        types = [e.type for e in events]
+        assert EventType.RESPONSE not in types
