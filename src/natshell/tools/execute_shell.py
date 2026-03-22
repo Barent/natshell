@@ -21,15 +21,34 @@ _tail_chars = 1500
 
 def configure_limits(max_output_chars: int) -> None:
     """Set shell output truncation limits (called by agent loop based on context size)."""
-    global _max_output_chars, _head_chars, _tail_chars
+    global _max_output_chars, _head_chars, _tail_chars, _base_max_output_chars
     _max_output_chars = max_output_chars
     _head_chars = max_output_chars // 2
     _tail_chars = int(max_output_chars * 0.375)
+    _base_max_output_chars = max_output_chars
 
 
 def reset_limits() -> None:
     """Restore default truncation limits (used by tests)."""
     configure_limits(4000)
+
+
+# Step-aware output scaling — reduces output budget as context fills up
+_base_max_output_chars: int = 4000
+
+
+def configure_step_scaling(step: int, max_steps: int) -> None:
+    """Progressively reduce output limits as the step count increases.
+
+    Called by the agent loop at the start of each step.  The scale factor
+    drops linearly from 1.0 (step 0) to 0.3 (step == max_steps), so later
+    tool results occupy less context and leave room for the model to reason.
+    """
+    if max_steps <= 0:
+        return
+    scale = max(0.3, 1.0 - 0.7 * (step / max_steps))
+    effective = int(_base_max_output_chars * scale)
+    configure_limits(effective)
 
 # ── Sudo password support ───────────────────────────────────────────────────
 

@@ -72,7 +72,13 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
 {context.to_prompt_text()}
 </system_info>
 
-Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools."""
+Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools.
+
+## Efficient Exploration
+
+- For disk usage, use `du --max-depth=1 -h` or `du -sh *` to get summaries. Do NOT recursively drill into every subdirectory.
+- After 5 shell commands exploring the same topic, STOP and synthesize your findings into a response.
+- Prefer single broad commands over many narrow ones (e.g. `df -h` + one `du --max-depth=1` instead of 20 nested `du` calls)."""
     else:
         header = f"""\
 You are NatShell, a {role} running directly on the user's machine. You have two core competencies:
@@ -110,7 +116,14 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
 {context.to_prompt_text()}
 </system_info>
 
-Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools."""
+Use this system information to tailor your commands to this specific machine. For example, use the correct package manager, reference the right network interfaces, and account for available tools.
+
+## Efficient Exploration
+
+- For disk usage, use `du --max-depth=1 -h` or `du -sh *` to get summaries. Do NOT recursively drill into every subdirectory — summarize what you find at each level and only go deeper when necessary.
+- After 5 shell commands exploring the same topic, STOP and synthesize your findings into a response. Do not keep running variations of the same command.
+- Prefer single broad commands over many narrow ones (e.g. `df -h` + one `du --max-depth=1` instead of 20 nested `du` calls).
+- For file searches, prefer `find ... | head -20` or `du -sh * | sort -hr | head -20` over unbounded recursive scans."""
 
     if compact:
         code_section = """

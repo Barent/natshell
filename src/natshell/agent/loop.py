@@ -146,6 +146,8 @@ class AgentLoop:
         self._read_counts: dict[str, int] = {}
         # Repetitive URL fetch detection (cumulative, not just consecutive)
         self._fetch_url_counts: dict[str, int] = {}
+        # Command-family repetition detection (e.g., 10+ `du` calls)
+        self._cmd_family_counts: dict[str, int] = {}
         # Duplicate tool call detection
         self._last_tool_key: str = ""
         self._consecutive_dupes: int = 0
@@ -263,7 +265,7 @@ class AgentLoop:
         return max(self.config.max_tokens, scaled)
 
     _DEFAULT_MAX_STEPS = 15
-    _CONTEXT_PRESSURE_THRESHOLD = 0.85
+    _CONTEXT_PRESSURE_THRESHOLD = 0.75
 
     def _effective_max_steps(self, n_ctx: int) -> int:
         """Scale max_steps based on context window size.
@@ -497,6 +499,7 @@ class AgentLoop:
         self._completion_warning_sent = False
         self._read_counts = {}
         self._fetch_url_counts = {}
+        self._cmd_family_counts = {}
         self._last_tool_key = ""
         self._consecutive_dupes = 0
         self._context_recovery_attempted = False
@@ -520,23 +523,33 @@ class AgentLoop:
             # Signal that the model is thinking
             yield AgentEvent(type=EventType.THINKING)
 
-            # Compress old tool exchanges periodically, then trim context if needed
-            if step % 5 == 0:
+            # Progressively tighten output truncation as steps are consumed
+            _exec_shell_mod.configure_step_scaling(step, max_steps)
+
+            # Compress old tool exchanges every 3 steps, then trim context
+            if step % 3 == 0:
                 self._compress_old_messages()
             if self._context_manager:
                 self.messages = self._context_manager.trim_messages(self.messages)
 
-            # Pre-flight check: force compaction if estimated tokens already exceed context
+            # Pre-flight check: force compaction if context pressure is high
             if self._context_manager:
                 estimated = self._context_manager.estimate_tokens(self.messages)
                 try:
                     n_ctx_pf = self.engine.engine_info().n_ctx or 0
                 except (AttributeError, TypeError):
                     n_ctx_pf = 0
-                if n_ctx_pf > 0 and estimated + self._max_tokens > n_ctx_pf:
+                if n_ctx_pf > 0 and (
+                    estimated + self._max_tokens > n_ctx_pf
+                    or estimated / n_ctx_pf > self._CONTEXT_PRESSURE_THRESHOLD
+                ):
                     stats = self.compact_history()
                     if stats.get("compacted"):
                         self.messages = self._context_manager.trim_messages(self.messages)
+                        yield AgentEvent(
+                            type=EventType.ERROR,
+                            data="Context nearing capacity — automatically compacted conversation.",
+                        )
 
             # Get model response
             try:
@@ -891,6 +904,39 @@ class AgentLoop:
                                     " to complete the task."
                                 )
 
+                    # Command-family repetition detection for execute_shell
+                    if tool_call.name == "execute_shell":
+                        cmd = tool_call.arguments.get("command", "")
+                        # Extract the first token as the command family
+                        family = cmd.strip().split()[0] if cmd.strip() else ""
+                        # Normalise common prefixes (sudo X → X)
+                        if family == "sudo" and len(cmd.strip().split()) > 1:
+                            family = cmd.strip().split()[1]
+                        if family:
+                            self._cmd_family_counts[family] = (
+                                self._cmd_family_counts.get(family, 0) + 1
+                            )
+                            fam_count = self._cmd_family_counts[family]
+                            if fam_count >= 8:
+                                result_content += (
+                                    f"\n\n\u26a0 CRITICAL: You have run"
+                                    f" `{family}` {fam_count} times in"
+                                    " this session. STOP running more"
+                                    f" `{family}` commands. Synthesize"
+                                    " your findings from the output"
+                                    " already gathered and give the"
+                                    " user a complete answer NOW."
+                                )
+                            elif fam_count >= 5:
+                                result_content += (
+                                    f"\n\n\u26a0 You have run `{family}`"
+                                    f" {fam_count} times. Consolidate"
+                                    " your findings and answer with"
+                                    " what you have. Avoid further"
+                                    f" `{family}` calls unless"
+                                    " absolutely necessary."
+                                )
+
                     # Reset read count when write/edit succeeds on a path
                     if tool_call.name in ("edit_file", "write_file") and tool_result.exit_code == 0:
                         write_path = tool_call.arguments.get("path", "")
@@ -1105,8 +1151,8 @@ class AgentLoop:
             logger.exception("Failed to load local model for fallback")
             return False
 
-    # Number of most-recent messages to keep uncompressed (5 tool exchanges)
-    _COMPRESS_PRESERVE_RECENT = 10
+    # Number of most-recent messages to keep uncompressed (3 tool exchanges)
+    _COMPRESS_PRESERVE_RECENT = 6
 
     def _compress_old_messages(self) -> None:
         """Compress old tool exchanges to save context tokens.
@@ -1200,6 +1246,7 @@ class AgentLoop:
         reset_tracker()
         self._read_counts = {}
         self._fetch_url_counts = {}
+        self._cmd_family_counts = {}
         self._last_tool_key = ""
         self._consecutive_dupes = 0
         # Drain any pending queued messages
