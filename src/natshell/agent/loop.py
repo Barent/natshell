@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import shlex
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -151,6 +152,9 @@ class AgentLoop:
         # Duplicate tool call detection
         self._last_tool_key: str = ""
         self._consecutive_dupes: int = 0
+        # Similar-command detection (strips flags/pipes to find semantic dupes)
+        self._similar_cmd_key: str = ""
+        self._consecutive_similar: int = 0
         # Context overflow recovery guard
         self._context_recovery_attempted: bool = False
         # Message queue for mid-run user input
@@ -347,6 +351,22 @@ class AgentLoop:
         """Canonicalize a path for tracking (mirrors file_tracker)."""
         return str(Path(path).expanduser().resolve())
 
+    @staticmethod
+    def _normalize_shell_cmd(cmd: str) -> str:
+        """Strip flags and pipes to detect semantically duplicate commands.
+
+        ``grep -o "Check" file | head -1`` and ``grep "Check" file``
+        both normalise to ``grep Check file``, so the similar-command
+        detector can spot the pattern even when the model tweaks flags.
+        """
+        base = cmd.split("|")[0].strip()
+        try:
+            tokens = shlex.split(base)
+        except ValueError:
+            tokens = base.split()
+        core = [t for t in tokens if not t.startswith("-")]
+        return " ".join(core)
+
     def _setup_context_manager(self) -> None:
         """Create a ContextManager sized to the current engine's context window."""
         try:
@@ -502,6 +522,8 @@ class AgentLoop:
         self._cmd_family_counts = {}
         self._last_tool_key = ""
         self._consecutive_dupes = 0
+        self._similar_cmd_key = ""
+        self._consecutive_similar = 0
         self._context_recovery_attempted = False
 
         # Cumulative stats for this run
@@ -917,7 +939,23 @@ class AgentLoop:
                                 self._cmd_family_counts.get(family, 0) + 1
                             )
                             fam_count = self._cmd_family_counts[family]
-                            if fam_count >= 8:
+                            _FAM_WARN = 4
+                            _FAM_CRITICAL = 7
+                            _FAM_HARD_STOP = 12
+                            if fam_count >= _FAM_HARD_STOP:
+                                result_content += (
+                                    f"\n\n\u26a0 HARD STOP: You have run"
+                                    f" `{family}` {fam_count} times."
+                                    " You MUST use a completely"
+                                    " different approach or tool."
+                                    " Further `{family}` calls"
+                                    " are blocked."
+                                )
+                                self._append_tool_exchange(
+                                    tool_call, result_content,
+                                )
+                                break
+                            elif fam_count >= _FAM_CRITICAL:
                                 result_content += (
                                     f"\n\n\u26a0 CRITICAL: You have run"
                                     f" `{family}` {fam_count} times in"
@@ -927,7 +965,7 @@ class AgentLoop:
                                     " already gathered and give the"
                                     " user a complete answer NOW."
                                 )
-                            elif fam_count >= 5:
+                            elif fam_count >= _FAM_WARN:
                                 result_content += (
                                     f"\n\n\u26a0 You have run `{family}`"
                                     f" {fam_count} times. Consolidate"
@@ -935,6 +973,48 @@ class AgentLoop:
                                     " what you have. Avoid further"
                                     f" `{family}` calls unless"
                                     " absolutely necessary."
+                                )
+
+                        # Similar-command detection — catches near-duplicate
+                        # commands that differ only in flags or pipes
+                        # (e.g. grep -o vs grep -n on the same pattern/file)
+                        norm_key = self._normalize_shell_cmd(cmd)
+                        if norm_key and len(norm_key.split()) > 1:
+                            if norm_key == self._similar_cmd_key:
+                                self._consecutive_similar += 1
+                            else:
+                                self._similar_cmd_key = norm_key
+                                self._consecutive_similar = 1
+
+                            _SIM_WARN = 3
+                            _SIM_ABORT = 5
+                            if self._consecutive_similar >= _SIM_ABORT:
+                                result_content += (
+                                    f"\n\n\u26a0 CRITICAL: You have run"
+                                    f" {self._consecutive_similar}"
+                                    " near-identical commands in a"
+                                    " row (same target, different"
+                                    " flags). The result will not"
+                                    " change. STOP and try a"
+                                    " completely different approach."
+                                )
+                                self._append_tool_exchange(
+                                    tool_call, result_content,
+                                )
+                                self._similar_cmd_key = ""
+                                self._consecutive_similar = 0
+                                break
+                            elif (
+                                self._consecutive_similar >= _SIM_WARN
+                            ):
+                                result_content += (
+                                    f"\n\n\u26a0 You have run"
+                                    f" {self._consecutive_similar}"
+                                    " near-identical commands."
+                                    " Changing flags or adding"
+                                    " pipes will not produce"
+                                    " different results. Try a"
+                                    " different approach."
                                 )
 
                     # Reset read count when write/edit succeeds on a path
@@ -1249,6 +1329,8 @@ class AgentLoop:
         self._cmd_family_counts = {}
         self._last_tool_key = ""
         self._consecutive_dupes = 0
+        self._similar_cmd_key = ""
+        self._consecutive_similar = 0
         # Drain any pending queued messages
         while not self._message_queue.empty():
             try:
