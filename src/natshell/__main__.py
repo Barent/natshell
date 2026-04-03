@@ -199,6 +199,16 @@ def main() -> None:
     if args.remote_model:
         config.remote.model = args.remote_model
 
+    # TODO: Remove this Windows ARM64 override once llama-cpp-python builds
+    # reliably with MSVC on ARM64 (currently requires clang-cl).
+    from natshell.platform import is_windows, is_arm64
+
+    if is_windows() and is_arm64() and not args.local and not args.model:
+        if config.engine.preferred == "auto":
+            config.engine.preferred = "remote"
+        if not config.ollama.url and not config.remote.url:
+            config.ollama.url = "http://localhost:11434"
+
     # Handle model download — skip when engine is set to remote
     # (avoids downloading a multi-GB model the user doesn't need)
     _prefers_remote = (
