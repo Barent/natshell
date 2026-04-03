@@ -199,8 +199,15 @@ def main() -> None:
     if args.remote_model:
         config.remote.model = args.remote_model
 
-    # Handle model download
-    if args.download or config.model.path == "auto":
+    # Handle model download — skip when engine is set to remote
+    # (avoids downloading a multi-GB model the user doesn't need)
+    _prefers_remote = (
+        config.engine.preferred == "remote"
+        and not args.model
+        and not args.local
+        and (config.remote.url or config.ollama.url)
+    )
+    if args.download or (config.model.path == "auto" and not _prefers_remote):
         model_path = _ensure_model(config)
         if args.download:
             print(f"Model ready at: {model_path}")
