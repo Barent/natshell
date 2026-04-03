@@ -7,7 +7,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 
-from natshell.platform import is_macos
+from natshell.platform import is_macos, is_windows
 
 
 @dataclass
@@ -97,9 +97,13 @@ class SystemContext:
 async def _run(cmd: str) -> str:
     """Run a shell command and return stripped stdout, or empty string on failure."""
     try:
+        if is_windows():
+            shell_cmd = ["powershell", "-NoProfile", "-Command", cmd]
+        else:
+            shell_cmd = ["bash", "-c", cmd]
         result = await asyncio.to_thread(
             subprocess.run,
-            ["bash", "-c", cmd],
+            shell_cmd,
             capture_output=True,
             text=True,
             timeout=5,
@@ -292,70 +296,188 @@ async def _gather_macos(ctx: SystemContext) -> None:
         ctx.containers = [c.strip() for c in docker_output.splitlines() if c.strip()]
 
 
+async def _gather_windows(ctx: SystemContext) -> None:
+    """Gather system context using Windows PowerShell commands."""
+    (
+        hostname,
+        os_info,
+        arch,
+        cpu_line,
+        ram_total,
+        ram_avail,
+        df_output,
+        net_output,
+        gateway_line,
+        docker_output,
+    ) = await asyncio.gather(
+        _run("hostname"),
+        _run(
+            "(Get-CimInstance Win32_OperatingSystem).Caption"
+        ),
+        _run(
+            "$env:PROCESSOR_ARCHITECTURE"
+        ),
+        _run(
+            "(Get-CimInstance Win32_Processor).Name"
+        ),
+        _run(
+            "(Get-CimInstance Win32_ComputerSystem)"
+            ".TotalPhysicalMemory"
+        ),
+        _run(
+            "(Get-CimInstance Win32_OperatingSystem)"
+            ".FreePhysicalMemory"
+        ),
+        _run(
+            "Get-PSDrive -PSProvider FileSystem"
+            " | Where-Object { $_.Used -gt 0 }"
+            " | ForEach-Object {"
+            " '{0}: {1:N1}GB {2:N1}GB {3:N1}GB {4:N0}%' -f"
+            " $_.Root,"
+            " (($_.Used + $_.Free) / 1GB),"
+            " ($_.Used / 1GB),"
+            " ($_.Free / 1GB),"
+            " ($_.Used / ($_.Used + $_.Free) * 100)"
+            " }"
+        ),
+        _run(
+            "Get-NetIPAddress -AddressFamily IPv4"
+            " -Type Unicast"
+            " | Where-Object { $_.IPAddress -ne '127.0.0.1' }"
+            " | ForEach-Object {"
+            " '{0} {1}/{2}' -f"
+            " $_.InterfaceAlias, $_.IPAddress,"
+            " $_.PrefixLength }"
+        ),
+        _run(
+            "(Get-NetRoute -DestinationPrefix '0.0.0.0/0'"
+            " -ErrorAction SilentlyContinue"
+            " | Select-Object -First 1).NextHop"
+        ),
+        _run(
+            "docker ps --format '{{.Names}} ({{.Image}})'"
+            " 2>$null | Select-Object -First 10"
+        ),
+    )
+
+    ctx.hostname = hostname
+    ctx.distro = os_info or "Windows"
+    ctx.kernel = ""  # Not meaningful on Windows
+    ctx.arch = arch or "Unknown"
+    ctx.cpu = cpu_line or "Unknown"
+
+    # RAM: TotalPhysicalMemory is bytes, FreePhysicalMemory is KB
+    if ram_total:
+        try:
+            ctx.ram_total_gb = int(ram_total) / (1024**3)
+        except ValueError:
+            pass
+    if ram_avail:
+        try:
+            # FreePhysicalMemory from Win32_OperatingSystem is in KB
+            ctx.ram_available_gb = int(ram_avail) / (1024**2)
+        except ValueError:
+            pass
+
+    ctx.default_gateway = gateway_line
+
+    # Parse disk output
+    if df_output:
+        for line in df_output.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 5:
+                ctx.disks.append(
+                    DiskInfo(
+                        mount=parts[0],
+                        total=parts[1],
+                        used=parts[2],
+                        available=parts[3],
+                        use_percent=parts[4],
+                    )
+                )
+
+    # Parse network output
+    if net_output:
+        for line in net_output.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and "/" in parts[1]:
+                ip, prefix = parts[1].split("/")
+                name = parts[0] if parts else ""
+                ctx.network.append(NetInfo(name=name, ip=ip, subnet=prefix))
+
+    if docker_output:
+        ctx.containers = [
+            c.strip() for c in docker_output.splitlines() if c.strip()
+        ]
+
+
 async def gather_system_context() -> SystemContext:
     """Gather system information. Non-blocking, tolerates failures."""
     ctx = SystemContext()
 
-    if is_macos():
+    if is_windows():
+        await _gather_windows(ctx)
+    elif is_macos():
         await _gather_macos(ctx)
     else:
         await _gather_linux(ctx)
 
     # Common fields
-    ctx.username = os.environ.get("USER", "unknown")
-    ctx.is_root = os.geteuid() == 0
-    ctx.shell = os.environ.get("SHELL", "/bin/sh")
+    if is_windows():
+        ctx.username = os.environ.get("USERNAME", "unknown")
+        ctx.is_root = False  # Windows doesn't have root; UAC is different
+        ctx.shell = "PowerShell"
+    else:
+        ctx.username = os.environ.get("USER", "unknown")
+        ctx.is_root = os.geteuid() == 0
+        ctx.shell = os.environ.get("SHELL", "/bin/sh")
     ctx.cwd = os.getcwd()
 
     # Detect package manager
-    pm_list = ["brew", "apt", "dnf", "yum", "pacman", "zypper", "apk", "emerge"]
-    if not is_macos():
-        # On Linux, don't prioritize brew
-        pm_list = ["apt", "dnf", "yum", "pacman", "zypper", "apk", "emerge", "brew"]
+    if is_windows():
+        which_cmd = "Get-Command {} -ErrorAction SilentlyContinue"
+        pm_list = ["winget", "choco", "scoop"]
+    elif is_macos():
+        which_cmd = "which {} 2>/dev/null"
+        pm_list = ["brew", "apt", "dnf", "yum", "pacman",
+                   "zypper", "apk", "emerge"]
+    else:
+        which_cmd = "which {} 2>/dev/null"
+        pm_list = ["apt", "dnf", "yum", "pacman",
+                   "zypper", "apk", "emerge", "brew"]
     for pm in pm_list:
-        check = await _run(f"which {pm} 2>/dev/null")
+        check = await _run(which_cmd.format(pm))
         if check:
             ctx.package_manager = pm
             break
 
     # Check common tools
     tools_to_check = [
-        "docker",
-        "git",
-        "nmap",
-        "curl",
-        "wget",
-        "ssh",
-        "python3",
-        "node",
-        "go",
-        "rsync",
-        "tmux",
-        "vim",
-        "htop",
-        "jq",
-        # Languages & compilers
-        "rustc",
-        "gcc",
-        "g++",
-        "clang",
-        "javac",
-        "ruby",
-        "php",
-        "perl",
-        # Package managers & build tools
-        "pip",
-        "npm",
-        "yarn",
-        "cargo",
-        "composer",
-        "gem",
-        "make",
-        "cmake",
+        "docker", "git", "curl", "ssh", "python3", "node", "go",
+        "jq", "rustc", "gcc", "clang", "pip", "npm", "cargo",
+        "make", "cmake",
     ]
+    if is_windows():
+        tool_fmt = "Get-Command {} -ErrorAction SilentlyContinue"
+        # Adjust tool names for Windows
+        tools_to_check = [
+            "docker", "git", "curl", "ssh", "python", "node",
+            "go", "jq", "rustc", "gcc", "clang", "pip", "npm",
+            "cargo", "make", "cmake",
+        ]
+    else:
+        tool_fmt = "which {} 2>/dev/null"
+        tools_to_check += [
+            "wget", "rsync", "tmux", "vim", "htop",
+            "g++", "javac", "ruby", "php", "perl",
+            "yarn", "composer", "gem", "nmap",
+        ]
     tool_checks = await asyncio.gather(
-        *[_run(f"which {tool} 2>/dev/null") for tool in tools_to_check]
+        *[_run(tool_fmt.format(tool)) for tool in tools_to_check]
     )
-    ctx.installed_tools = {tool: bool(result) for tool, result in zip(tools_to_check, tool_checks)}
+    ctx.installed_tools = {
+        tool: bool(result)
+        for tool, result in zip(tools_to_check, tool_checks)
+    }
 
     return ctx
