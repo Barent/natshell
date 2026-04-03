@@ -282,15 +282,32 @@ def main() -> None:
         from natshell.inference.local import LocalEngine
 
         print(f"Loading model: {config.model.path}...")
-        engine = LocalEngine(
-            model_path=config.model.path,
-            n_ctx=config.model.n_ctx,
-            n_threads=config.model.n_threads,
-            n_gpu_layers=config.model.n_gpu_layers,
-            main_gpu=config.model.main_gpu,
-            prompt_cache=config.model.prompt_cache,
-            prompt_cache_mb=config.model.prompt_cache_mb,
-        )
+        try:
+            engine = LocalEngine(
+                model_path=config.model.path,
+                n_ctx=config.model.n_ctx,
+                n_threads=config.model.n_threads,
+                n_gpu_layers=config.model.n_gpu_layers,
+                main_gpu=config.model.main_gpu,
+                prompt_cache=config.model.prompt_cache,
+                prompt_cache_mb=config.model.prompt_cache_mb,
+            )
+        except ModuleNotFoundError:
+            print(
+                "\nERROR: llama-cpp-python is not installed.\n"
+                "\n"
+                "Install it with:\n"
+                "  pip install llama-cpp-python\n"
+                "\n"
+                "On Windows ARM64, MSVC is not supported"
+                " — you need Clang, or use Ollama instead:\n"
+                "  1. Install Ollama from https://ollama.com\n"
+                "  2. ollama pull qwen3:8b\n"
+                '  3. Set preferred = "remote" and'
+                ' url = "http://localhost:11434/v1"'
+                " in config.toml\n"
+            )
+            sys.exit(1)
         try:
             from llama_cpp import llama_supports_gpu_offload
 
