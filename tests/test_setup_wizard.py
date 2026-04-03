@@ -110,9 +110,15 @@ class TestRunSetupWizard:
     def test_default_choice_is_standard(self, tmp_path: Path):
         """Pressing Enter with no input selects tier 2 (Standard/8B)."""
         output = io.StringIO()
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: ""
@@ -127,9 +133,15 @@ class TestRunSetupWizard:
 
     def test_choice_1_light(self, tmp_path: Path):
         output = io.StringIO()
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "1"
@@ -144,9 +156,15 @@ class TestRunSetupWizard:
 
     def test_choice_2_standard(self, tmp_path: Path):
         output = io.StringIO()
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "2"
@@ -161,9 +179,15 @@ class TestRunSetupWizard:
 
     def test_choice_3_enhanced(self, tmp_path: Path):
         output = io.StringIO()
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "3"
@@ -178,20 +202,38 @@ class TestRunSetupWizard:
 
     def test_choice_4_remote(self, tmp_path: Path):
         output = io.StringIO()
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "4"
             )
-        assert result is None
+        # Choice 4 now writes an Ollama config and returns the path
+        assert result is not None
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        assert config_path.exists()
+        content = config_path.read_text()
+        assert "ollama" in content.lower()
+        assert "localhost:11434" in content
 
     def test_choice_5_skip(self, tmp_path: Path):
         output = io.StringIO()
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "5"
@@ -200,9 +242,15 @@ class TestRunSetupWizard:
 
     def test_invalid_choice_defaults_to_standard(self, tmp_path: Path):
         output = io.StringIO()
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "9"
@@ -221,9 +269,15 @@ class TestRunSetupWizard:
         def raise_eof(_):
             raise EOFError
 
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=raise_eof
@@ -236,9 +290,15 @@ class TestRunSetupWizard:
         def raise_ki(_):
             raise KeyboardInterrupt
 
-        with patch(
-            "natshell.setup_wizard.Path.home",
-            return_value=tmp_path,
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
         ):
             result = run_setup_wizard(
                 output=output, input_fn=raise_ki
@@ -250,8 +310,12 @@ class TestRunSetupWizard:
         mock_gpu_info = ("NVIDIA RTX 4090 (24576 MB VRAM)", True)
         with (
             patch(
-                "natshell.setup_wizard.Path.home",
-                return_value=tmp_path,
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
             ),
             patch(
                 "natshell.setup_wizard._detect_gpu_info",
@@ -267,8 +331,12 @@ class TestRunSetupWizard:
         mock_gpu_info = ("AMD Radeon RX 7900", False)
         with (
             patch(
-                "natshell.setup_wizard.Path.home",
-                return_value=tmp_path,
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
             ),
             patch(
                 "natshell.setup_wizard._detect_gpu_info",
@@ -373,8 +441,10 @@ class TestWizardTrigger:
 
     def test_default_path_used(self):
         """When no config_path given, uses default path."""
-        with patch("natshell.setup_wizard.Path.home") as mock_home:
-            fake_home = Path("/fake/home")
-            mock_home.return_value = fake_home
+        fake_cfg = Path("/fake/config/natshell")
+        with patch(
+            "natshell.platform.config_dir",
+            return_value=fake_cfg,
+        ):
             result = should_run_wizard()
         assert result is True

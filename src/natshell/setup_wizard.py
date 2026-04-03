@@ -32,6 +32,35 @@ MODEL_TIERS: dict[str, dict[str, str]] = {
 }
 
 
+def _check_llama_available() -> bool:
+    """Return True if llama-cpp-python can be imported."""
+    try:
+        import llama_cpp  # noqa: F401
+
+        return True
+    except (ImportError, ModuleNotFoundError):
+        return False
+
+
+def _write_ollama_config(config_path: Path) -> None:
+    """Write a minimal config that points to a local Ollama server."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "[engine]",
+        'preferred = "remote"',
+        "",
+        "[ollama]",
+        'url = "http://localhost:11434"',
+        'default_model = "qwen3:4b"',
+        "",
+    ]
+    config_path.write_text("\n".join(lines) + "\n")
+    try:
+        os.chmod(config_path, 0o600)
+    except OSError:
+        pass
+
+
 def _detect_gpu_info() -> tuple[str, bool]:
     """Detect GPU info for display in the wizard.
 
@@ -100,45 +129,74 @@ def run_setup_wizard(
     output.write("  ─── NatShell First-Run Setup ───\n")
     output.write("\n")
 
+    # Check if llama-cpp-python is available
+    llama_available = _check_llama_available()
+
     # GPU detection
     gpu_desc, gpu_backend = _detect_gpu_info()
     if gpu_desc:
         output.write(f"  GPU detected: {gpu_desc}\n")
-        if not gpu_backend:
+        if llama_available and not gpu_backend:
             output.write(
                 "  ⚠ llama-cpp-python was built without GPU support.\n"
-                "    Reinstall with GPU flags for hardware acceleration.\n"
+                "    Reinstall with GPU flags for hardware"
+                " acceleration.\n"
             )
         output.write("\n")
 
+    # On Windows, if llama-cpp-python isn't installed, steer toward Ollama
+    from natshell.platform import is_windows
+
+    if is_windows() and not llama_available:
+        output.write(
+            "  ⚠ llama-cpp-python is not installed — local models"
+            " will not work.\n"
+            "    Ollama is recommended for Windows.\n"
+            "\n"
+        )
+        default_choice = "4"
+    else:
+        default_choice = "2"
+
     output.write("  Select a model tier:\n")
     output.write("\n")
-    output.write("    1) Light       — Qwen3-4B        (~2.5 GB, low RAM)\n")
+    local_tag = " (requires llama-cpp-python)" if not llama_available else ""
     output.write(
-        "    2) Standard    — Qwen3-8B        (~5 GB, general purpose)"
-        " ★ Recommended\n"
+        f"    1) Light       — Qwen3-4B        (~2.5 GB, low RAM)"
+        f"{local_tag}\n"
+    )
+    rec = " ★ Recommended" if llama_available else local_tag
+    output.write(
+        f"    2) Standard    — Qwen3-8B        (~5 GB, general purpose)"
+        f"{rec}\n"
     )
     output.write(
-        "    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context)\n"
+        f"    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context)"
+        f"{local_tag}\n"
     )
+    ollama_rec = " ★ Recommended" if not llama_available else ""
     output.write(
-        "    4) Remote only — use an Ollama server (no local download)\n"
+        f"    4) Remote only — use an Ollama server"
+        f" (no local download){ollama_rec}\n"
     )
     output.write("    5) Skip        — configure later\n")
     output.write("\n")
 
     try:
-        choice = input_fn("  Choice [2]: ").strip()
+        choice = input_fn(f"  Choice [{default_choice}]: ").strip()
     except (EOFError, KeyboardInterrupt):
         output.write("\n")
         return None
 
     if not choice:
-        choice = "2"
+        choice = default_choice
 
     if choice not in MODEL_TIERS:
-        output.write(f"  Invalid choice '{choice}', defaulting to Standard (8B)\n")
-        choice = "2"
+        output.write(
+            f"  Invalid choice '{choice}',"
+            f" defaulting to option {default_choice}\n"
+        )
+        choice = default_choice
 
     tier = MODEL_TIERS[choice]
     output.write(f"  Selected: {tier['name']} — {tier['description']}\n")
@@ -147,10 +205,41 @@ def run_setup_wizard(
         # Remote-only or skip — don't write model config
         if choice == "4":
             output.write(
-                "  Configure [remote] or [ollama] in"
-                " ~/.config/natshell/config.toml\n"
+                "\n"
+                "  To get started with Ollama:\n"
+                "    1. Install from https://ollama.com\n"
+                "    2. ollama pull qwen3:4b\n"
+                "    3. Run natshell again — it will auto-detect"
+                " the Ollama server.\n"
+                "\n"
+                "  Or configure manually in"
+                f" {config_path}\n"
             )
+            # Write Ollama config so natshell auto-connects
+            _write_ollama_config(config_path)
+            output.write(f"  Config written to {config_path}\n")
+            return config_path
         return None
+
+    # Warn before downloading if llama-cpp-python is missing
+    if not llama_available:
+        output.write(
+            "\n"
+            "  ⚠ Warning: llama-cpp-python is not installed.\n"
+            "    The model will download, but natshell cannot"
+            " run it yet.\n"
+            "    You will need to install llama-cpp-python or"
+            " switch to Ollama.\n"
+            "\n"
+        )
+        try:
+            proceed = input_fn("  Continue with download? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            output.write("\n")
+            return None
+        if proceed != "y":
+            output.write("  Skipping download.\n")
+            return None
 
     # Write config
     _write_initial_config(

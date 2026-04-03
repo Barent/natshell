@@ -615,15 +615,67 @@ def _ensure_model(config) -> str:
     else:
         size_hint = "~2.5 GB"
 
-    # Prompt user
-    print("\nNo local model found.")
-    print(f"Download {config.model.hf_file} from {config.model.hf_repo}?")
-    print(f"This is approximately {size_hint}.\n")
+    # Check if llama-cpp-python is available before downloading
+    from natshell.platform import is_arm64, is_windows
 
-    response = input("Download now? [Y/n]: ").strip().lower()
-    if response and response != "y":
-        print("No model available. Use --model or --remote to specify one.")
-        sys.exit(1)
+    llama_ok = True
+    try:
+        import llama_cpp  # noqa: F401
+    except (ImportError, ModuleNotFoundError):
+        llama_ok = False
+
+    if not llama_ok:
+        print("\n⚠ llama-cpp-python is not installed.")
+        if is_windows():
+            print(
+                "  Local models require llama-cpp-python"
+                " to run.\n"
+                "\n"
+                "  Recommended: use Ollama instead:\n"
+                "    1. Install from https://ollama.com\n"
+                "    2. ollama pull qwen3:4b\n"
+                "    3. Re-run natshell — it will auto-detect"
+                " Ollama.\n"
+            )
+            if is_arm64():
+                print(
+                    "  Or build llama-cpp-python with clang-cl"
+                    " (see natshell docs).\n"
+                )
+            else:
+                print(
+                    "  Or: pip install llama-cpp-python\n"
+                )
+        else:
+            print("  Install: pip install llama-cpp-python\n")
+
+        print(f"Download {config.model.hf_file} anyway"
+              f" ({size_hint})?")
+        response = input("Download now? [y/N]: ").strip().lower()
+        if response != "y":
+            print(
+                "No model downloaded."
+                " Use --remote or install Ollama."
+            )
+            sys.exit(1)
+    else:
+        # Prompt user — llama-cpp-python is available
+        print("\nNo local model found.")
+        print(
+            f"Download {config.model.hf_file}"
+            f" from {config.model.hf_repo}?"
+        )
+        print(f"This is approximately {size_hint}.\n")
+
+        response = input(
+            "Download now? [Y/n]: "
+        ).strip().lower()
+        if response and response != "y":
+            print(
+                "No model available."
+                " Use --model or --remote to specify one."
+            )
+            sys.exit(1)
 
     from huggingface_hub import hf_hub_download
 
