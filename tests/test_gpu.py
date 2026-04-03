@@ -437,10 +437,42 @@ class TestDetectNpu:
             assert npu.vendor == "qualcomm"
             assert npu.sdk_available is True
 
+    def test_intel_npu_via_wmi(self):
+        with (
+            patch("natshell.platform.sys") as mock_sys,
+            patch.dict("os.environ", {}, clear=False),
+            patch(
+                "natshell.gpu._run",
+                return_value="Intel AI Boost NPU\n",
+            ),
+        ):
+            mock_sys.platform = "win32"
+            npu = detect_npu()
+            assert npu is not None
+            assert npu.vendor == "intel"
+            assert "Intel" in npu.name
+
+    def test_openvino_sdk_env_var(self):
+        with (
+            patch("natshell.platform.sys") as mock_sys,
+            patch.dict(
+                "os.environ",
+                {"INTEL_OPENVINO_DIR": "C:\\Intel\\OpenVINO"},
+                clear=False,
+            ),
+            patch("natshell.gpu._run", return_value=""),
+        ):
+            mock_sys.platform = "win32"
+            npu = detect_npu()
+            assert npu is not None
+            assert npu.vendor == "intel"
+            assert npu.sdk_available is True
+
     def test_no_npu_detected(self):
         import os
 
         os.environ.pop("QNN_SDK_ROOT", None)
+        os.environ.pop("INTEL_OPENVINO_DIR", None)
         with (
             patch("natshell.platform.sys") as mock_sys,
             patch("natshell.gpu._run", return_value=""),

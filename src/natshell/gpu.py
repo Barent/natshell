@@ -316,7 +316,7 @@ def detect_npu() -> NpuInfo | None:
 
     Currently detects:
     - Qualcomm Hexagon NPU (Snapdragon X Elite/Plus) via WMI and QNN SDK
-    - Intel NPU via WMI
+    - Intel NPU (Core Ultra series) via WMI and OpenVINO SDK
 
     Returns NpuInfo if found, None otherwise.
     """
@@ -325,36 +325,53 @@ def detect_npu() -> NpuInfo | None:
     if not is_windows():
         return None
 
-    # Check for QNN SDK (Qualcomm AI Engine Direct)
+    # Check for vendor SDKs
     qnn_sdk = bool(os.environ.get("QNN_SDK_ROOT"))
+    openvino_sdk = bool(os.environ.get("INTEL_OPENVINO_DIR"))
 
     # Query Windows for NPU devices via PowerShell
     out = _run(
         [
             "powershell", "-NoProfile", "-Command",
-            "Get-PnpDevice -Class 'System' -Status 'OK' -ErrorAction SilentlyContinue"
-            " | Where-Object { $_.FriendlyName -match 'NPU|Hexagon|Neural' }"
-            " | Select-Object -First 1 -ExpandProperty FriendlyName",
+            "Get-PnpDevice -Class 'System' -Status 'OK'"
+            " -ErrorAction SilentlyContinue"
+            " | Where-Object {"
+            " $_.FriendlyName -match 'NPU|Hexagon|Neural' }"
+            " | Select-Object -First 1"
+            " -ExpandProperty FriendlyName",
         ],
         timeout=10,
     )
 
     if out and out.strip():
         name = out.strip().splitlines()[0].strip()
-        vendor = "qualcomm" if "qualcomm" in name.lower() or "hexagon" in name.lower() else (
-            "intel" if "intel" in name.lower() else "unknown"
-        )
+        low = name.lower()
+        if "qualcomm" in low or "hexagon" in low:
+            vendor = "qualcomm"
+            sdk_found = qnn_sdk
+        elif "intel" in low:
+            vendor = "intel"
+            sdk_found = openvino_sdk
+        else:
+            vendor = "unknown"
+            sdk_found = qnn_sdk or openvino_sdk
         return NpuInfo(
             name=name,
             vendor=vendor,
-            sdk_available=qnn_sdk,
+            sdk_available=sdk_found,
         )
 
-    # Fallback: check QNN SDK presence even without WMI detection
+    # Fallback: check SDK presence even without WMI detection
     if qnn_sdk:
         return NpuInfo(
             name="Qualcomm NPU (detected via QNN SDK)",
             vendor="qualcomm",
+            sdk_available=True,
+        )
+    if openvino_sdk:
+        return NpuInfo(
+            name="Intel NPU (detected via OpenVINO SDK)",
+            vendor="intel",
             sdk_available=True,
         )
 

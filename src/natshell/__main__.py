@@ -300,7 +300,7 @@ def main() -> None:
                 print(
                     "On Windows ARM64, MSVC cannot compile llama.cpp.\n"
                     "Build with clang-cl instead:\n"
-                    '\n'
+                    "\n"
                     '  $env:CMAKE_ARGS="-G Ninja'
                     " -DCMAKE_C_COMPILER=clang-cl"
                     ' -DCMAKE_CXX_COMPILER=clang-cl"\n'
@@ -309,7 +309,27 @@ def main() -> None:
                     " --no-cache-dir\n"
                     "\n"
                     "Requires: Visual Studio 2022 with"
-                    ' "C++ Clang Compiler for Windows" component.\n'
+                    ' "C++ Clang Compiler for Windows"'
+                    " component.\n"
+                )
+            elif is_windows():
+                print(
+                    "Install it with:\n"
+                    "  pip install llama-cpp-python\n"
+                    "\n"
+                    "For GPU acceleration (CUDA or Vulkan), build"
+                    " from source:\n"
+                    '  $env:CMAKE_ARGS="-DGGML_CUDA=on"  '
+                    " # NVIDIA CUDA\n"
+                    '  $env:CMAKE_ARGS="-DGGML_VULKAN=on" '
+                    " # AMD/Intel Vulkan\n"
+                    "  pip install llama-cpp-python"
+                    " --no-binary llama-cpp-python"
+                    " --no-cache-dir\n"
+                    "\n"
+                    "Requires: Visual Studio 2022 with"
+                    ' "Desktop development with C++"'
+                    " workload.\n"
                 )
             else:
                 print(
@@ -317,8 +337,10 @@ def main() -> None:
                     "  pip install llama-cpp-python\n"
                 )
             print(
-                "Or use Ollama instead (recommended on Windows):\n"
-                "  1. Install Ollama from https://ollama.com\n"
+                "Or use Ollama instead"
+                + (" (recommended on Windows):\n" if is_windows()
+                   else ":\n")
+                + "  1. Install Ollama from https://ollama.com\n"
                 "  2. ollama pull qwen3:8b\n"
                 '  3. Set preferred = "remote" and'
                 ' url = "http://localhost:11434/v1"'
@@ -331,9 +353,13 @@ def main() -> None:
 
                     npu = detect_npu()
                     if npu:
+                        npu_backend = (
+                            "Snapdragon NPU" if npu.vendor == "qualcomm"
+                            else "NPU"
+                        )
                         print(
                             f"  Detected NPU: {npu.name}\n"
-                            "  Ollama supports Snapdragon NPU"
+                            f"  Ollama supports {npu_backend}"
                             " acceleration out of the box.\n"
                         )
                 except Exception:
@@ -509,14 +535,24 @@ def _print_vulkan_dep_hint() -> None:
 
 def _print_windows_gpu_hint() -> None:
     """Print Windows-specific instructions for GPU-accelerated builds."""
-    print("  Install the Vulkan SDK from https://vulkan.lunarg.com/sdk/home")
     from natshell.platform import is_arm64
 
     if is_arm64():
         print(
-            "  On ARM64: ensure the Qualcomm Adreno GPU driver is up to date.\n"
+            "  Install the Vulkan SDK from"
+            " https://vulkan.lunarg.com/sdk/home\n"
+            "  On ARM64: ensure the Qualcomm Adreno GPU"
+            " driver is up to date.\n"
             "  Build with clang-cl: set CMAKE_ARGS to include"
-            " -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl"
+            " -DCMAKE_C_COMPILER=clang-cl"
+            " -DCMAKE_CXX_COMPILER=clang-cl"
+        )
+    else:
+        print(
+            "  For NVIDIA GPUs: install CUDA Toolkit from"
+            " https://developer.nvidia.com/cuda-downloads\n"
+            "  For AMD/Intel GPUs: install the Vulkan SDK"
+            " from https://vulkan.lunarg.com/sdk/home"
         )
 
 
