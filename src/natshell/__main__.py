@@ -201,7 +201,7 @@ def main() -> None:
 
     # TODO: Remove this Windows ARM64 override once llama-cpp-python builds
     # reliably with MSVC on ARM64 (currently requires clang-cl).
-    from natshell.platform import is_windows, is_arm64
+    from natshell.platform import is_arm64, is_windows
 
     if is_windows() and is_arm64() and not args.local and not args.model:
         if config.engine.preferred == "auto":
