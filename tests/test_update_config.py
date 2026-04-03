@@ -108,7 +108,8 @@ class TestSaveConfigValue:
     def test_create_new_file(self, tmp_path: Path):
         config_path = tmp_path / ".config" / "natshell" / "config.toml"
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("agent", "temperature", 0.7)
 
@@ -124,7 +125,8 @@ class TestSaveConfigValue:
         config_path.write_text("[agent]\ntemperature = 0.3\n")
 
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("agent", "temperature", 0.7)
 
@@ -139,7 +141,8 @@ class TestSaveConfigValue:
         config_path.write_text("[agent]\ntemperature = 0.3\n")
 
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("agent", "max_steps", 20)
 
@@ -157,7 +160,8 @@ class TestSaveConfigValue:
         )
 
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("agent", "temperature", 0.7)
 
@@ -167,7 +171,8 @@ class TestSaveConfigValue:
 
     def test_bool_formatting(self, tmp_path: Path):
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("backup", "enabled", True)
 
@@ -177,7 +182,8 @@ class TestSaveConfigValue:
 
     def test_string_formatting(self, tmp_path: Path):
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("engine", "preferred", "remote")
 
@@ -188,7 +194,8 @@ class TestSaveConfigValue:
     def test_round_trip_valid_toml(self, tmp_path: Path):
         """Written config should be valid TOML."""
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("agent", "temperature", 0.7)
             save_config_value("agent", "max_steps", 20)
@@ -209,7 +216,8 @@ class TestSaveConfigValue:
         config_path.write_text('[model]\nhf_repo = "test"\n')
 
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             save_config_value("engine", "preferred", "local")
 
@@ -262,7 +270,8 @@ class TestUpdateConfigTool:
     @pytest.fixture(autouse=True)
     def _patch_home(self, tmp_path: Path):
         with patch(
-            "natshell.config.Path.home", return_value=tmp_path
+            "natshell.config._get_config_dir",
+            return_value=tmp_path / ".config" / "natshell",
         ):
             yield
 

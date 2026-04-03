@@ -7,9 +7,11 @@ import shutil
 import time
 from pathlib import Path
 
+from natshell.platform import data_dir as _data_dir
+
 logger = logging.getLogger(__name__)
 
-BACKUP_DIR = Path.home() / ".local" / "share" / "natshell" / "backups"
+BACKUP_DIR = _data_dir() / "backups"
 
 
 class BackupManager:

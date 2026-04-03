@@ -91,7 +91,8 @@ def test_find_memory_file_global_fallback(tmp_path: Path) -> None:
     global_file = global_dir / "agents.md"
     global_file.write_text("global notes")
 
-    with patch("natshell.agent.working_memory.Path.home", return_value=tmp_path / "fakehome"):
+    fake_cfg = tmp_path / "fakehome" / ".config" / "natshell"
+    with patch("natshell.agent.working_memory.config_dir", return_value=fake_cfg):
         result = find_memory_file(tmp_path)
     assert result == global_file
 
@@ -109,7 +110,8 @@ def test_find_memory_file_prefers_local_over_global(tmp_path: Path) -> None:
     global_dir.mkdir(parents=True)
     (global_dir / "agents.md").write_text("global notes")
 
-    with patch("natshell.agent.working_memory.Path.home", return_value=tmp_path / "fakehome"):
+    fake_cfg = tmp_path / "fakehome" / ".config" / "natshell"
+    with patch("natshell.agent.working_memory.config_dir", return_value=fake_cfg):
         result = find_memory_file(tmp_path)
     assert result == local_file
 
@@ -117,7 +119,8 @@ def test_find_memory_file_prefers_local_over_global(tmp_path: Path) -> None:
 def test_find_memory_file_none_when_missing(tmp_path: Path) -> None:
     sub = tmp_path / "empty"
     sub.mkdir()
-    with patch("natshell.agent.working_memory.Path.home", return_value=tmp_path / "fakehome"):
+    fake_cfg = tmp_path / "fakehome" / ".config" / "natshell"
+    with patch("natshell.agent.working_memory.config_dir", return_value=fake_cfg):
         assert find_memory_file(sub) is None
 
 
@@ -153,7 +156,8 @@ def test_load_working_memory_truncates(tmp_path: Path) -> None:
 def test_load_working_memory_none_when_missing(tmp_path: Path) -> None:
     sub = tmp_path / "empty"
     sub.mkdir()
-    with patch("natshell.agent.working_memory.Path.home", return_value=tmp_path / "fakehome"):
+    fake_cfg = tmp_path / "fakehome" / ".config" / "natshell"
+    with patch("natshell.agent.working_memory.config_dir", return_value=fake_cfg):
         assert load_working_memory(sub) is None
 
 
@@ -175,7 +179,8 @@ def test_load_working_memory_global(tmp_path: Path) -> None:
     sub = tmp_path / "noproject"
     sub.mkdir()
 
-    with patch("natshell.agent.working_memory.Path.home", return_value=tmp_path / "fakehome"):
+    fake_cfg = tmp_path / "fakehome" / ".config" / "natshell"
+    with patch("natshell.agent.working_memory.config_dir", return_value=fake_cfg):
         result = load_working_memory(sub)
     assert result is not None
     assert result.is_project_local is False
@@ -193,7 +198,8 @@ def test_memory_file_path_with_project(tmp_path: Path) -> None:
 def test_memory_file_path_without_project(tmp_path: Path) -> None:
     sub = tmp_path / "empty"
     sub.mkdir()
-    expected = Path.home() / ".config" / "natshell" / "agents.md"
+    from natshell.platform import config_dir
+    expected = config_dir() / "agents.md"
     assert memory_file_path(sub) == expected
 
 

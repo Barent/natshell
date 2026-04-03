@@ -1,12 +1,14 @@
-"""GPU hardware detection and best-device selection.
+"""GPU and NPU hardware detection and best-device selection.
 
 Follows the same cached-detection pattern as ``platform.py``.
-Tries ``vulkaninfo``, ``nvidia-smi``, and ``lspci`` in order.
+Tries ``vulkaninfo``, ``nvidia-smi``, ``lspci`` (Linux), and
+``WMI`` (Windows) in order for GPUs.  Detects Qualcomm NPUs on Windows.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -21,10 +23,19 @@ class GpuInfo:
     """Describes a single GPU visible to the system."""
 
     name: str
-    vendor: str  # "nvidia", "amd", "intel", "unknown"
+    vendor: str  # "nvidia", "amd", "intel", "qualcomm", "unknown"
     device_index: int
     vram_mb: int
     is_discrete: bool
+
+
+@dataclass
+class NpuInfo:
+    """Describes a detected NPU (Neural Processing Unit)."""
+
+    name: str
+    vendor: str  # "qualcomm", "intel", "unknown"
+    sdk_available: bool  # True if the vendor SDK (e.g. QNN) is found
 
 
 def _run(cmd: list[str], timeout: int = 5) -> str | None:
@@ -51,6 +62,8 @@ def _classify_vendor(name: str) -> str:
         return "amd"
     if "intel" in low:
         return "intel"
+    if "qualcomm" in low or "adreno" in low:
+        return "qualcomm"
     return "unknown"
 
 
@@ -168,9 +181,56 @@ def _parse_lspci(output: str) -> list[GpuInfo]:
     return gpus
 
 
+def _parse_wmi_gpu(output: str) -> list[GpuInfo]:
+    """Parse PowerShell ``Get-CimInstance Win32_VideoController`` output.
+
+    Expected format (tab-separated):
+        Name<TAB>AdapterRAM
+        NVIDIA GeForce RTX 4060<TAB>8589934592
+        Qualcomm Adreno GPU<TAB>0
+    """
+    gpus: list[GpuInfo] = []
+    lines = output.strip().splitlines()
+    # Skip header line(s)
+    for idx, line in enumerate(lines):
+        if idx == 0 and ("Name" in line or "----" in line):
+            continue
+        if line.startswith("---"):
+            continue
+        parts = line.split("\t")
+        name = parts[0].strip() if parts else ""
+        if not name:
+            continue
+        vram_mb = 0
+        if len(parts) >= 2:
+            try:
+                vram_bytes = int(parts[1].strip())
+                if vram_bytes > 0:
+                    vram_mb = vram_bytes // (1024 * 1024)
+            except (ValueError, IndexError):
+                pass
+        vendor = _classify_vendor(name)
+        # On Windows: discrete GPUs typically have non-zero VRAM, or are
+        # NVIDIA/AMD.  Integrated (Intel/Qualcomm Adreno) report 0 or low VRAM.
+        is_discrete = vendor in ("nvidia",) or (
+            vendor == "amd" and vram_mb > 512
+        )
+        gpus.append(
+            GpuInfo(
+                name=name,
+                vendor=vendor,
+                device_index=idx,
+                vram_mb=vram_mb,
+                is_discrete=is_discrete,
+            )
+        )
+    return gpus
+
+
 @lru_cache(maxsize=1)
 def detect_gpus() -> list[GpuInfo]:
-    """Detect GPU hardware. Tries vulkaninfo, nvidia-smi, lspci in order."""
+    """Detect GPU hardware. Tries vulkaninfo, nvidia-smi, lspci/WMI in order."""
+    from natshell.platform import is_windows
 
     # 1. vulkaninfo — cross-vendor, gives device type (discrete/integrated)
     if shutil.which("vulkaninfo"):
@@ -190,14 +250,33 @@ def detect_gpus() -> list[GpuInfo]:
                 logger.debug("GPU detection via nvidia-smi: %d device(s)", len(gpus))
                 return gpus
 
-    # 3. lspci — last resort, no VRAM info
-    if shutil.which("lspci"):
-        out = _run(["lspci"])
+    # 3. Platform-specific fallback
+    if is_windows():
+        # WMI via PowerShell
+        out = _run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "Get-CimInstance Win32_VideoController"
+                " | Select-Object Name,AdapterRAM"
+                " | Format-Table -HideTableHeaders"
+                " | Out-String",
+            ],
+            timeout=10,
+        )
         if out:
-            gpus = _parse_lspci(out)
+            gpus = _parse_wmi_gpu(out)
             if gpus:
-                logger.debug("GPU detection via lspci: %d device(s)", len(gpus))
+                logger.debug("GPU detection via WMI: %d device(s)", len(gpus))
                 return gpus
+    else:
+        # lspci — Linux, no VRAM info
+        if shutil.which("lspci"):
+            out = _run(["lspci"])
+            if out:
+                gpus = _parse_lspci(out)
+                if gpus:
+                    logger.debug("GPU detection via lspci: %d device(s)", len(gpus))
+                    return gpus
 
     logger.debug("No GPUs detected")
     return []
@@ -226,3 +305,57 @@ def gpu_backend_available() -> bool:
         return llama_supports_gpu_offload()
     except ImportError:
         return False
+
+
+# ── NPU detection ───────────────────────────────────────────────────────────
+
+
+@lru_cache(maxsize=1)
+def detect_npu() -> NpuInfo | None:
+    """Detect a Neural Processing Unit (NPU).
+
+    Currently detects:
+    - Qualcomm Hexagon NPU (Snapdragon X Elite/Plus) via WMI and QNN SDK
+    - Intel NPU via WMI
+
+    Returns NpuInfo if found, None otherwise.
+    """
+    from natshell.platform import is_windows
+
+    if not is_windows():
+        return None
+
+    # Check for QNN SDK (Qualcomm AI Engine Direct)
+    qnn_sdk = bool(os.environ.get("QNN_SDK_ROOT"))
+
+    # Query Windows for NPU devices via PowerShell
+    out = _run(
+        [
+            "powershell", "-NoProfile", "-Command",
+            "Get-PnpDevice -Class 'System' -Status 'OK' -ErrorAction SilentlyContinue"
+            " | Where-Object { $_.FriendlyName -match 'NPU|Hexagon|Neural' }"
+            " | Select-Object -First 1 -ExpandProperty FriendlyName",
+        ],
+        timeout=10,
+    )
+
+    if out and out.strip():
+        name = out.strip().splitlines()[0].strip()
+        vendor = "qualcomm" if "qualcomm" in name.lower() or "hexagon" in name.lower() else (
+            "intel" if "intel" in name.lower() else "unknown"
+        )
+        return NpuInfo(
+            name=name,
+            vendor=vendor,
+            sdk_available=qnn_sdk,
+        )
+
+    # Fallback: check QNN SDK presence even without WMI detection
+    if qnn_sdk:
+        return NpuInfo(
+            name="Qualcomm NPU (detected via QNN SDK)",
+            vendor="qualcomm",
+            sdk_available=True,
+        )
+
+    return None

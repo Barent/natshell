@@ -9,7 +9,14 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from natshell.platform import config_dir as _platform_config_dir
+
 logger = logging.getLogger(__name__)
+
+
+def _get_config_dir() -> Path:
+    """Return the config directory, delegating to the platform helper."""
+    return _platform_config_dir()
 
 
 @dataclass
@@ -214,9 +221,9 @@ def save_config_value(section: str, key: str, value: str | int | float | bool) -
     Uses simple line-based TOML editing (same pattern as save_engine_preference).
     Returns the path to the config file.
     """
-    config_dir = Path.home() / ".config" / "natshell"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / "config.toml"
+    cfg_dir = _get_config_dir()
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    config_path = cfg_dir / "config.toml"
 
     if config_path.exists():
         lines = config_path.read_text().splitlines(keepends=True)
@@ -285,7 +292,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
     if config_path:
         user_path = Path(config_path)
     else:
-        user_path = Path.home() / ".config" / "natshell" / "config.toml"
+        user_path = _get_config_dir() / "config.toml"
 
     if user_path.exists():
         _merge_toml(config, user_path)
@@ -296,19 +303,23 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
         config.remote.api_key = env_api_key
 
     # Warn if config file contains an API key and has permissive permissions
+    # (Unix permission bits are meaningless on Windows — skip the check)
     if config.remote.api_key and user_path.exists():
-        try:
-            perms = user_path.stat().st_mode & 0o777
-            if perms & 0o077:
-                logger.warning(
-                    "Config file %s has permissive permissions (%04o) and contains an API key. "
-                    "Run: chmod 600 %s",
-                    user_path,
-                    perms,
-                    user_path,
-                )
-        except OSError:
-            pass
+        from natshell.platform import is_windows
+
+        if not is_windows():
+            try:
+                perms = user_path.stat().st_mode & 0o777
+                if perms & 0o077:
+                    logger.warning(
+                        "Config file %s has permissive permissions (%04o) "
+                        "and contains an API key. Run: chmod 600 %s",
+                        user_path,
+                        perms,
+                        user_path,
+                    )
+            except OSError:
+                pass
 
     return config
 

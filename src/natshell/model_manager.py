@@ -22,6 +22,7 @@ from natshell.inference.ollama import (
     normalize_base_url,
     ping_server,
 )
+from natshell.platform import data_dir as _data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ BUNDLED_TIERS: dict[str, dict[str, str]] = {
     },
 }
 
-MODELS_DIR = Path.home() / ".local" / "share" / "natshell" / "models"
+MODELS_DIR = _data_dir() / "models"
 
 
 def format_download_menu(models_dir: Path | None = None) -> str:
@@ -279,7 +280,7 @@ def resolve_local_model_path(config: NatShellConfig) -> str:
     mc = config.model
     model_path = mc.path
     if model_path == "auto":
-        model_dir = Path.home() / ".local" / "share" / "natshell" / "models"
+        model_dir = _data_dir() / "models"
         model_path = str(model_dir / mc.hf_file)
     return model_path
 

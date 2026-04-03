@@ -9,6 +9,7 @@ import re
 import subprocess
 import time
 
+from natshell.platform import is_windows
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -293,15 +294,22 @@ async def execute_shell(
             "timeout": timeout,
             "env": env,
             "cwd": os.getcwd(),
-            "start_new_session": True,
         }
+
+        # start_new_session is POSIX-only (setsid). On Windows, use
+        # CREATE_NEW_PROCESS_GROUP to achieve similar isolation.
+        if is_windows():
+            run_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            run_kwargs["start_new_session"] = True
 
         # If we have a cached sudo password and the command invokes sudo
         # at a command position (not inside string arguments), add -S so
         # sudo reads the password from stdin.  Uses _inject_sudo_dash_s()
         # to avoid matching "sudo" inside quoted text — prevents password
         # leakage to stdin-reading commands.
-        if sudo_pw and _has_sudo_invocation(command):
+        # Sudo is not applicable on Windows (UAC is a different paradigm).
+        if not is_windows() and sudo_pw and _has_sudo_invocation(command):
             command, sudo_count = _inject_sudo_dash_s(command)
             stdin_data = (sudo_pw + "\n") * sudo_count
             # Append trailing "y\n" only for package manager commands that
@@ -314,10 +322,19 @@ async def execute_shell(
         else:
             run_kwargs["stdin"] = subprocess.DEVNULL
 
+        # Build the shell command list based on platform
+        if is_windows():
+            shell_cmd = [
+                "powershell", "-NoProfile", "-NonInteractive",
+                "-Command", command,
+            ]
+        else:
+            shell_cmd = ["bash", "-c", command]
+
         # Run in thread to avoid blocking the async event loop
         result = await asyncio.to_thread(
             subprocess.run,
-            ["bash", "-c", command],
+            shell_cmd,
             **run_kwargs,
         )
 
@@ -325,9 +342,11 @@ async def execute_shell(
         stderr, stderr_truncated = _truncate_output(result.stderr)
 
         # sudo -S echoes a password prompt to stderr — strip it
-        if sudo_pw:
+        if sudo_pw and not is_windows():
             stderr = "\n".join(
-                line for line in stderr.splitlines() if not line.startswith("[sudo] password for")
+                line
+                for line in stderr.splitlines()
+                if not line.startswith("[sudo] password for")
             ).strip()
 
         return ToolResult(
@@ -344,9 +363,10 @@ async def execute_shell(
             exit_code=124,
         )
     except FileNotFoundError:
+        shell_name = "PowerShell" if is_windows() else "bash"
         return ToolResult(
             output="",
-            error="bash not found. Is bash installed?",
+            error=f"{shell_name} not found. Is it installed?",
             exit_code=127,
         )
     except Exception as e:

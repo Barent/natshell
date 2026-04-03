@@ -323,3 +323,120 @@ class TestSensitivePathPatterns:
     def test_non_sensitive_path_safe(self):
         c = _make_classifier()
         assert c.classify_tool_call("read_file", {"path": "/home/user/readme.txt"}) == Risk.SAFE
+
+
+# ─── Windows safety patterns ────────────────────────────────────────────────
+
+
+def _make_windows_classifier() -> SafetyClassifier:
+    """Create a classifier with the Windows-specific patterns from config."""
+    config = SafetyConfig(
+        mode="confirm",
+        always_confirm=[
+            r"^del\s+/[sS]",
+            r"^rd\s+/[sS]",
+            r"^format\s",
+            r"^diskpart",
+            r"^net\s+user",
+            r"^reg\s+delete",
+            r"Remove-Item\s+.*-Recurse",
+            r"Stop-Service\s",
+            r"Set-ExecutionPolicy\s",
+            r"^shutdown\s+/[sStTrR]",
+            r"^schtasks\s+/(create|delete)",
+            r"^netsh\s+advfirewall",
+            r"^wmic\s+.*(delete|call)",
+        ],
+        blocked=[
+            r"^format\s+C:",
+            r"^rd\s+/[sS]\s+/[qQ]\s+C:\\",
+            r"Remove-Item\s+-Recurse\s+-Force\s+C:\\",
+        ],
+    )
+    return SafetyClassifier(config)
+
+
+class TestWindowsBlockedCommands:
+    def test_format_c_drive(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("format C:") == Risk.BLOCKED
+
+    def test_rd_c_drive(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("rd /s /q C:\\") == Risk.BLOCKED
+
+    def test_remove_item_c_drive(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("Remove-Item -Recurse -Force C:\\") == Risk.BLOCKED
+
+
+class TestWindowsConfirmCommands:
+    def test_del_recursive(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("del /s temp_folder") == Risk.CONFIRM
+
+    def test_rd_recursive(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("rd /s old_dir") == Risk.CONFIRM
+
+    def test_format_other_drive(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("format D:") == Risk.CONFIRM
+
+    def test_diskpart(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("diskpart") == Risk.CONFIRM
+
+    def test_net_user(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("net user admin password /add") == Risk.CONFIRM
+
+    def test_reg_delete(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("reg delete HKLM\\Software\\Test") == Risk.CONFIRM
+
+    def test_remove_item_recurse(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("Remove-Item ./temp -Recurse") == Risk.CONFIRM
+
+    def test_stop_service(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("Stop-Service wuauserv") == Risk.CONFIRM
+
+    def test_set_execution_policy(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("Set-ExecutionPolicy Unrestricted") == Risk.CONFIRM
+
+    def test_shutdown_windows(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("shutdown /s /t 0") == Risk.CONFIRM
+
+    def test_schtasks_create(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("schtasks /create /tn test") == Risk.CONFIRM
+
+    def test_netsh_firewall(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("netsh advfirewall set allprofiles state off") == Risk.CONFIRM
+
+    def test_wmic_delete(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("wmic process where name='test' delete") == Risk.CONFIRM
+
+
+class TestWindowsSafeCommands:
+    def test_dir(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("dir C:\\Users") == Risk.SAFE
+
+    def test_get_process(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("Get-Process") == Risk.SAFE
+
+    def test_ipconfig(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("ipconfig /all") == Risk.SAFE
+
+    def test_systeminfo(self):
+        c = _make_windows_classifier()
+        assert c.classify_command("systeminfo") == Risk.SAFE

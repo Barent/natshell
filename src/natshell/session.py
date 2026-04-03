@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from natshell.platform import data_dir as _data_dir
+
 logger = logging.getLogger(__name__)
 
 _SESSION_ID_RE = re.compile(r"^[a-f0-9]{32}$")
@@ -17,7 +19,7 @@ _SESSION_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 # Default max serialized session size: 10 MB
 _DEFAULT_MAX_SIZE = 10 * 1024 * 1024
 
-SESSION_DIR = Path.home() / ".local" / "share" / "natshell" / "sessions"
+SESSION_DIR = _data_dir() / "sessions"
 
 
 class SessionManager:

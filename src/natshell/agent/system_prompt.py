@@ -12,6 +12,8 @@ def _platform_role() -> str:
     match current_platform():
         case "macos":
             return "macOS system administration and coding assistant"
+        case "windows":
+            return "Windows system administration and coding assistant"
         case "wsl":
             return "Linux (WSL) system administration and coding assistant"
         case _:

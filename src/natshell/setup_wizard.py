@@ -91,8 +91,10 @@ def run_setup_wizard(
     Returns:
         Path to the written config file, or None if skipped.
     """
-    config_dir = Path.home() / ".config" / "natshell"
-    config_path = config_dir / "config.toml"
+    from natshell.platform import config_dir as _config_dir
+
+    cfg_dir = _config_dir()
+    config_path = cfg_dir / "config.toml"
 
     output.write("\n")
     output.write("  ─── NatShell First-Run Setup ───\n")

@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from natshell.platform import config_dir
+
 logger = logging.getLogger(__name__)
 
 # Markers that indicate a project root directory
@@ -62,7 +64,7 @@ def find_memory_file(cwd: Path) -> Path | None:
         if local.is_file():
             return local
 
-    global_path = Path.home() / ".config" / "natshell" / "agents.md"
+    global_path = config_dir() / "agents.md"
     if global_path.is_file():
         return global_path
 
@@ -109,7 +111,7 @@ def memory_file_path(cwd: Path) -> Path:
     root = find_project_root(cwd)
     if root is not None:
         return root / ".natshell" / "agents.md"
-    return Path.home() / ".config" / "natshell" / "agents.md"
+    return config_dir() / "agents.md"
 
 
 def effective_memory_chars(n_ctx: int, base_chars: int = 4000) -> int:

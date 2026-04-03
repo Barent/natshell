@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from unittest.mock import mock_open, patch
 
-from natshell.platform import current_platform, is_linux, is_macos, is_wsl
+from natshell.platform import (
+    config_dir,
+    current_platform,
+    data_dir,
+    is_arm64,
+    is_linux,
+    is_macos,
+    is_windows,
+    is_wsl,
+)
 
 
 class TestCurrentPlatform:
@@ -86,3 +95,98 @@ class TestHelpers:
                 assert is_linux() is True
                 assert is_macos() is False
                 assert is_wsl() is False
+
+    def test_is_windows_true_on_win32(self):
+        current_platform.cache_clear()
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            assert is_windows() is True
+            assert is_macos() is False
+            assert is_linux() is False
+            assert is_wsl() is False
+
+
+class TestWin32Platform:
+    """Test Windows-specific detection."""
+
+    def setup_method(self):
+        current_platform.cache_clear()
+
+    def teardown_method(self):
+        current_platform.cache_clear()
+
+    def test_win32_returns_windows(self):
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            assert current_platform() == "windows"
+
+    def test_win32_checked_before_linux(self):
+        """win32 check occurs before Linux/WSL branch."""
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            # Even if /proc/version existed, win32 takes precedence
+            assert current_platform() == "windows"
+
+
+class TestIsArm64:
+    def setup_method(self):
+        is_arm64.cache_clear()
+
+    def teardown_method(self):
+        is_arm64.cache_clear()
+
+    def test_arm64_windows(self):
+        with patch("natshell.platform._platform.machine", return_value="ARM64"):
+            assert is_arm64() is True
+
+    def test_aarch64_linux(self):
+        is_arm64.cache_clear()
+        with patch("natshell.platform._platform.machine", return_value="aarch64"):
+            assert is_arm64() is True
+
+    def test_x86_64(self):
+        is_arm64.cache_clear()
+        with patch("natshell.platform._platform.machine", return_value="x86_64"):
+            assert is_arm64() is False
+
+
+class TestDirectoryHelpers:
+    def setup_method(self):
+        current_platform.cache_clear()
+
+    def teardown_method(self):
+        current_platform.cache_clear()
+
+    def test_data_dir_unix(self):
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            with patch("builtins.open", mock_open(read_data="Linux version 6.12")):
+                d = data_dir()
+                # Use Path parts to avoid separator issues on Windows
+                assert d.parts[-3:] == (".local", "share", "natshell")
+
+    def test_data_dir_windows(self):
+        current_platform.cache_clear()
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            with patch.dict("os.environ", {"LOCALAPPDATA": "C:\\Users\\test\\AppData\\Local"}):
+                d = data_dir()
+                assert "AppData" in str(d)
+                assert d.name == "natshell"
+
+    def test_config_dir_unix(self):
+        current_platform.cache_clear()
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            with patch("builtins.open", mock_open(read_data="Linux version 6.12")):
+                d = config_dir()
+                assert d.parts[-2:] == (".config", "natshell")
+
+    def test_config_dir_windows(self):
+        current_platform.cache_clear()
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            with patch.dict("os.environ", {"APPDATA": "C:\\Users\\test\\AppData\\Roaming"}):
+                d = config_dir()
+                assert "AppData" in str(d)
+                assert d.name == "natshell"

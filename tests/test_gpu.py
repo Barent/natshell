@@ -10,7 +10,9 @@ from natshell.gpu import (
     _parse_lspci,
     _parse_nvidia_smi,
     _parse_vulkaninfo,
+    _parse_wmi_gpu,
     best_gpu_index,
+    detect_npu,
     gpu_backend_available,
 )
 
@@ -38,6 +40,12 @@ class TestClassifyVendor:
 
     def test_unknown(self):
         assert _classify_vendor("Some Random GPU") == "unknown"
+
+    def test_qualcomm_adreno(self):
+        assert _classify_vendor("Qualcomm Adreno GPU") == "qualcomm"
+
+    def test_adreno_keyword(self):
+        assert _classify_vendor("Adreno 740") == "qualcomm"
 
 
 # ─── _parse_vulkaninfo ───────────────────────────────────────────────────────
@@ -278,7 +286,10 @@ class TestDetectGpus:
         from natshell.gpu import detect_gpus
 
         detect_gpus.cache_clear()
-        with patch("natshell.gpu.shutil.which", return_value=None):
+        with (
+            patch("natshell.gpu.shutil.which", return_value=None),
+            patch("natshell.gpu._run", return_value=None),
+        ):
             gpus = detect_gpus()
             assert gpus == []
         detect_gpus.cache_clear()
@@ -333,3 +344,106 @@ class TestGpuBackendAvailable:
     def test_no_llama_cpp(self):
         """Returns False when llama_cpp not installed."""
         assert gpu_backend_available() is True or gpu_backend_available() is False
+
+
+# ─── _parse_wmi_gpu ─────────────────────────────────────────────────────────
+
+
+class TestParseWmiGpu:
+    def test_single_gpu(self):
+        output = "Name\tAdapterRAM\n----\t----------\nNVIDIA GeForce RTX 4060\t8589934592\n"
+        gpus = _parse_wmi_gpu(output)
+        assert len(gpus) == 1
+        assert gpus[0].name == "NVIDIA GeForce RTX 4060"
+        assert gpus[0].vendor == "nvidia"
+        assert gpus[0].vram_mb == 8192
+        assert gpus[0].is_discrete is True
+
+    def test_qualcomm_adreno(self):
+        output = "Name\tAdapterRAM\nQualcomm Adreno GPU\t0\n"
+        gpus = _parse_wmi_gpu(output)
+        assert len(gpus) == 1
+        assert gpus[0].vendor == "qualcomm"
+        assert gpus[0].vram_mb == 0
+        assert gpus[0].is_discrete is False
+
+    def test_multiple_gpus(self):
+        output = (
+            "Name\tAdapterRAM\n"
+            "----\t----------\n"
+            "Qualcomm Adreno GPU\t0\n"
+            "NVIDIA GeForce RTX 4060\t8589934592\n"
+        )
+        gpus = _parse_wmi_gpu(output)
+        assert len(gpus) == 2
+        assert gpus[0].vendor == "qualcomm"
+        assert gpus[1].vendor == "nvidia"
+
+    def test_empty_output(self):
+        assert _parse_wmi_gpu("") == []
+
+    def test_header_only(self):
+        assert _parse_wmi_gpu("Name\tAdapterRAM\n----\t----------\n") == []
+
+
+# ─── detect_npu ──────────────────────────────────────────────────────────────
+
+
+class TestDetectNpu:
+    def setup_method(self):
+        detect_npu.cache_clear()
+        from natshell.platform import current_platform
+        current_platform.cache_clear()
+
+    def teardown_method(self):
+        detect_npu.cache_clear()
+        from natshell.platform import current_platform
+        current_platform.cache_clear()
+
+    def test_not_windows_returns_none(self):
+        with patch("natshell.platform.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            with patch("builtins.open", side_effect=OSError):
+                assert detect_npu() is None
+
+    def test_qualcomm_npu_via_wmi(self):
+        with (
+            patch("natshell.platform.sys") as mock_sys,
+            patch.dict("os.environ", {}, clear=False),
+            patch(
+                "natshell.gpu._run",
+                return_value="Qualcomm Hexagon NPU\n",
+            ),
+        ):
+            mock_sys.platform = "win32"
+            npu = detect_npu()
+            assert npu is not None
+            assert npu.vendor == "qualcomm"
+            assert "Hexagon" in npu.name
+
+    def test_qnn_sdk_env_var(self):
+        with (
+            patch("natshell.platform.sys") as mock_sys,
+            patch.dict(
+                "os.environ",
+                {"QNN_SDK_ROOT": "C:\\Qualcomm\\AIEngine"},
+                clear=False,
+            ),
+            patch("natshell.gpu._run", return_value=""),
+        ):
+            mock_sys.platform = "win32"
+            npu = detect_npu()
+            assert npu is not None
+            assert npu.vendor == "qualcomm"
+            assert npu.sdk_available is True
+
+    def test_no_npu_detected(self):
+        import os
+
+        os.environ.pop("QNN_SDK_ROOT", None)
+        with (
+            patch("natshell.platform.sys") as mock_sys,
+            patch("natshell.gpu._run", return_value=""),
+        ):
+            mock_sys.platform = "win32"
+            assert detect_npu() is None

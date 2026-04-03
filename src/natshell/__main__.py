@@ -293,27 +293,58 @@ def main() -> None:
                 prompt_cache_mb=config.model.prompt_cache_mb,
             )
         except ModuleNotFoundError:
+            from natshell.platform import is_arm64, is_windows
+
+            print("\nERROR: llama-cpp-python is not installed.\n")
+            if is_windows() and is_arm64():
+                print(
+                    "On Windows ARM64, MSVC cannot compile llama.cpp.\n"
+                    "Build with clang-cl instead:\n"
+                    '\n'
+                    '  $env:CMAKE_ARGS="-G Ninja'
+                    " -DCMAKE_C_COMPILER=clang-cl"
+                    ' -DCMAKE_CXX_COMPILER=clang-cl"\n'
+                    "  pip install llama-cpp-python"
+                    " --no-binary llama-cpp-python"
+                    " --no-cache-dir\n"
+                    "\n"
+                    "Requires: Visual Studio 2022 with"
+                    ' "C++ Clang Compiler for Windows" component.\n'
+                )
+            else:
+                print(
+                    "Install it with:\n"
+                    "  pip install llama-cpp-python\n"
+                )
             print(
-                "\nERROR: llama-cpp-python is not installed.\n"
-                "\n"
-                "Install it with:\n"
-                "  pip install llama-cpp-python\n"
-                "\n"
-                "On Windows ARM64, MSVC is not supported"
-                " — you need Clang, or use Ollama instead:\n"
+                "Or use Ollama instead (recommended on Windows):\n"
                 "  1. Install Ollama from https://ollama.com\n"
                 "  2. ollama pull qwen3:8b\n"
                 '  3. Set preferred = "remote" and'
                 ' url = "http://localhost:11434/v1"'
                 " in config.toml\n"
             )
+            # Show NPU hint if detected
+            if is_windows():
+                try:
+                    from natshell.gpu import detect_npu
+
+                    npu = detect_npu()
+                    if npu:
+                        print(
+                            f"  Detected NPU: {npu.name}\n"
+                            "  Ollama supports Snapdragon NPU"
+                            " acceleration out of the box.\n"
+                        )
+                except Exception:
+                    pass
             sys.exit(1)
         try:
             from llama_cpp import llama_supports_gpu_offload
 
             if config.model.n_gpu_layers != 0 and not llama_supports_gpu_offload():
                 from natshell.gpu import detect_gpus
-                from natshell.platform import is_macos
+                from natshell.platform import is_macos, is_windows
 
                 gpus = detect_gpus()
                 if is_macos():
@@ -336,7 +367,9 @@ def main() -> None:
                     " --no-binary llama-cpp-python --force-reinstall"
                 )
 
-                if not is_macos():
+                if is_windows():
+                    _print_windows_gpu_hint()
+                elif not is_macos():
                     _print_vulkan_dep_hint()
         except ImportError:
             pass
@@ -472,6 +505,19 @@ def _print_vulkan_dep_hint() -> None:
         print("  Install Vulkan build deps: sudo pacman -S vulkan-headers glslang")
     else:
         print("  Ensure Vulkan development headers and a GLSL shader compiler are installed.")
+
+
+def _print_windows_gpu_hint() -> None:
+    """Print Windows-specific instructions for GPU-accelerated builds."""
+    print("  Install the Vulkan SDK from https://vulkan.lunarg.com/sdk/home")
+    from natshell.platform import is_arm64
+
+    if is_arm64():
+        print(
+            "  On ARM64: ensure the Qualcomm Adreno GPU driver is up to date.\n"
+            "  Build with clang-cl: set CMAKE_ARGS to include"
+            " -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl"
+        )
 
 
 def _self_update() -> None:

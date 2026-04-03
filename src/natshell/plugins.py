@@ -5,14 +5,14 @@ from __future__ import annotations
 import importlib.util
 import logging
 from importlib.metadata import entry_points
-from pathlib import Path
 
+from natshell.platform import config_dir as _config_dir
 from natshell.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 ENTRY_POINT_GROUP = "natshell.plugins"
-PLUGIN_DIR = Path("~/.config/natshell/plugins").expanduser()
+PLUGIN_DIR = _config_dir() / "plugins"
 
 
 def _load_entry_point_plugins(registry: ToolRegistry) -> int:

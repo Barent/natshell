@@ -1,6 +1,6 @@
 [project]
 name = "natshell"
-version = "1.0.12"
+version = "1.0.13"
 description = "Natural language shell interface — a local-first agentic TUI powered by a bundled LLM"
 readme = "README.md"
 license = "MIT"
@@ -8,14 +8,15 @@ requires-python = ">=3.11"
 authors = [
     { name = "Nicholas B Considine" }
 ]
-keywords = ["shell", "natural-language", "tui", "llm", "agent", "cli", "linux", "macos"]
+keywords = ["shell", "natural-language", "tui", "llm", "agent", "cli", "linux", "macos", "windows"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-"Operating System :: POSIX :: Linux",
+    "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
