@@ -1,3 +1,6 @@
+# Claude Code workspace
+.claude/
+
 # Models (large binary files)
 models/*.gguf
 *.gguf

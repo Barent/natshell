@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from textual.command import Hit, Hits, Provider
 
-MODELS_DIR = Path.home() / ".local" / "share" / "natshell" / "models"
+from natshell.platform import data_dir
+
+MODELS_DIR = data_dir() / "models"
 
 
 class ModelSwitchProvider(Provider):

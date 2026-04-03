@@ -597,7 +597,9 @@ def _self_update() -> None:
 
 def _ensure_model(config) -> str:
     """Ensure the default model is downloaded. Returns the model path."""
-    model_dir = Path.home() / ".local" / "share" / "natshell" / "models"
+    from natshell.platform import data_dir
+
+    model_dir = data_dir() / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
 
     target = model_dir / config.model.hf_file

@@ -181,6 +181,7 @@ def should_run_wizard(
         return False
 
     if config_path is None:
-        config_path = Path.home() / ".config" / "natshell" / "config.toml"
+        from natshell.platform import config_dir
+        config_path = config_dir() / "config.toml"
 
     return not config_path.exists()

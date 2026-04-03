@@ -378,7 +378,9 @@ _STATIC_TOPICS: dict[str, str] = {
 
 def _topic_config() -> str:
     """Read the user's config.toml and return its contents."""
-    user_config = Path.home() / ".config" / "natshell" / "config.toml"
+    from natshell.platform import config_dir
+
+    user_config = config_dir() / "config.toml"
     if not user_config.exists():
         return (
             "No user config file found at ~/.config/natshell/config.toml\n"

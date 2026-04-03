@@ -1192,7 +1192,9 @@ class AgentLoop:
         # Resolve model path
         model_path = self.fallback_config.path
         if model_path == "auto":
-            model_dir = Path.home() / ".local" / "share" / "natshell" / "models"
+            from natshell.platform import data_dir
+
+            model_dir = data_dir() / "models"
             model_path = str(model_dir / self.fallback_config.hf_file)
 
         if not Path(model_path).exists():
