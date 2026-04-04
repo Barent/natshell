@@ -350,12 +350,16 @@ class NatShellApp(App):
         event: AgentEvent,
         conversation: ScrollableContainer,
         thinking_ref: list[ThinkingIndicator | None],
+        elapsed_ref: list[int] | None = None,
     ) -> None:
         """Render a single agent event into the conversation. Shared by run_agent and run_plan.
 
         thinking_ref is a single-element list holding the current ThinkingIndicator
         (or None), used as a mutable reference so callers can track it.
+        elapsed_ref carries the accumulated thinking time across indicator replacements.
         """
+        if elapsed_ref is None:
+            elapsed_ref = [0]
         thinking = thinking_ref[0]
 
         # Remove thinking indicator when we get a real event
@@ -367,6 +371,7 @@ class NatShellApp(App):
             EventType.CONFIRM_NEEDED,
             EventType.ERROR,
         ):
+            elapsed_ref[0] = thinking._elapsed
             thinking.remove()
             thinking_ref[0] = None
             self.query_one(LogoBanner).stop_animation()
@@ -374,7 +379,7 @@ class NatShellApp(App):
         match event.type:
             case EventType.THINKING:
                 if not thinking_ref[0]:
-                    indicator = ThinkingIndicator()
+                    indicator = ThinkingIndicator(elapsed=elapsed_ref[0])
                     conversation.mount(indicator)
                     thinking_ref[0] = indicator
                     self.query_one(LogoBanner).start_animation()
@@ -429,6 +434,7 @@ class NatShellApp(App):
         """Run the agent loop in a background worker."""
         conversation = self.query_one("#conversation", ScrollableContainer)
         thinking_ref: list[ThinkingIndicator | None] = [None]
+        elapsed_ref: list[int] = [0]
 
         async def confirm_callback(tool_call: ToolCall) -> bool:
             return await self.push_screen_wait(ConfirmScreen(tool_call))
@@ -445,7 +451,7 @@ class NatShellApp(App):
                 confirm_callback=confirm_cb,
                 password_callback=password_callback,
             ):
-                self._render_agent_event(event, conversation, thinking_ref)
+                self._render_agent_event(event, conversation, thinking_ref, elapsed_ref)
 
         except Exception as e:
             conversation.mount(ErrorMessage(str(e)))
@@ -621,6 +627,7 @@ class NatShellApp(App):
         """Run the agent loop with a plan generation prompt."""
         conversation = self.query_one("#conversation", ScrollableContainer)
         thinking_ref: list[ThinkingIndicator | None] = [None]
+        elapsed_ref: list[int] = [0]
         self._busy = True
 
         async def confirm_callback(tool_call: ToolCall) -> bool:
@@ -649,7 +656,7 @@ class NatShellApp(App):
                 tool_filter=PLAN_SAFE_TOOLS,
                 skip_intent_detection=True,
             ):
-                self._render_agent_event(event, conversation, thinking_ref)
+                self._render_agent_event(event, conversation, thinking_ref, elapsed_ref)
 
         except Exception as e:
             conversation.mount(ErrorMessage(str(e)))
@@ -844,6 +851,7 @@ class NatShellApp(App):
 
                 # Run the agent loop for this step
                 thinking_ref: list[ThinkingIndicator | None] = [None]
+                elapsed_ref: list[int] = [0]
                 hit_max_steps = False
                 step_files: list[str] = []
 
@@ -853,7 +861,7 @@ class NatShellApp(App):
                         confirm_callback=confirm_cb,
                         password_callback=password_callback,
                     ):
-                        self._render_agent_event(event, conversation, thinking_ref)
+                        self._render_agent_event(event, conversation, thinking_ref, elapsed_ref)
 
                         # Track file changes for cross-step memory
                         if (
