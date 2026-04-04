@@ -538,9 +538,19 @@ class AgentLoop:
             steps_used = step + 1
 
             # Drain queued messages from the user
-            for queued_text in self._drain_queued_messages():
-                self.messages.append({"role": "user", "content": queued_text})
-                yield AgentEvent(type=EventType.QUEUED_MESSAGE, data=queued_text)
+            queued = self._drain_queued_messages()
+            if queued:
+                combined = "\n\n".join(queued)
+                guidance_msg = (
+                    "[IMPORTANT — USER GUIDANCE RECEIVED MID-TASK]\n"
+                    "The user has sent the following message while you were "
+                    "working. Read it carefully and adjust your approach "
+                    "accordingly. This takes priority over your current plan.\n\n"
+                    f"{combined}"
+                )
+                self.messages.append({"role": "user", "content": guidance_msg})
+                for queued_text in queued:
+                    yield AgentEvent(type=EventType.QUEUED_MESSAGE, data=queued_text)
 
             # Signal that the model is thinking
             yield AgentEvent(type=EventType.THINKING)

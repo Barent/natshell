@@ -545,11 +545,12 @@ class PlanSummaryMessage(CopyableMessage):
 
 
 class ThinkingIndicator(Static):
-    """Animated thinking indicator with bouncing dots."""
+    """Animated thinking indicator with bouncing dots and elapsed timer."""
 
     def __init__(self) -> None:
         super().__init__(_THINKING_FRAMES[0])
         self._frame = 0
+        self._elapsed = 0  # tenths of a second
         self._timer = None
 
     def on_mount(self) -> None:
@@ -562,7 +563,10 @@ class ThinkingIndicator(Static):
 
     def _tick(self) -> None:
         self._frame = (self._frame + 1) % len(_THINKING_FRAMES)
-        self.update(_THINKING_FRAMES[self._frame])
+        self._elapsed += 3  # 0.3s per tick = 3 tenths
+        secs = self._elapsed // 10
+        timer_str = f"  [dim #5588aa]{secs}s[/]" if secs >= 1 else ""
+        self.update(_THINKING_FRAMES[self._frame] + timer_str)
 
 
 def _format_tool_summary(tc: ToolCall) -> str:
