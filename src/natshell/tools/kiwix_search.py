@@ -176,6 +176,11 @@ def _parse_search_html(html_text: str) -> list[dict[str, str]]:
 # ── Auto-discovery ────────────────────────────────────────────────────────
 
 
+def _looks_like_kiwix_catalog(resp: httpx.Response) -> bool:
+    """Return True if the response looks like a kiwix-serve OPDS catalog."""
+    return resp.status_code == 200 and "<feed" in resp.text and "<entry" in resp.text
+
+
 async def _discover_kiwix_url() -> str | None:
     """Probe common ports to find a running kiwix-serve instance."""
     async with httpx.AsyncClient(timeout=2.0) as client:
@@ -183,7 +188,7 @@ async def _discover_kiwix_url() -> str | None:
             candidate = f"http://localhost:{port}"
             try:
                 resp = await client.get(f"{candidate}{_DISCOVERY_PATH}")
-                if resp.status_code < 500:
+                if _looks_like_kiwix_catalog(resp):
                     return candidate
             except (httpx.ConnectError, httpx.TimeoutException):
                 continue
@@ -210,7 +215,7 @@ async def discover_and_set_kiwix_url() -> None:
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(f"{_kiwix_url}{_DISCOVERY_PATH}")
-        if resp.status_code < 500:
+        if _looks_like_kiwix_catalog(resp):
             _known_books = await _discover_books(_kiwix_url)
             return
     except (httpx.ConnectError, httpx.TimeoutException):

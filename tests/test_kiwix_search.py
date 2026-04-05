@@ -8,6 +8,8 @@ import httpx
 import pytest
 
 from natshell.tools.kiwix_search import (
+    _discover_kiwix_url,
+    _looks_like_kiwix_catalog,
     _parse_search_html,
     _strip_html,
     discover_and_set_kiwix_url,
@@ -557,6 +559,42 @@ class TestAutoDiscovery:
 
         await discover_and_set_kiwix_url()
         assert ks._kiwix_url == "http://localhost:9090"
+
+    def test_looks_like_kiwix_catalog_valid(self):
+        """A real OPDS catalog response is accepted."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.text = _CATALOG_XML
+        assert _looks_like_kiwix_catalog(resp) is True
+
+    def test_looks_like_kiwix_catalog_rejects_html(self):
+        """An HTML page (e.g. IIS default) is rejected."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.text = "<html><body><h1>Welcome to IIS</h1></body></html>"
+        assert _looks_like_kiwix_catalog(resp) is False
+
+    def test_looks_like_kiwix_catalog_rejects_404(self):
+        """A 404 response is rejected even with XML-like body."""
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 404
+        resp.text = "<feed><entry></entry></feed>"
+        assert _looks_like_kiwix_catalog(resp) is False
+
+    @patch(_PATCH_CLIENT)
+    async def test_discover_skips_non_kiwix_servers(self, mock_client_cls):
+        """Ports with non-Kiwix HTTP servers are not detected as kiwix-serve."""
+        iis_resp = MagicMock(spec=httpx.Response)
+        iis_resp.status_code = 404
+        iis_resp.text = "<html><body>404 - Not Found</body></html>"
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = iis_resp
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await _discover_kiwix_url()
+        assert result is None
 
 
 # ─── Hot-reload via update_config ─────────────────────────────────────────────
