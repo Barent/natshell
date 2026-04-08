@@ -27,6 +27,15 @@ _CODE_FENCE_JSON_RE = re.compile(
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 # Regex to match unclosed <think> blocks (truncated responses)
 _THINK_UNCLOSED_RE = re.compile(r"<think>(?:(?!</think>).)*$", re.DOTALL)
+# Gemma 4 tool call: <|tool_call>call:NAME{...}<tool_call|>
+_GEMMA_TOOL_CALL_RE = re.compile(
+    r"<\|tool_call>call:(\w+)\{(.*?)\}<tool_call\|>", re.DOTALL
+)
+# Gemma 4 think blocks: <|channel>thought...<channel|>
+_GEMMA_THINK_RE = re.compile(r"<\|channel>.*?<channel\|>", re.DOTALL)
+_GEMMA_THINK_UNCLOSED_RE = re.compile(
+    r"<\|channel>(?:(?!<channel\|>).)*$", re.DOTALL
+)
 
 
 def _is_degenerate_output(text: str) -> bool:
@@ -49,14 +58,78 @@ def _is_degenerate_output(text: str) -> bool:
     return top_count / len(non_ws) > 0.5
 
 
+def _gemma_escape(value: str) -> str:
+    """Wrap a string value with Gemma's <|"|> delimiter."""
+    return f'<|"|>{value}<|"|>'
+
+
+def _parse_gemma_tool_args(text: str) -> dict[str, Any]:
+    """Parse Gemma 4 tool call arguments from ``key:<|"|>val<|"|>,key2:num`` format.
+
+    String values are wrapped with ``<|"|>``; numeric and boolean values are bare.
+    """
+    args: dict[str, Any] = {}
+    if not text.strip():
+        return args
+
+    # Split on top-level commas that are outside <|"|>...<|"|> delimiters
+    parts: list[str] = []
+    current: list[str] = []
+    inside_string = False
+    i = 0
+    while i < len(text):
+        if text[i:].startswith('<|"|>'):
+            inside_string = not inside_string
+            current.append('<|"|>')
+            i += 5
+        elif text[i] == "," and not inside_string:
+            parts.append("".join(current))
+            current = []
+            i += 1
+        else:
+            current.append(text[i])
+            i += 1
+    if current:
+        parts.append("".join(current))
+
+    for part in parts:
+        colon = part.find(":")
+        if colon == -1:
+            continue
+        key = part[:colon].strip()
+        val_raw = part[colon + 1:].strip()
+
+        # String value: strip <|"|> delimiters
+        if '<|"|>' in val_raw:
+            args[key] = val_raw.replace('<|"|>', '')
+        else:
+            # Numeric or boolean
+            if val_raw.lower() == "true":
+                args[key] = True
+            elif val_raw.lower() == "false":
+                args[key] = False
+            else:
+                try:
+                    args[key] = int(val_raw)
+                except ValueError:
+                    try:
+                        args[key] = float(val_raw)
+                    except ValueError:
+                        args[key] = val_raw
+    return args
+
+
 def _detect_model_family(model_path: str) -> str:
     """Detect the model family from the filename.
 
-    Returns "mistral" for Mistral models, "qwen" for everything else.
+    Returns "mistral" for Mistral models, "gemma" for Gemma models,
+    "qwen" for everything else.
     """
     name = Path(model_path).name.lower()
     if "mistral" in name:
         return "mistral"
+    if "gemma" in name:
+        return "gemma"
     if "qwen" not in name:
         logger.warning(
             "Unknown model family for %r — defaulting to qwen tool format. "
@@ -77,6 +150,14 @@ def _infer_context_size(model_path: str) -> int:
     # Mistral Nemo supports 128K; 32K default fits ~11 GB VRAM (integrated GPUs)
     if "mistral" in name and "nemo" in name:
         return 32768
+    # Gemma 4: E2B/E4B support 128K, 26B-A4B/31B support 256K.
+    # Conservative defaults to fit integrated GPUs.
+    if "gemma" in name:
+        if "e2b" in name or "e4b" in name:
+            return 16384
+        if "26b" in name or "31b" in name:
+            return 32768
+        return 16384
     match = re.search(r"(\d+(?:\.\d+)?)b", name)
     if match:
         param_billions = float(match.group(1))
@@ -210,6 +291,86 @@ def _format_tools_for_prompt_mistral(
     return "\n".join(header + _format_tool_entries(tools, compact=compact))
 
 
+def _format_tools_for_prompt_gemma(
+    tools: list[dict[str, Any]], *, compact: bool = False
+) -> str:
+    """Format tool schemas for Gemma 4 models.
+
+    Gemma 4 uses ``<|tool>declaration:NAME{...}<tool|>`` blocks with
+    ``<|"|>`` string delimiters instead of JSON.
+
+    Args:
+        tools: Tool schemas in OpenAI-compatible format.
+        compact: When True, use abbreviated descriptions.
+    """
+    esc = _gemma_escape
+
+    if compact:
+        header = [
+            "# Available Tools",
+            "You MUST call tools using the exact format below.",
+            "<|tool_call>call:tool_name{param:" + esc("value") + "}<tool_call|>",
+            "",
+        ]
+    else:
+        header = [
+            "# Available Tools",
+            "",
+            "You MUST use tools to perform actions. To call a tool, output:",
+            "",
+            "<|tool_call>call:tool_name{param:" + esc("value") + "}<tool_call|>",
+            "",
+            "String values MUST be wrapped with <|\"|> delimiters.",
+            "You can call multiple tools by outputting multiple <|tool_call> blocks.",
+            "",
+        ]
+
+    lines: list[str] = list(header)
+    for tool in tools:
+        func = tool.get("function", {})
+        name = func.get("name", "")
+        desc = func.get("description", "")
+        params = func.get("parameters", {})
+
+        if compact:
+            first_sentence = desc.split(". ")[0]
+            if not first_sentence.endswith("."):
+                first_sentence += "."
+            desc = first_sentence
+
+        # Build the <|tool>declaration:...<tool|> block
+        props = params.get("properties", {})
+        required = params.get("required", [])
+
+        prop_parts: list[str] = []
+        for pname, pdef in props.items():
+            ptype = pdef.get("type", "string")
+            pdesc = pdef.get("description", "")
+            if compact:
+                prop_parts.append(
+                    f"{pname}:{{type:{esc(ptype)}}}"
+                )
+            else:
+                prop_parts.append(
+                    f"{pname}:{{type:{esc(ptype)},description:{esc(pdesc)}}}"
+                )
+
+        req_parts = ",".join(esc(r) for r in required)
+        props_str = ",".join(prop_parts)
+
+        decl = (
+            f"<|tool>declaration:{name}{{"
+            f"description:{esc(desc)},"
+            f"parameters:{{properties:{{{props_str}}},"
+            f"required:[{req_parts}],"
+            f"type:{esc('object')}}}"
+            f"}}<tool|>"
+        )
+        lines.append(decl)
+
+    return "\n".join(lines)
+
+
 class LocalEngine:
     """LLM inference via bundled llama.cpp (llama-cpp-python)."""
 
@@ -298,12 +459,12 @@ class LocalEngine:
             resolved_main_gpu=self.main_gpu,
         )
 
-    def _normalize_messages_for_mistral(
+    def _normalize_messages_strict_alternation(
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Normalize messages for Mistral's strict role-alternation requirement.
+        """Normalize messages for strict role-alternation (Mistral, Gemma 4).
 
-        Mistral's chat template requires: system? → (user → assistant)*.
+        These models' chat templates require: system? → (user → assistant)*.
         Two passes fix violations:
 
         Pass 1: Fold mid-conversation system messages into the initial system
@@ -361,8 +522,8 @@ class LocalEngine:
         rather than relying on llama-cpp-python's tool handling, which doesn't
         work correctly with Qwen3 models.
         """
-        if self.model_family == "mistral":
-            messages = self._normalize_messages_for_mistral(messages)
+        if self.model_family in ("mistral", "gemma"):
+            messages = self._normalize_messages_strict_alternation(messages)
 
         if tools:
             messages = self._inject_tools(messages, tools)
@@ -396,6 +557,8 @@ class LocalEngine:
         compact = self.n_ctx < 16384
         if self.model_family == "mistral":
             tool_text = _format_tools_for_prompt_mistral(tools, compact=compact)
+        elif self.model_family == "gemma":
+            tool_text = _format_tools_for_prompt_gemma(tools, compact=compact)
         else:
             tool_text = _format_tools_for_prompt(tools, compact=compact)
 
@@ -457,6 +620,26 @@ class LocalEngine:
                     )
                 except (json.JSONDecodeError, KeyError):
                     logger.warning("Failed to parse tool_call from content: %s", match.group(0))
+
+        # Parse <|tool_call>call:NAME{...}<tool_call|> from content (Gemma 4 style)
+        if not tool_calls:
+            for match in _GEMMA_TOOL_CALL_RE.finditer(content):
+                name = match.group(1)
+                args_text = match.group(2)
+                try:
+                    arguments = _parse_gemma_tool_args(args_text)
+                except Exception:
+                    logger.warning(
+                        "Failed to parse Gemma tool_call args: %s", match.group(0)
+                    )
+                    arguments = {}
+                tool_calls.append(
+                    ToolCall(
+                        id=str(uuid.uuid4())[:9],
+                        name=name,
+                        arguments=arguments,
+                    )
+                )
 
         # Parse [TOOL_CALLS] JSON array from content (Mistral style)
         if not tool_calls:
@@ -541,10 +724,13 @@ class LocalEngine:
                 except (json.JSONDecodeError, KeyError):
                     pass
 
-        # Strip <think>, <tool_call>, and [TOOL_CALLS] blocks from content
+        # Strip think blocks, tool call markers, and Gemma channel blocks from content
         content = _THINK_RE.sub("", content)
         content = _THINK_UNCLOSED_RE.sub("", content)  # handle truncated think blocks
+        content = _GEMMA_THINK_RE.sub("", content)
+        content = _GEMMA_THINK_UNCLOSED_RE.sub("", content)
         content = _TOOL_CALL_RE.sub("", content)
+        content = _GEMMA_TOOL_CALL_RE.sub("", content)
         content = _MISTRAL_TOOL_CALLS_RE.sub("", content)
 
         # Strip recovered bare JSON / code-fenced JSON so it doesn't leak to UI

@@ -47,6 +47,12 @@ BUNDLED_TIERS: dict[str, dict[str, str]] = {
         "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
         "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
     },
+    "gemma": {
+        "name": "Gemma 4",
+        "description": "Gemma 4 E4B (~5 GB, 128K context)",
+        "hf_repo": "unsloth/gemma-4-E4B-it-GGUF",
+        "hf_file": "gemma-4-E4B-it-Q4_K_M.gguf",
+    },
 }
 
 MODELS_DIR = _data_dir() / "models"

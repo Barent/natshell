@@ -559,8 +559,9 @@ echo ""
 echo "    1) Light       — Qwen3-4B        (~2.5 GB, low RAM)"
 echo "    2) Standard    — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
 echo "    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context)"
-echo "    4) Remote only — use an Ollama server (no local download)"
-echo "    5) Skip        — configure later"
+echo "    4) Gemma 4     — Gemma 4 E4B     (~5 GB, 128K context)"
+echo "    5) Remote only — use an Ollama server (no local download)"
+echo "    6) Skip        — configure later"
 echo ""
 read -rp "  Choice [2]: " model_choice
 model_choice="${model_choice:-2}"
@@ -591,10 +592,17 @@ case "$model_choice" in
         HF_FILE="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
         ;;
     4)
+        info "Gemma 4 preset selected (Gemma 4 E4B)"
+        DOWNLOAD_MODEL=true
+        WRITE_MODEL_CONFIG=true
+        HF_REPO="unsloth/gemma-4-E4B-it-GGUF"
+        HF_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
+        ;;
+    5)
         info "Remote only — skipping local model download"
         SETUP_OLLAMA=true
         ;;
-    5)
+    6)
         info "Skipping setup. Run 'natshell' later to configure."
         ;;
     *)
@@ -608,7 +616,7 @@ case "$model_choice" in
 esac
 
 # Offer Ollama setup for local model options
-if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" ]]; then
+if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" || "$model_choice" == "4" ]]; then
     echo ""
     read -rp "  Configure a remote Ollama server too? [y/N]: " ollama_answer
     if is_yes "$ollama_answer"; then

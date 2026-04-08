@@ -11,15 +11,19 @@ from natshell.agent.loop import AgentLoop, EventType, _is_analysis_request, _is_
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 from natshell.inference.local import (
+    _GEMMA_THINK_RE,
+    _GEMMA_TOOL_CALL_RE,
     _MISTRAL_TOOL_CALLS_RE,
     _THINK_RE,
     _TOOL_CALL_RE,
     LocalEngine,
     _detect_model_family,
     _format_tools_for_prompt,
+    _format_tools_for_prompt_gemma,
     _format_tools_for_prompt_mistral,
     _infer_context_size,
     _is_degenerate_output,
+    _parse_gemma_tool_args,
 )
 from natshell.safety.classifier import SafetyClassifier
 from natshell.tools.registry import create_default_registry
@@ -501,6 +505,119 @@ class TestMistralParsing:
         assert calls[0]["arguments"]["command"] == "uname -r"
 
 
+# ─── Gemma 4 parsing ────────────────────────────────────────────────────────
+
+
+class TestGemmaParsing:
+    def test_gemma_tool_call_regex_matches(self):
+        text = '<|tool_call>call:execute_shell{command:<|"|>ls<|"|>}<tool_call|>'
+        match = _GEMMA_TOOL_CALL_RE.search(text)
+        assert match is not None
+        assert match.group(1) == "execute_shell"
+        assert '<|"|>ls<|"|>' in match.group(2)
+
+    def test_gemma_tool_call_multiple(self):
+        text = (
+            '<|tool_call>call:execute_shell{command:<|"|>ls<|"|>}<tool_call|>'
+            '<|tool_call>call:read_file{path:<|"|>/tmp/test.txt<|"|>}<tool_call|>'
+        )
+        matches = list(_GEMMA_TOOL_CALL_RE.finditer(text))
+        assert len(matches) == 2
+        assert matches[0].group(1) == "execute_shell"
+        assert matches[1].group(1) == "read_file"
+
+    def test_gemma_tool_call_with_think_prefix(self):
+        text = (
+            '<|channel>thought\nLet me check.<channel|>'
+            '<|tool_call>call:execute_shell{command:<|"|>whoami<|"|>}<tool_call|>'
+        )
+        cleaned = _GEMMA_THINK_RE.sub("", text)
+        matches = list(_GEMMA_TOOL_CALL_RE.finditer(cleaned))
+        assert len(matches) == 1
+        assert matches[0].group(1) == "execute_shell"
+
+    def test_gemma_think_regex_strips(self):
+        text = "<|channel>thought\nreasoning here<channel|>Answer"
+        result = _GEMMA_THINK_RE.sub("", text).strip()
+        assert result == "Answer"
+
+
+class TestGemmaToolArgParser:
+    def test_string_value(self):
+        args = _parse_gemma_tool_args('command:<|"|>ls -la<|"|>')
+        assert args == {"command": "ls -la"}
+
+    def test_numeric_value(self):
+        args = _parse_gemma_tool_args("offset:10,limit:100")
+        assert args == {"offset": 10, "limit": 100}
+
+    def test_boolean_value(self):
+        args = _parse_gemma_tool_args("hidden:true")
+        assert args == {"hidden": True}
+
+    def test_mixed_types(self):
+        args = _parse_gemma_tool_args(
+            'path:<|"|>/tmp/test.txt<|"|>,offset:0,limit:50'
+        )
+        assert args == {"path": "/tmp/test.txt", "offset": 0, "limit": 50}
+
+    def test_empty_string(self):
+        args = _parse_gemma_tool_args("")
+        assert args == {}
+
+    def test_comma_inside_string(self):
+        args = _parse_gemma_tool_args('command:<|"|>echo a,b,c<|"|>')
+        assert args == {"command": "echo a,b,c"}
+
+    def test_float_value(self):
+        args = _parse_gemma_tool_args("temperature:0.7")
+        assert args == {"temperature": 0.7}
+
+    def test_bare_string_value(self):
+        """Bare strings without delimiters are kept as-is."""
+        args = _parse_gemma_tool_args("action:read")
+        assert args == {"action": "read"}
+
+
+class TestGemmaToolFormatter:
+    _sample_tools = [
+        {
+            "function": {
+                "name": "execute_shell",
+                "description": "Run a shell command.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "The command to run",
+                        }
+                    },
+                    "required": ["command"],
+                },
+            }
+        }
+    ]
+
+    def test_contains_tool_declaration(self):
+        text = _format_tools_for_prompt_gemma(self._sample_tools)
+        assert "<|tool>declaration:execute_shell{" in text
+        assert "<tool|>" in text
+
+    def test_contains_call_example(self):
+        text = _format_tools_for_prompt_gemma(self._sample_tools)
+        assert "<|tool_call>call:" in text
+
+    def test_compact_is_shorter(self):
+        full = _format_tools_for_prompt_gemma(self._sample_tools)
+        compact = _format_tools_for_prompt_gemma(self._sample_tools, compact=True)
+        assert len(compact) < len(full)
+
+    def test_string_delimiters_used(self):
+        text = _format_tools_for_prompt_gemma(self._sample_tools)
+        assert '<|"|>' in text
+
+
 # ─── Model family detection ──────────────────────────────────────────────────
 
 
@@ -513,6 +630,15 @@ class TestModelFamilyDetection:
 
     def test_mistral_nemo(self):
         assert _detect_model_family("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf") == "mistral"
+
+    def test_gemma_e4b(self):
+        assert _detect_model_family("gemma-4-E4B-it-Q4_K_M.gguf") == "gemma"
+
+    def test_gemma_e2b(self):
+        assert _detect_model_family("gemma-4-E2B-it-Q4_K_M.gguf") == "gemma"
+
+    def test_gemma_26b(self):
+        assert _detect_model_family("gemma-4-26B-A4B-it-Q4_K_M.gguf") == "gemma"
 
     def test_unknown_model_defaults_to_qwen(self):
         assert _detect_model_family("some-random-model.gguf") == "qwen"
@@ -538,6 +664,13 @@ class TestModelFamilyDetection:
             _detect_model_family("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf")
         assert "Unknown model family" not in caplog.text
 
+    def test_gemma_model_no_warning(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="natshell.inference.local"):
+            _detect_model_family("gemma-4-E4B-it-Q4_K_M.gguf")
+        assert "Unknown model family" not in caplog.text
+
 
 # ─── Context size override ───────────────────────────────────────────────────
 
@@ -551,6 +684,18 @@ class TestContextSizeOverride:
 
     def test_qwen3_8b_returns_8192(self):
         assert _infer_context_size("Qwen3-8B-Q4_K_M.gguf") == 8192
+
+    def test_gemma_e4b_returns_16384(self):
+        assert _infer_context_size("gemma-4-E4B-it-Q4_K_M.gguf") == 16384
+
+    def test_gemma_e2b_returns_16384(self):
+        assert _infer_context_size("gemma-4-E2B-it-Q4_K_M.gguf") == 16384
+
+    def test_gemma_26b_returns_32768(self):
+        assert _infer_context_size("gemma-4-26B-A4B-it-Q4_K_M.gguf") == 32768
+
+    def test_gemma_31b_returns_32768(self):
+        assert _infer_context_size("gemma-4-31B-it-Q4_K_M.gguf") == 32768
 
 
 # ─── max_tokens auto-scaling ────────────────────────────────────────────────
@@ -2022,17 +2167,17 @@ class TestMistralPromptInstructions:
         assert "Do NOT describe commands in prose" in full
 
 
-# ─── Mistral message normalization (role alternation) ────────────────────────
+# ─── Strict message normalization (role alternation) ─────────────────────────
 
 
 def _normalize(messages):
-    """Call _normalize_messages_for_mistral without instantiating LocalEngine."""
+    """Call _normalize_messages_strict_alternation without instantiating LocalEngine."""
     engine = object.__new__(LocalEngine)
-    return engine._normalize_messages_for_mistral(messages)
+    return engine._normalize_messages_strict_alternation(messages)
 
 
 class TestMistralMessageNormalization:
-    """Verify that _normalize_messages_for_mistral enforces strict role alternation."""
+    """Verify that _normalize_messages_strict_alternation enforces strict role alternation."""
 
     def test_consecutive_user_messages_merged(self):
         """Two consecutive user messages are merged with \\n\\n separator."""

@@ -1,6 +1,6 @@
 [project]
 name = "natshell"
-version = "1.0.22"
+version = "1.0.23"
 description = "Natural language shell interface — a local-first agentic TUI powered by a bundled LLM"
 readme = "README.md"
 license = "MIT"
@@ -36,10 +36,10 @@ dependencies = [
 natshell = "natshell.__main__:main"
 
 [project.optional-dependencies]
-local = ["llama-cpp-python>=0.3.0"]
+local = ["llama-cpp-python>=0.3.20"]
 mcp = ["mcp>=1.0.0"]
 dev = [
-    "llama-cpp-python>=0.3.0",
+    "llama-cpp-python>=0.3.20",
     "huggingface-hub>=0.24",
     "pytest",
     "pytest-asyncio",
