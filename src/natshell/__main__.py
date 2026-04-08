@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -696,6 +697,11 @@ def _ensure_model(config) -> str:
 
     from huggingface_hub import hf_hub_download
 
+    # Disable hf_xet — its native subprocess spawning triggers
+    # "bad value(s) in fds_to_keep" on Python 3.14+ (forkserver default).
+    prev_xet = os.environ.get("HF_HUB_DISABLE_XET")
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+
     try:
         print("Downloading from HuggingFace...")
         path = hf_hub_download(
@@ -709,6 +715,11 @@ def _ensure_model(config) -> str:
     except Exception as e:
         print(f"Download failed: {e}")
         sys.exit(1)
+    finally:
+        if prev_xet is None:
+            os.environ.pop("HF_HUB_DISABLE_XET", None)
+        else:
+            os.environ["HF_HUB_DISABLE_XET"] = prev_xet
 
 
 if __name__ == "__main__":

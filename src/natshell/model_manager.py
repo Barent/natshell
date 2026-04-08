@@ -105,13 +105,27 @@ async def download_bundled_model(
         progress_callback(f"Downloading {tier['name']} ({tier['description']})...")
 
     def _do_download() -> str:
+        import os
+
         from huggingface_hub import hf_hub_download
 
-        return hf_hub_download(
-            repo_id=tier["hf_repo"],
-            filename=tier["hf_file"],
-            local_dir=str(models_dir),
-        )
+        # Disable hf_xet (Rust-based Xet Storage downloader) — its native
+        # subprocess spawning triggers "bad value(s) in fds_to_keep" on
+        # Python 3.14+ where the default multiprocessing start method is
+        # forkserver.  Regular HTTP download works fine for GGUF files.
+        prev_xet = os.environ.get("HF_HUB_DISABLE_XET")
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        try:
+            return hf_hub_download(
+                repo_id=tier["hf_repo"],
+                filename=tier["hf_file"],
+                local_dir=str(models_dir),
+            )
+        finally:
+            if prev_xet is None:
+                os.environ.pop("HF_HUB_DISABLE_XET", None)
+            else:
+                os.environ["HF_HUB_DISABLE_XET"] = prev_xet
 
     try:
         path_str = await asyncio.to_thread(_do_download)
