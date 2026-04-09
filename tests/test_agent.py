@@ -11,6 +11,7 @@ from natshell.agent.loop import AgentLoop, EventType, _is_analysis_request, _is_
 from natshell.config import AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
 from natshell.inference.local import (
+    _GEMMA_SPECIAL_TOKEN_RE,
     _GEMMA_THINK_RE,
     _GEMMA_TOOL_CALL_RE,
     _MISTRAL_TOOL_CALLS_RE,
@@ -18,6 +19,7 @@ from natshell.inference.local import (
     _TOOL_CALL_RE,
     LocalEngine,
     _detect_model_family,
+    _format_gemma_tool_call_text,
     _format_tools_for_prompt,
     _format_tools_for_prompt_gemma,
     _format_tools_for_prompt_mistral,
@@ -617,6 +619,152 @@ class TestGemmaToolFormatter:
         text = _format_tools_for_prompt_gemma(self._sample_tools)
         assert '<|"|>' in text
 
+    def test_includes_concrete_example(self):
+        text = _format_tools_for_prompt_gemma(self._sample_tools)
+        assert "execute_shell" in text
+        assert "ls -la /tmp" in text
+
+    def test_warns_against_json(self):
+        text = _format_tools_for_prompt_gemma(self._sample_tools)
+        assert "NEVER use JSON" in text
+
+
+class TestGemmaToolCallTextFormatter:
+    def test_string_argument(self):
+        text = _format_gemma_tool_call_text("execute_shell", {"command": "ls"})
+        assert text == '<|tool_call>call:execute_shell{command:<|"|>ls<|"|>}<tool_call|>'
+
+    def test_numeric_argument(self):
+        text = _format_gemma_tool_call_text("read_file", {"path": "/tmp", "offset": 10})
+        assert "offset:10" in text
+        assert 'path:<|"|>/tmp<|"|>' in text
+
+    def test_boolean_argument(self):
+        text = _format_gemma_tool_call_text("list_directory", {"hidden": True})
+        assert "hidden:true" in text
+
+    def test_empty_arguments(self):
+        text = _format_gemma_tool_call_text("some_tool", {})
+        assert text == "<|tool_call>call:some_tool{}<tool_call|>"
+
+    def test_roundtrip_with_parser(self):
+        """Text produced by formatter can be parsed back by _parse_gemma_tool_args."""
+        original = {"command": "echo hello", "timeout": 60}
+        text = _format_gemma_tool_call_text("execute_shell", original)
+        match = _GEMMA_TOOL_CALL_RE.search(text)
+        assert match is not None
+        parsed = _parse_gemma_tool_args(match.group(2))
+        assert parsed == original
+
+
+class TestGemmaToolMessageConversion:
+    """Verify _convert_gemma_tool_messages produces correct text messages."""
+
+    def _convert(self, messages):
+        engine = object.__new__(LocalEngine)
+        return engine._convert_gemma_tool_messages(messages)
+
+    def test_assistant_tool_calls_become_text(self):
+        msgs = [
+            {"role": "user", "content": "list files"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "abc",
+                    "type": "function",
+                    "function": {
+                        "name": "execute_shell",
+                        "arguments": json.dumps({"command": "ls"}),
+                    },
+                }],
+            },
+        ]
+        result = self._convert(msgs)
+        assert len(result) == 2
+        assert result[1]["role"] == "assistant"
+        assert "tool_calls" not in result[1]
+        assert "<|tool_call>call:execute_shell{" in result[1]["content"]
+        assert '<|"|>ls<|"|>' in result[1]["content"]
+
+    def test_tool_result_becomes_user(self):
+        msgs = [
+            {"role": "tool", "tool_call_id": "abc", "content": "file1\nfile2"},
+        ]
+        result = self._convert(msgs)
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        assert "file1\nfile2" in result[0]["content"]
+        assert "abc" in result[0]["content"]
+
+    def test_assistant_content_preserved(self):
+        msgs = [
+            {
+                "role": "assistant",
+                "content": "Let me check",
+                "tool_calls": [{
+                    "id": "x",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": json.dumps({"path": "/tmp/a.txt"}),
+                    },
+                }],
+            },
+        ]
+        result = self._convert(msgs)
+        assert "Let me check" in result[0]["content"]
+        assert "<|tool_call>call:read_file{" in result[0]["content"]
+
+    def test_plain_messages_unchanged(self):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        result = self._convert(msgs)
+        assert result == msgs
+
+    def test_full_exchange_produces_alternation(self):
+        """Tool exchange converts to proper user/assistant alternation."""
+        msgs = [
+            {"role": "user", "content": "run ls"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "1",
+                    "type": "function",
+                    "function": {
+                        "name": "execute_shell",
+                        "arguments": json.dumps({"command": "ls"}),
+                    },
+                }],
+            },
+            {"role": "tool", "tool_call_id": "1", "content": "a.txt\nb.txt"},
+            {"role": "assistant", "content": "Here are your files."},
+        ]
+        result = self._convert(msgs)
+        roles = [m["role"] for m in result]
+        assert roles == ["user", "assistant", "user", "assistant"]
+
+
+class TestGemmaSpecialTokenStripping:
+    def test_eos_stripped(self):
+        assert _GEMMA_SPECIAL_TOKEN_RE.sub("", "text<eos>more") == "textmore"
+
+    def test_tool_response_stripped(self):
+        text = "text<|tool_response>stuff<tool_response|>more"
+        assert _GEMMA_SPECIAL_TOKEN_RE.sub("", text) == "textmore"
+
+    def test_unclosed_tool_response_stripped(self):
+        text = "text<|tool_response>"
+        assert _GEMMA_SPECIAL_TOKEN_RE.sub("", text) == "text"
+
+    def test_unused_tokens_stripped(self):
+        assert _GEMMA_SPECIAL_TOKEN_RE.sub("", "a<unused88>b") == "ab"
+        assert _GEMMA_SPECIAL_TOKEN_RE.sub("", "a<unused0>b") == "ab"
+
 
 # ─── Model family detection ──────────────────────────────────────────────────
 
@@ -685,17 +833,17 @@ class TestContextSizeOverride:
     def test_qwen3_8b_returns_8192(self):
         assert _infer_context_size("Qwen3-8B-Q4_K_M.gguf") == 8192
 
-    def test_gemma_e4b_returns_16384(self):
-        assert _infer_context_size("gemma-4-E4B-it-Q4_K_M.gguf") == 16384
+    def test_gemma_e4b_returns_32768(self):
+        assert _infer_context_size("gemma-4-E4B-it-Q4_K_M.gguf") == 32768
 
-    def test_gemma_e2b_returns_16384(self):
-        assert _infer_context_size("gemma-4-E2B-it-Q4_K_M.gguf") == 16384
+    def test_gemma_e2b_returns_32768(self):
+        assert _infer_context_size("gemma-4-E2B-it-Q4_K_M.gguf") == 32768
 
-    def test_gemma_26b_returns_32768(self):
-        assert _infer_context_size("gemma-4-26B-A4B-it-Q4_K_M.gguf") == 32768
+    def test_gemma_26b_returns_65536(self):
+        assert _infer_context_size("gemma-4-26B-A4B-it-Q4_K_M.gguf") == 65536
 
-    def test_gemma_31b_returns_32768(self):
-        assert _infer_context_size("gemma-4-31B-it-Q4_K_M.gguf") == 32768
+    def test_gemma_31b_returns_65536(self):
+        assert _infer_context_size("gemma-4-31B-it-Q4_K_M.gguf") == 65536
 
 
 # ─── max_tokens auto-scaling ────────────────────────────────────────────────

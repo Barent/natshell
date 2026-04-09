@@ -36,6 +36,16 @@ _GEMMA_THINK_RE = re.compile(r"<\|channel>.*?<channel\|>", re.DOTALL)
 _GEMMA_THINK_UNCLOSED_RE = re.compile(
     r"<\|channel>(?:(?!<channel\|>).)*$", re.DOTALL
 )
+# Gemma special tokens that leak into text output
+_GEMMA_SPECIAL_TOKEN_RE = re.compile(
+    r"<\|tool_response>.*?<tool_response\|>"  # tool response markers
+    r"|<\|tool_response>"                      # unclosed tool response
+    r"|<eos>"                                  # end-of-sequence
+    r"|<unused\d+>"                            # unused vocabulary tokens
+    r"|<\|eos\|>"                              # alternate EOS format
+    r"|<\|eot\|>",                             # end-of-turn
+    re.DOTALL,
+)
 
 
 def _is_degenerate_output(text: str) -> bool:
@@ -151,13 +161,13 @@ def _infer_context_size(model_path: str) -> int:
     if "mistral" in name and "nemo" in name:
         return 32768
     # Gemma 4: E2B/E4B support 128K, 26B-A4B/31B support 256K.
-    # Conservative defaults to fit integrated GPUs.
+    # 32K fits comfortably on integrated GPUs (16+ GB shared RAM).
     if "gemma" in name:
         if "e2b" in name or "e4b" in name:
-            return 16384
-        if "26b" in name or "31b" in name:
             return 32768
-        return 16384
+        if "26b" in name or "31b" in name:
+            return 65536
+        return 32768
     match = re.search(r"(\d+(?:\.\d+)?)b", name)
     if match:
         param_billions = float(match.group(1))
@@ -291,6 +301,27 @@ def _format_tools_for_prompt_mistral(
     return "\n".join(header + _format_tool_entries(tools, compact=compact))
 
 
+def _format_gemma_tool_call_text(name: str, arguments: dict[str, Any]) -> str:
+    """Format a tool call as Gemma-native text for message history.
+
+    Converts ``{"command": "ls -la", "timeout": 60}`` into
+    ``<|tool_call>call:execute_shell{command:<|"|>ls -la<|"|>,timeout:60}<tool_call|>``.
+    """
+    parts: list[str] = []
+    for key, value in arguments.items():
+        if isinstance(value, str):
+            parts.append(f"{key}:{_gemma_escape(value)}")
+        elif isinstance(value, bool):
+            parts.append(f"{key}:{'true' if value else 'false'}")
+        elif isinstance(value, (int, float)):
+            parts.append(f"{key}:{value}")
+        else:
+            # Fallback: serialize as escaped string
+            parts.append(f"{key}:{_gemma_escape(str(value))}")
+    args_str = ",".join(parts)
+    return f"<|tool_call>call:{name}{{{args_str}}}<tool_call|>"
+
+
 def _format_tools_for_prompt_gemma(
     tools: list[dict[str, Any]], *, compact: bool = False
 ) -> str:
@@ -309,6 +340,7 @@ def _format_tools_for_prompt_gemma(
         header = [
             "# Available Tools",
             "You MUST call tools using the exact format below.",
+            "NEVER use JSON, Python dicts, or pseudocode for tool calls.",
             "<|tool_call>call:tool_name{param:" + esc("value") + "}<tool_call|>",
             "",
         ]
@@ -321,7 +353,11 @@ def _format_tools_for_prompt_gemma(
             "<|tool_call>call:tool_name{param:" + esc("value") + "}<tool_call|>",
             "",
             "String values MUST be wrapped with <|\"|> delimiters.",
+            "NEVER use JSON, Python dicts, or pseudocode for tool calls.",
             "You can call multiple tools by outputting multiple <|tool_call> blocks.",
+            "",
+            "Example — run a shell command:",
+            "<|tool_call>call:execute_shell{command:" + esc("ls -la /tmp") + "}<tool_call|>",
             "",
         ]
 
@@ -459,6 +495,61 @@ class LocalEngine:
             resolved_main_gpu=self.main_gpu,
         )
 
+    def _convert_gemma_tool_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert OpenAI-format tool messages to Gemma-native text format.
+
+        The Gemma 4 chat template expects tool call arguments as dicts (to
+        format with ``<|"|>`` delimiters) and tool results via a
+        ``tool_responses`` key — neither of which matches the OpenAI format
+        NatShell uses internally.  Rather than fight the template, this method
+        converts both message types to plain text that preserves the Gemma
+        tool call syntax the model was trained on:
+
+        - Assistant messages with ``tool_calls`` → assistant messages with
+          Gemma-format ``<|tool_call>call:NAME{...}<tool_call|>`` text.
+        - ``role: "tool"`` result messages → ``role: "user"`` messages with
+          a labelled result block.
+
+        Must run **before** ``_normalize_messages_strict_alternation``.
+        """
+        result: list[dict[str, Any]] = []
+        for msg in messages:
+            if msg.get("tool_calls"):
+                # Convert assistant tool_calls to Gemma-native text
+                content_parts: list[str] = []
+                if msg.get("content"):
+                    content_parts.append(msg["content"])
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
+                    name = func.get("name", "")
+                    raw_args = func.get("arguments", {})
+                    if isinstance(raw_args, str):
+                        try:
+                            raw_args = json.loads(raw_args)
+                        except (json.JSONDecodeError, TypeError):
+                            raw_args = {}
+                    content_parts.append(
+                        _format_gemma_tool_call_text(name, raw_args)
+                    )
+                result.append({
+                    "role": "assistant",
+                    "content": "\n".join(content_parts),
+                })
+            elif msg.get("role") == "tool":
+                # Convert tool result to a user message
+                content = msg.get("content", "")
+                tool_id = msg.get("tool_call_id", "")
+                # Include a clear label so the model knows this is a tool result
+                result.append({
+                    "role": "user",
+                    "content": f"[Tool result ({tool_id})]:\n{content}",
+                })
+            else:
+                result.append(msg)
+        return result
+
     def _normalize_messages_strict_alternation(
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -522,6 +613,8 @@ class LocalEngine:
         rather than relying on llama-cpp-python's tool handling, which doesn't
         work correctly with Qwen3 models.
         """
+        if self.model_family == "gemma":
+            messages = self._convert_gemma_tool_messages(messages)
         if self.model_family in ("mistral", "gemma"):
             messages = self._normalize_messages_strict_alternation(messages)
 
@@ -671,6 +764,51 @@ class LocalEngine:
                         mistral_match.group(0),
                     )
 
+        # Fallback: Gemma emitted JSON instead of native tool call format.
+        # Recover {"name": "tool", "arguments": {...}} or flat {"name": ..., "command": ...}.
+        _gemma_json_recovered = False
+        if not tool_calls and self.model_family == "gemma":
+            json_text = None
+            # Strip Gemma special tokens before looking for JSON
+            cleaned = _GEMMA_SPECIAL_TOKEN_RE.sub("", content).strip()
+
+            if cleaned.startswith(("{", "[")):
+                json_text = cleaned
+            if json_text is None:
+                fence_match = _CODE_FENCE_JSON_RE.search(cleaned)
+                if fence_match:
+                    json_text = fence_match.group(1)
+
+            if json_text is not None:
+                try:
+                    parsed = json.loads(json_text)
+                    candidates = parsed if isinstance(parsed, list) else [parsed]
+                    if all(isinstance(c, dict) and "name" in c for c in candidates):
+                        for call in candidates:
+                            if "arguments" in call:
+                                arguments = call["arguments"]
+                                if isinstance(arguments, str):
+                                    arguments = json.loads(arguments)
+                            else:
+                                arguments = {
+                                    k: v for k, v in call.items() if k != "name"
+                                }
+                            tool_calls.append(
+                                ToolCall(
+                                    id=str(uuid.uuid4())[:9],
+                                    name=call["name"],
+                                    arguments=arguments,
+                                )
+                            )
+                        _gemma_json_recovered = True
+                        logger.debug(
+                            "Recovered %d bare-JSON Gemma tool call(s) "
+                            "(expected native format)",
+                            len(tool_calls),
+                        )
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
         # Fallback: Mistral forgot the [TOOL_CALLS] prefix but emitted valid JSON.
         # Accept bare JSON at the start of content, or inside markdown code fences.
         # Handles three Mistral variants:
@@ -729,11 +867,24 @@ class LocalEngine:
         content = _THINK_UNCLOSED_RE.sub("", content)  # handle truncated think blocks
         content = _GEMMA_THINK_RE.sub("", content)
         content = _GEMMA_THINK_UNCLOSED_RE.sub("", content)
+        content = _GEMMA_SPECIAL_TOKEN_RE.sub("", content)
         content = _TOOL_CALL_RE.sub("", content)
         content = _GEMMA_TOOL_CALL_RE.sub("", content)
         content = _MISTRAL_TOOL_CALLS_RE.sub("", content)
 
         # Strip recovered bare JSON / code-fenced JSON so it doesn't leak to UI
+        if _gemma_json_recovered:
+            content = _CODE_FENCE_JSON_RE.sub("", content)
+            remaining = content.strip()
+            if remaining.startswith(("{", "[")):
+                try:
+                    parsed = json.loads(remaining)
+                    candidates = parsed if isinstance(parsed, list) else [parsed]
+                    if all(isinstance(c, dict) and "name" in c for c in candidates):
+                        content = ""
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass
+
         if _bare_json_recovered:
             content = _CODE_FENCE_JSON_RE.sub("", content)
             # If remaining content is bare JSON matching a tool call, clear it
