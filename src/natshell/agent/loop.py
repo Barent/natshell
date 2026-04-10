@@ -650,12 +650,78 @@ class AgentLoop:
                         return
 
                 if self._can_fallback(e):
+                    # --- Phase 1: try compaction + retry if server is alive ---
+                    if (
+                        not self._context_recovery_attempted
+                        and len(self.messages) > 3
+                    ):
+                        from natshell.inference.ollama import ping_server
+
+                        server_alive = await ping_server(self.engine.base_url)
+                        if server_alive:
+                            stats = self.compact_history()
+                            if stats.get("compacted"):
+                                self._context_recovery_attempted = True
+                                yield AgentEvent(
+                                    type=EventType.ERROR,
+                                    data="Remote server timed out — compacted "
+                                    "conversation and retrying\u2026",
+                                )
+                                continue  # retry on same remote engine
+
+                    # --- Phase 2: fallback with preserved context ---
+                    # Compact if not already done, then save non-system messages
+                    if (
+                        not self._context_recovery_attempted
+                        and len(self.messages) > 3
+                    ):
+                        self.compact_history()
+                    preserved = (
+                        self.messages[1:] if len(self.messages) > 1 else []
+                    )
+
                     fell_back = await self._try_local_fallback()
                     if fell_back:
+                        # Inject preserved context if it fits in local budget
+                        context_restored = False
+                        if preserved:
+                            try:
+                                n_ctx = (
+                                    self.engine.engine_info().n_ctx or 4096
+                                )
+                                max_tok = self._effective_max_tokens(n_ctx)
+                                reserve = self.config.context_reserve or 800
+                                budget = n_ctx - max_tok - reserve
+                                if self._context_manager:
+                                    current = (
+                                        self._context_manager.estimate_tokens(
+                                            self.messages
+                                        )
+                                    )
+                                    needed = (
+                                        self._context_manager.estimate_tokens(
+                                            preserved
+                                        )
+                                    )
+                                    if current + needed < budget:
+                                        self.messages.extend(preserved)
+                                        context_restored = True
+                            except Exception:
+                                logger.debug(
+                                    "Could not restore context after fallback",
+                                    exc_info=True,
+                                )
+
                         msg = (
                             "Remote server unreachable."
-                            " Switched to local model. History cleared."
+                            " Switched to local model."
                         )
+                        if context_restored:
+                            msg += (
+                                " Previous conversation context preserved."
+                            )
+                        else:
+                            msg += " History cleared."
                         # Warn if fallback is CPU-only
                         try:
                             from llama_cpp import llama_supports_gpu_offload
