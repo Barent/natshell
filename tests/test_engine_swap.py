@@ -202,6 +202,8 @@ class TestRuntimeFallback:
 
 # ─── Compaction before fallback ────────────────────────────────────────────
 
+_PING = "natshell.inference.ollama.ping_server"
+
 
 def _make_remote_agent_with_history(
     side_effect,
@@ -255,7 +257,7 @@ class TestCompactionBeforeFallback:
             ),
         )
 
-        with patch("natshell.inference.ollama.ping_server", new_callable=AsyncMock, return_value=True):
+        with patch(_PING, new_callable=AsyncMock, return_value=True):
             events = await _collect_events(agent, "fix the log path")
 
         errors = [e for e in events if e.type == EventType.ERROR]
@@ -276,7 +278,7 @@ class TestCompactionBeforeFallback:
         )
 
         with (
-            patch("natshell.inference.ollama.ping_server", new_callable=AsyncMock, return_value=False),
+            patch(_PING, new_callable=AsyncMock, return_value=False),
             patch.object(Path, "exists", return_value=True),
             patch("natshell.agent.loop.asyncio.to_thread") as mock_thread,
         ):
@@ -311,7 +313,7 @@ class TestCompactionBeforeFallback:
         # Only system + user message (<=3 messages) — no history to compact
 
         with (
-            patch("natshell.inference.ollama.ping_server", new_callable=AsyncMock) as mock_ping,
+            patch(_PING, new_callable=AsyncMock) as mock_ping,
             patch.object(Path, "exists", return_value=True),
             patch("natshell.agent.loop.asyncio.to_thread") as mock_thread,
         ):
@@ -340,7 +342,7 @@ class TestCompactionBeforeFallback:
         )
 
         with (
-            patch("natshell.inference.ollama.ping_server", new_callable=AsyncMock, return_value=True) as mock_ping,
+            patch(_PING, new_callable=AsyncMock, return_value=True) as mock_ping,
             patch.object(Path, "exists", return_value=True),
             patch("natshell.agent.loop.asyncio.to_thread") as mock_thread,
         ):
@@ -370,7 +372,7 @@ class TestCompactionBeforeFallback:
         )
 
         with (
-            patch("natshell.inference.ollama.ping_server", new_callable=AsyncMock, return_value=False),
+            patch(_PING, new_callable=AsyncMock, return_value=False),
             patch.object(Path, "exists", return_value=True),
             patch("natshell.agent.loop.asyncio.to_thread") as mock_thread,
         ):
@@ -397,7 +399,7 @@ class TestCompactionBeforeFallback:
         )
 
         with (
-            patch("natshell.inference.ollama.ping_server", new_callable=AsyncMock, return_value=False),
+            patch(_PING, new_callable=AsyncMock, return_value=False),
             patch.object(Path, "exists", return_value=True),
             patch("natshell.agent.loop.asyncio.to_thread") as mock_thread,
         ):
