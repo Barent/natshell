@@ -58,7 +58,8 @@ Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`
 - `agent/loop.py` — ReAct loop with safety, sudo retry, engine fallback, small-context filtering, edit failure tracking
 - `agent/system_prompt.py` — Platform-aware system prompt with behavior rules and `/no_think` directive
 - `agent/context.py` — System context gathering (CPU, RAM, disk, network, services, containers)
-- `agent/context_manager.py` — Token budget management, message trimming, `/compact` summarization
+- `agent/context_manager.py` — Token budget management, message trimming, `/compact` summarization, `build_summary_with_refs()` for retrieval-augmented compaction
+- `agent/memory_store.py` — SQLite chunk store backing retrieval-augmented compaction. Content-addressed (SHA256 of role + tool_name + content), FTS5 search with LIKE fallback, session-scoped via join table. Limits: 50 MB / 30 d / 64 KB per chunk; oversize chunks truncated head/tail at `put()`. `gc()` (LRU eviction) and `delete_session()` are defined but **not wired to any automatic caller** in the current release — store grows until `store.db` is manually removed. Disables itself after 3 consecutive SQLite failures; `compact_history()` then falls back to legacy summary.
 - `agent/plan.py` — Markdown plan parser, extracts `PlanStep` from H2 headings
 - `agent/plan_executor.py` — Step-by-step plan execution with per-step agent budgets
 
