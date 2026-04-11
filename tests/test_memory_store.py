@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,6 @@ from natshell.agent.memory_store import (
     _sanitize_fts_query,
     short_hash,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 

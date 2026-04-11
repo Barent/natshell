@@ -337,7 +337,12 @@ class ContextManager:
                 continue
 
             tool_calls = msg.get("tool_calls") or []
-            if tool_calls and i + 1 < len(dropped_messages) and dropped_messages[i + 1].get("role") == "tool":
+            has_paired_result = (
+                tool_calls
+                and i + 1 < len(dropped_messages)
+                and dropped_messages[i + 1].get("role") == "tool"
+            )
+            if has_paired_result:
                 # Pair: assistant(tool_calls=[...]) → tool result.
                 tc = tool_calls[0]
                 func = tc.get("function", {})

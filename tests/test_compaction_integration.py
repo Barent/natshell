@@ -204,8 +204,6 @@ class TestFallback:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         agent = _make_agent_with_store(tmp_path / "store.db")
-        # Replace put with a function that always raises
-        original_put = agent.memory_store.put
 
         def boom(**kwargs):
             raise RuntimeError("simulated SQLite failure")

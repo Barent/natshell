@@ -1510,7 +1510,6 @@ class AgentLoop:
             if row is None:
                 continue
             args_json = row.get("args_json") or ""
-            content = row.get("content") or ""
             file_path = row.get("file_path") or ""
             # Try filename from args_json (read_file/write_file/edit_file path)
             candidates: list[str] = []
