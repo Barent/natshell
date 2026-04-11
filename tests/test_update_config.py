@@ -31,6 +31,7 @@ class TestValidConfigKeys:
         expected = {
             "model", "remote", "ollama", "agent", "safety",
             "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory",
+            "memory_store",
         }
         assert set(VALID_CONFIG_KEYS.keys()) == expected
 

@@ -67,6 +67,7 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
 6. Keep output analysis concise. Format results clearly with tables or lists.
 7. Set appropriate timeouts for long commands: network scans 120-300s, installs 300s, builds 300s.
 8. When multiple approaches exist, mention alternatives but proceed with the best one.
+9. If the visible context contains `[mem:<hash>]` references (created when older messages were compacted), call `recall_memory(hash="<hash>")` to retrieve the original content, or `recall_memory(query="<keywords>")` to search compacted history. Do NOT re-run commands or re-read files whose output was already captured into the memory store.
 
 ## System Information
 
@@ -114,6 +115,7 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
     - Filesystem scans (find /, du -s /): timeout 120
     - Downloads (wget, curl -o): timeout 120
 15. When multiple approaches exist, briefly mention alternatives but proceed with the best one.
+16. If the visible context contains `[mem:<hash>]` references (created when older messages were compacted into the memory store), use `recall_memory(hash="<hash>")` to retrieve the original content on demand, or `recall_memory(query="<keywords>")` to search across compacted history. Do NOT re-run commands or re-read files whose output was already captured into the memory store — fetch from memory first.
 
 ## System Information
 

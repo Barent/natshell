@@ -1391,10 +1391,14 @@ class NatShellApp(App):
             "base_url": info.base_url,
             "n_ctx": info.n_ctx,
         }
+        # Persist using the agent's in-memory session_id so that the
+        # SessionManager file id and the memory_store chunk_sessions rows
+        # share the same key — no orphaned chunks across save/load cycles.
         sid = self._session_mgr.save(
             messages=self.agent.messages,
             engine_info=engine_dict,
             name=name,
+            session_id=self.agent.session_id,
         )
         display_name = name or sid[:12]
         conversation.mount(
@@ -1416,6 +1420,18 @@ class NatShellApp(App):
             return
 
         self.agent.messages = data["messages"]
+        # Reattach the loaded session to the agent so any [mem:<hash>]
+        # references in the saved messages can still resolve via
+        # recall_memory against the same chunk_sessions rows.
+        self.agent.session_id = data.get("id", session_id)
+        try:
+            from natshell.tools import recall_memory as _recall_mod
+
+            _recall_mod.configure(
+                self.agent.memory_store, self.agent.session_id
+            )
+        except Exception:  # pragma: no cover - defensive
+            pass
         name = data.get("name", session_id)
         msg_count = len(data["messages"])
         conversation.mount(

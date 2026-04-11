@@ -139,6 +139,26 @@ max_per_file = 10
 # Theme: "dark" or "light"
 theme = "dark"
 
+# ─── Retrieval-Augmented Compaction (memory_store) ──────────────────
+# Content-addressed SQLite chunk store that preserves full detail of
+# messages dropped during /compact or automatic compaction. The short
+# summary that replaces dropped messages contains [mem:<hash>]
+# references, and the agent can call the recall_memory tool to fetch
+# full content on demand. Unrelated to the agents.md working-memory
+# feature above.
+[memory_store]
+# Enable the store and the recall_memory tool. When false, compaction
+# falls back to the classic extractive text summary.
+enabled = true
+# Hard cap on total chunk content size (megabytes). LRU eviction runs
+# when this is exceeded.
+max_size_mb = 50
+# Chunks older than this are garbage-collected.
+max_age_days = 30
+# Per-chunk byte cap. Oversize content is stored as head+tail with an
+# elision marker.
+chunk_max_bytes = 65536
+
 # ─── System Prompt Customization ─────────────────────────────────────
 # Customize the LLM's system prompt. Core safety rules are always
 # included regardless of customization.

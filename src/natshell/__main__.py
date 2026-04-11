@@ -474,6 +474,7 @@ def main() -> None:
         fallback_config=fallback_config,
         prompt_config=config.prompt,
         memory_config=config.memory,
+        memory_store_config=config.memory_store,
     )
 
     # Gather system context and initialize agent

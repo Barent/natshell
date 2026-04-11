@@ -338,3 +338,173 @@ class TestCalibrateFromActual:
         assert cm.context_budget == 10000
         cm.calibrate_from_actual(estimated_tokens=500, actual_tokens=0)
         assert cm.context_budget == 10000
+
+
+# ---------------------------------------------------------------------------
+# build_summary_with_refs (retrieval-augmented compaction)
+# ---------------------------------------------------------------------------
+
+
+class _FakeStore:
+    """Lightweight stand-in for MemoryStore.put() in unit tests."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self._counter = 0
+        self.fail = False
+
+    def put(self, **kwargs) -> str | None:
+        if self.fail:
+            return None
+        self._counter += 1
+        self.calls.append(kwargs)
+        # Deterministic 64-char hex hash so tests can assert prefixes
+        return f"{self._counter:064x}"
+
+
+class TestBuildSummaryWithRefs:
+    def test_existing_build_summary_unchanged(self):
+        """The legacy build_summary path is not touched by the new method."""
+        cm = ContextManager(context_budget=10000)
+        msgs = [
+            _user("hello"),
+            _tool_call_msg("execute_shell", {"command": "ls"}),
+            _tool_result("file.txt"),
+        ]
+        legacy = cm.build_summary(msgs)
+        assert "Ran: ls" in legacy or "ls" in legacy
+
+    def test_tool_pair_emits_single_ref(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        msgs = [
+            _tool_call_msg("execute_shell", {"command": "nmap -sV 10.0.0.0/24"}),
+            _tool_result("Exit code: 0\nfound 5 hosts"),
+        ]
+        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert len(hashes) == 1
+        assert "[mem:" in text
+        assert "execute_shell" in text
+        assert "exit=0" in text
+        # Only the bulky tool result should be stored — not the assistant stub.
+        assert len(store.calls) == 1
+        assert store.calls[0]["role"] == "tool"
+        assert "found 5 hosts" in store.calls[0]["content"]
+        assert store.calls[0]["tool_name"] == "execute_shell"
+
+    def test_pair_aware_iteration_handles_consecutive_pairs(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        msgs = [
+            _tool_call_msg("read_file", {"path": "/a"}, tc_id="tc1"),
+            _tool_result("contents of a", tc_id="tc1"),
+            _tool_call_msg("read_file", {"path": "/b"}, tc_id="tc2"),
+            _tool_result("contents of b", tc_id="tc2"),
+        ]
+        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert len(hashes) == 2
+        assert text.count("[mem:") == 2
+        # Each tool call's result is stored once.
+        assert len(store.calls) == 2
+
+    def test_files_changed_section_preserved(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        msgs = [
+            _tool_call_msg("write_file", {"path": "/tmp/foo.py"}),
+            _tool_result("File written"),
+        ]
+        text, _ = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert "Files changed:" in text
+        assert "created: /tmp/foo.py" in text
+
+    def test_user_message_short_no_ref(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        msgs = [_user("short question")]
+        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert hashes == []
+        assert "User asked: short question" in text
+        assert len(store.calls) == 0
+
+    def test_user_message_long_gets_ref(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        long_q = "x" * 500
+        msgs = [_user(long_q)]
+        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert len(hashes) == 1
+        assert "[mem:" in text
+        assert "user_message" in text
+
+    def test_inspection_hint_when_many_refs(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        msgs = []
+        for i in range(4):
+            msgs.append(_tool_call_msg("execute_shell", {"command": f"cmd{i}"}, tc_id=f"t{i}"))
+            msgs.append(_tool_result(f"output{i}", tc_id=f"t{i}"))
+        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert len(hashes) == 4
+        assert "recall_memory" in text
+
+    def test_inspection_hint_absent_when_few_refs(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        msgs = [
+            _tool_call_msg("execute_shell", {"command": "ls"}),
+            _tool_result("a\nb\nc"),
+        ]
+        text, _ = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert "recall_memory" not in text
+
+    def test_store_failure_falls_back_to_plain_action(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        store.fail = True
+        msgs = [
+            _tool_call_msg("execute_shell", {"command": "ls"}),
+            _tool_result("output"),
+        ]
+        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert hashes == []
+        assert "[mem:" not in text
+        assert "Called: execute_shell" in text
+
+    def test_ref_line_capped(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        # Long command should still produce a capped ref line
+        long_cmd = "echo " + "x" * 500
+        msgs = [
+            _tool_call_msg("execute_shell", {"command": long_cmd}),
+            _tool_result("Exit code: 0"),
+        ]
+        text, _ = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        # Find the [mem:...] line and check its length
+        for line in text.splitlines():
+            if "[mem:" in line:
+                assert len(line) < 200  # well under any reasonable cap
+
+    def test_extract_exit_code(self):
+        assert ContextManager._extract_exit_code("Exit code: 0\nfoo") == 0
+        assert ContextManager._extract_exit_code("Exit code: 127\nfoo") == 127
+        assert ContextManager._extract_exit_code("no exit line") is None
+        assert ContextManager._extract_exit_code("Exit code: nan") is None
+
+    def test_tool_call_preview(self):
+        assert ContextManager._tool_call_preview(
+            "execute_shell", '{"command": "ls -la"}'
+        ) == '"ls -la"'
+        assert ContextManager._tool_call_preview(
+            "read_file", '{"path": "/etc/hosts"}'
+        ) == '"/etc/hosts"'
+        assert ContextManager._tool_call_preview("unknown", "") == ""
+
+    def test_assistant_text_is_stored(self):
+        cm = ContextManager(context_budget=10000)
+        store = _FakeStore()
+        msgs = [_assistant("I will now run the test suite to verify.")]
+        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        assert len(hashes) == 1
+        assert any(c["role"] == "assistant" for c in store.calls)

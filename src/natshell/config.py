@@ -97,6 +97,23 @@ class MemoryConfig:
 
 
 @dataclass
+class MemoryStoreConfig:
+    """Configuration for retrieval-augmented compaction (memory_store).
+
+    This is a distinct feature from ``MemoryConfig`` above, which controls
+    injection of an agents.md working-memory scratchpad.  ``MemoryStoreConfig``
+    controls the content-addressed SQLite chunk store that preserves full
+    detail of messages dropped during ``/compact`` or automatic compaction.
+    When disabled, compaction falls back to the legacy extractive summary.
+    """
+
+    enabled: bool = True
+    max_size_mb: int = 50
+    max_age_days: int = 30
+    chunk_max_bytes: int = 65536
+
+
+@dataclass
 class PromptConfig:
     extra_instructions: str = ""
     persona: str = ""
@@ -134,6 +151,7 @@ class NatShellConfig:
     kiwix: KiwixConfig = field(default_factory=KiwixConfig)
     prompt: PromptConfig = field(default_factory=PromptConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    memory_store: MemoryStoreConfig = field(default_factory=MemoryStoreConfig)
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
 
 
@@ -196,6 +214,12 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
         "enabled": "bool",
         "max_chars": "int",
         "min_ctx": "int",
+    },
+    "memory_store": {
+        "enabled": "bool",
+        "max_size_mb": "int",
+        "max_age_days": "int",
+        "chunk_max_bytes": "int",
     },
 }
 
@@ -327,6 +351,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
 _SECTIONS = (
     "model", "remote", "ollama", "agent", "safety",
     "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory",
+    "memory_store",
 )
 
 

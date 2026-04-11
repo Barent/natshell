@@ -72,6 +72,14 @@ def compact_chat(agent: AgentLoop, conversation: ScrollableContainer) -> None:
         f"  Tokens:   ~{stats['before_tokens']} \u2192 ~{stats['after_tokens']}"
         f" (~{saved_tokens} freed)",
     ]
+    chunks_stored = stats.get("chunks_stored", 0)
+    if chunks_stored:
+        bytes_stored = stats.get("bytes_stored", 0)
+        kb = bytes_stored / 1024
+        summary_lines.append(
+            f"  Chunks:   {chunks_stored} stored (~{kb:.1f} KB) — "
+            f"agent can use [bold cyan]recall_memory[/] to retrieve"
+        )
     if stats["summary"]:
         summary_lines.append(f"\n[dim]Preserved facts:[/]\n{_escape(stats['summary'])}")
     conversation.mount(SystemMessage("\n".join(summary_lines)))

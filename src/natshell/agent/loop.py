@@ -15,8 +15,15 @@ from typing import Any, AsyncIterator
 
 from natshell.agent.context import SystemContext
 from natshell.agent.context_manager import ContextManager
+from natshell.agent.memory_store import MemoryStore
 from natshell.agent.system_prompt import build_system_prompt
-from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
+from natshell.config import (
+    AgentConfig,
+    MemoryConfig,
+    MemoryStoreConfig,
+    ModelConfig,
+    PromptConfig,
+)
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.tools import edit_file as _edit_file_mod
@@ -127,6 +134,7 @@ class AgentLoop:
         fallback_config: ModelConfig | None = None,
         prompt_config: PromptConfig | None = None,
         memory_config: MemoryConfig | None = None,
+        memory_store_config: MemoryStoreConfig | None = None,
     ) -> None:
         self.engine = engine
         self.tools = tools
@@ -135,6 +143,35 @@ class AgentLoop:
         self.fallback_config = fallback_config
         self._prompt_config = prompt_config
         self._memory_config = memory_config or MemoryConfig()
+        self._memory_store_config = memory_store_config or MemoryStoreConfig()
+        # Per-process session id used to scope chunk_sessions rows. The /save
+        # slash command can rebind this to the persisted session uuid later.
+        import uuid as _uuid
+
+        self.session_id: str = _uuid.uuid4().hex
+        self.memory_store: MemoryStore | None = None
+        if self._memory_store_config.enabled:
+            try:
+                self.memory_store = MemoryStore(
+                    max_size_bytes=self._memory_store_config.max_size_mb * 1024 * 1024,
+                    max_age_days=self._memory_store_config.max_age_days,
+                    chunk_max_bytes=self._memory_store_config.chunk_max_bytes,
+                )
+                if not self.memory_store.healthy:
+                    self.memory_store = None
+            except Exception as exc:
+                logger.warning("MemoryStore disabled: %s", exc)
+                self.memory_store = None
+        # Inject the store + session id into the recall_memory tool so that
+        # the registry-driven dispatch can resolve them without explicit
+        # context plumbing.  When the store is disabled the tool reports a
+        # clear error from its handler.
+        try:
+            from natshell.tools import recall_memory as _recall_mod
+
+            _recall_mod.configure(self.memory_store, self.session_id)
+        except Exception:  # pragma: no cover - defensive only
+            pass
         self._system_context: SystemContext | None = None
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
@@ -1441,8 +1478,74 @@ class AgentLoop:
             except asyncio.QueueEmpty:
                 break
 
+    def _auto_rehydrate(
+        self, last_2: list[dict[str, Any]], hashes: list[str]
+    ) -> list[str]:
+        """Heuristic: inline chunks whose stored args reference filenames
+        appearing in the most recent user message.
+
+        Smaller models won't always call ``recall_memory`` spontaneously, so
+        when the user's next question mentions a filename we just stored,
+        bring that chunk's content back into the prompt directly.
+
+        Returns the (deduped) list of short hashes that should be inlined.
+        Capped at 2 to keep the rehydrated payload bounded.
+        """
+        if not last_2 or not hashes or self.memory_store is None:
+            return []
+        # Find the most recent user message in the kept window.
+        user_text = ""
+        for msg in reversed(last_2):
+            if msg.get("role") == "user":
+                user_text = (msg.get("content") or "").lower()
+                break
+        if not user_text or len(user_text) < 3:
+            return []
+
+        rehydrated: list[str] = []
+        for sh in hashes:
+            if len(rehydrated) >= 2:
+                break
+            row = self.memory_store.get(sh, session_id=self.session_id)
+            if row is None:
+                continue
+            args_json = row.get("args_json") or ""
+            content = row.get("content") or ""
+            file_path = row.get("file_path") or ""
+            # Try filename from args_json (read_file/write_file/edit_file path)
+            candidates: list[str] = []
+            if args_json:
+                try:
+                    args = json.loads(args_json)
+                    if isinstance(args, dict):
+                        for key in ("path", "filename", "file"):
+                            v = args.get(key)
+                            if isinstance(v, str) and v:
+                                candidates.append(v)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if file_path:
+                candidates.append(file_path)
+
+            for cand in candidates:
+                cand_lower = cand.lower()
+                base = cand_lower.rsplit("/", 1)[-1]
+                if (cand_lower and cand_lower in user_text) or (
+                    base and len(base) >= 3 and base in user_text
+                ):
+                    if sh not in rehydrated:
+                        rehydrated.append(sh)
+                    break
+        return rehydrated
+
     def compact_history(self, dry_run: bool = False) -> dict[str, Any]:
         """Compact conversation history, keeping system prompt and last 2 messages.
+
+        When ``self.memory_store`` is healthy, dropped messages are written
+        verbatim to the chunk store and the summary contains short
+        ``[mem:<hash>]`` references the agent can resolve via the
+        ``recall_memory`` tool.  On any failure the path falls back to the
+        legacy extractive summary so the agent loop is never broken.
 
         Args:
             dry_run: If True, compute and return stats without mutating messages.
@@ -1463,18 +1566,68 @@ class AgentLoop:
         last_2 = rest[-2:]
         dropped = rest[:-2]
 
-        # Build extractive summary
+        # Build the summary — prefer the retrieval-augmented path when
+        # the chunk store is healthy.  Failures here always fall through
+        # to the legacy extractive summary.
         summary = ""
-        if cm and dropped:
+        chunks_stored = 0
+        bytes_stored = 0
+        used_refs = False
+        rehydrated_hashes: list[str] = []
+        store = self.memory_store
+        if cm and dropped and store is not None and store.healthy and not dry_run:
+            try:
+                summary, hashes = cm.build_summary_with_refs(
+                    dropped, store.put, self.session_id
+                )
+                if hashes:
+                    used_refs = True
+                    chunks_stored = len(hashes)
+                    # Sum bytes of stored chunks for stats display.
+                    for sh in hashes:
+                        row = store.get(sh, session_id=self.session_id)
+                        if row:
+                            bytes_stored += int(row.get("size_bytes") or 0)
+
+                    # Auto-rehydration heuristic: if the most recent user
+                    # message references content we just stored (e.g. mentions
+                    # a filename or a unique substring), inline that chunk
+                    # directly so smaller models that won't spontaneously
+                    # call recall_memory still get the detail they need.
+                    rehydrated_hashes = self._auto_rehydrate(last_2, hashes)
+            except Exception as exc:
+                logger.warning(
+                    "build_summary_with_refs failed, falling back: %s", exc
+                )
+                summary = ""
+                used_refs = False
+
+        if not summary and cm and dropped:
             summary = cm.build_summary(dropped)
 
+        # Preserve the legacy "[Context compacted: N messages replaced with
+        # summary." substring — tests and downstream callers depend on it.
+        summary_content_parts = [
+            f"[Context compacted: {len(dropped)} messages replaced with summary.",
+            summary,
+        ]
+        if rehydrated_hashes and store is not None:
+            summary_content_parts.append(
+                "\nAuto-rehydrated chunks (most recent user message referenced these):"
+            )
+            for sh in rehydrated_hashes:
+                row = store.get(sh, session_id=self.session_id)
+                if row is None:
+                    continue
+                tool_name = row.get("tool_name") or row.get("kind") or ""
+                content = (row.get("content") or "")[:2000]
+                summary_content_parts.append(
+                    f"--- [mem:{sh[:12]}] {tool_name} ---\n{content}"
+                )
+        summary_content_parts.append("Recent context follows.]")
         summary_msg: dict[str, Any] = {
             "role": "system",
-            "content": (
-                f"[Context compacted: {len(dropped)} messages replaced with summary.\n"
-                f"{summary}\n"
-                "Recent context follows.]"
-            ),
+            "content": "\n".join(summary_content_parts),
         }
 
         new_messages = [system, summary_msg] + last_2
@@ -1491,4 +1644,7 @@ class AgentLoop:
             "before_tokens": before_tokens,
             "after_tokens": after_tokens,
             "summary": summary,
+            "chunks_stored": chunks_stored,
+            "bytes_stored": bytes_stored,
+            "used_refs": used_refs,
         }

@@ -17,6 +17,10 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+# Per-ref token cap (rough cap on the inline ref string emitted in the
+# summary). 30 tokens ≈ 120 chars at the BPE 4-char fallback.
+_REF_MAX_CHARS = 120
+
 # Minimum number of recent messages (after system prompt) to always preserve.
 # This keeps at least 3 user/assistant exchanges in context.
 _MIN_RECENT = 6
@@ -268,3 +272,227 @@ class ContextManager:
         if len(summary) > 800:
             summary = summary[:800] + "..."
         return summary
+
+    # ------------------------------------------------------------------
+    # Retrieval-augmented summary with `[mem:<hash>]` references
+    # ------------------------------------------------------------------
+
+    def build_summary_with_refs(
+        self,
+        dropped_messages: list[dict[str, Any]],
+        put_fn: Callable[..., str | None],
+        session_id: str,
+    ) -> tuple[str, list[str]]:
+        """Build a summary that stores full content in a chunk store and
+        emits short ``[mem:<hash>]`` references in place of bulky tool
+        results.
+
+        ``put_fn`` must accept the same kwargs as
+        ``MemoryStore.put`` (``role``, ``content``, ``session_id``,
+        ``tool_name``, ``args_json``) and return the full content hash or
+        ``None`` on failure.  Dependency injection lets ContextManager stay
+        testable without an actual SQLite store.
+
+        Returns ``(summary_text, list_of_short_hashes)``.
+
+        Pair-aware: assistant ``tool_calls`` messages are processed
+        together with their following ``role="tool"`` result so the ref is
+        attributed to the originating tool call, not the bare result.
+        """
+        files_changed: list[str] = []
+        ref_lines: list[str] = []
+        plain_lines: list[str] = []
+        emitted_short_hashes: list[str] = []
+
+        i = 0
+        while i < len(dropped_messages):
+            msg = dropped_messages[i]
+            role = msg.get("role", "")
+
+            if role == "user":
+                content = (msg.get("content") or "").strip()
+                if content:
+                    snippet = content[:100]
+                    plain_lines.append(f"User asked: {snippet}")
+                # Optionally store the full user message too — this is cheap
+                # and means recall_memory can fetch the original verbatim
+                # for long queries truncated in the summary.
+                if len(content) > 100:
+                    full_hash = put_fn(
+                        role="user",
+                        content=content,
+                        session_id=session_id,
+                        tool_name="",
+                        kind="user_message",
+                    )
+                    if full_hash:
+                        sh = full_hash[:12]
+                        emitted_short_hashes.append(sh)
+                        ref_lines.append(
+                            self._cap_ref(
+                                f"[mem:{sh}] user_message ({len(content)} chars)"
+                            )
+                        )
+                i += 1
+                continue
+
+            tool_calls = msg.get("tool_calls") or []
+            if tool_calls and i + 1 < len(dropped_messages) and dropped_messages[i + 1].get("role") == "tool":
+                # Pair: assistant(tool_calls=[...]) → tool result.
+                tc = tool_calls[0]
+                func = tc.get("function", {})
+                name = func.get("name", "")
+                args_str = func.get("arguments", "") or ""
+                tool_msg = dropped_messages[i + 1]
+                result_content = tool_msg.get("content") or ""
+
+                # Track file changes for the legacy section.
+                if name in ("write_file", "edit_file"):
+                    try:
+                        path = json.loads(args_str).get("path", "")
+                        if path:
+                            action = "created" if name == "write_file" else "edited"
+                            entry = f"{action}: {path}"
+                            if entry not in files_changed:
+                                files_changed.append(entry)
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+
+                # Store the tool result (the bulky one) and emit a ref.
+                full_hash = put_fn(
+                    role="tool",
+                    content=result_content,
+                    session_id=session_id,
+                    tool_name=name,
+                    kind="tool_result",
+                    args_json=args_str,
+                )
+                if full_hash:
+                    sh = full_hash[:12]
+                    emitted_short_hashes.append(sh)
+                    preview = self._tool_call_preview(name, args_str)
+                    n_lines = result_content.count("\n") + (1 if result_content else 0)
+                    exit_code = self._extract_exit_code(result_content)
+                    suffix = f" exit={exit_code}" if exit_code is not None else ""
+                    ref_lines.append(
+                        self._cap_ref(
+                            f"[mem:{sh}] {name} {preview}{suffix} {n_lines}L"
+                        )
+                    )
+                else:
+                    # Fall back to a plain action line if storage failed.
+                    plain_lines.append(f"Called: {name}")
+                i += 2
+                continue
+
+            if tool_calls:
+                # Lone tool_calls without a paired result (rare).
+                tc = tool_calls[0]
+                func = tc.get("function", {})
+                name = func.get("name", "")
+                plain_lines.append(f"Called: {name}")
+                i += 1
+                continue
+
+            if role == "tool":
+                # Orphan tool result (no preceding assistant message).
+                content = msg.get("content") or ""
+                full_hash = put_fn(
+                    role="tool",
+                    content=content,
+                    session_id=session_id,
+                    tool_name="",
+                    kind="tool_result",
+                )
+                if full_hash:
+                    sh = full_hash[:12]
+                    emitted_short_hashes.append(sh)
+                    n_lines = content.count("\n") + (1 if content else 0)
+                    ref_lines.append(
+                        self._cap_ref(f"[mem:{sh}] tool_result {n_lines}L")
+                    )
+                i += 1
+                continue
+
+            # assistant text content (model reasoning) — store and reference.
+            if role == "assistant":
+                content = msg.get("content") or ""
+                if content.strip():
+                    full_hash = put_fn(
+                        role="assistant",
+                        content=content,
+                        session_id=session_id,
+                        kind="assistant_text",
+                    )
+                    if full_hash:
+                        sh = full_hash[:12]
+                        emitted_short_hashes.append(sh)
+                        ref_lines.append(
+                            self._cap_ref(
+                                f"[mem:{sh}] assistant ({len(content)} chars)"
+                            )
+                        )
+            i += 1
+
+        parts: list[str] = []
+        if files_changed:
+            parts.append(
+                "Files changed:\n" + "\n".join(f"- {f}" for f in files_changed)
+            )
+        if ref_lines:
+            parts.append("Stored chunks:\n" + "\n".join(f"- {r}" for r in ref_lines))
+        if plain_lines:
+            parts.append(
+                "Notes:\n" + "\n".join(f"- {p}" for p in plain_lines[:8])
+            )
+        if len(emitted_short_hashes) > 3:
+            parts.append(
+                "To inspect any [mem:<hash>] reference, call "
+                'recall_memory(hash="<hash>") or '
+                'recall_memory(query="<keywords>").'
+            )
+
+        summary = "\n".join(parts)
+        return summary, emitted_short_hashes
+
+    @staticmethod
+    def _cap_ref(line: str) -> str:
+        if len(line) <= _REF_MAX_CHARS:
+            return line
+        return line[: _REF_MAX_CHARS - 3] + "..."
+
+    @staticmethod
+    def _tool_call_preview(name: str, args_str: str) -> str:
+        """Render a short, safe preview of a tool call for the summary line."""
+        if not args_str:
+            return ""
+        try:
+            args = json.loads(args_str)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+        if not isinstance(args, dict):
+            return ""
+        if name == "execute_shell" and "command" in args:
+            cmd = str(args["command"])[:60]
+            return f'"{cmd}"'
+        if name in ("read_file", "write_file", "edit_file") and "path" in args:
+            return f'"{args["path"]}"'
+        if name == "search_files" and "pattern" in args:
+            return f'"{args["pattern"]}"'
+        if name == "fetch_url" and "url" in args:
+            return f'"{str(args["url"])[:60]}"'
+        # Generic: first non-empty arg value, truncated
+        for v in args.values():
+            if isinstance(v, (str, int, float)) and str(v):
+                return f'"{str(v)[:60]}"'
+        return ""
+
+    @staticmethod
+    def _extract_exit_code(content: str) -> int | None:
+        for line in content.splitlines()[:5]:
+            if line.startswith("Exit code:"):
+                try:
+                    return int(line.split(":", 1)[1].strip())
+                except (ValueError, IndexError):
+                    return None
+        return None
