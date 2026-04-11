@@ -1166,6 +1166,66 @@ class TestRemoteEngineErrors:
         finally:
             await engine.close()
 
+    async def test_http_500_surfaces_json_error_message(self):
+        """HTTP 500 with a JSON {error:{message:...}} body should surface the
+        message text (e.g. Ollama's "model runner has unexpectedly stopped")
+        instead of just the raw status code.
+        """
+        import httpx
+
+        from natshell.inference.remote import RemoteEngine
+
+        engine = RemoteEngine(base_url="http://localhost:11434", model="test")
+        body = (
+            '{"error":{"message":"model runner has unexpectedly stopped, '
+            'this may be due to resource limitations or an internal error, '
+            'check ollama server logs for details","type":"api_error",'
+            '"param":null,"code":null}}'
+        )
+        mock_response = httpx.Response(
+            status_code=500,
+            text=body,
+            request=httpx.Request("POST", "http://localhost:11434/chat/completions"),
+        )
+        engine.client.post = AsyncMock(side_effect=httpx.HTTPStatusError(
+            "server error", request=mock_response.request, response=mock_response
+        ))
+        try:
+            await engine.chat_completion(messages=[{"role": "user", "content": "hi"}])
+            assert False, "Should have raised"
+        except ConnectionError as e:
+            msg = str(e)
+            assert "500" in msg
+            assert "model runner has unexpectedly stopped" in msg
+            # Make sure raw JSON envelope did not leak through
+            assert '"error"' not in msg
+            assert "api_error" not in msg
+        finally:
+            await engine.close()
+
+    def test_extract_error_body_parses_ollama_json(self):
+        """_extract_error_body should pull error.message from Ollama-style JSON."""
+        from natshell.inference.remote import _extract_error_body
+
+        body = '{"error":{"message":"model runner crashed","type":"api_error"}}'
+        assert _extract_error_body(body) == "model runner crashed"
+
+    def test_extract_error_body_handles_plain_string_error(self):
+        """_extract_error_body should handle {"error": "..."} variants."""
+        from natshell.inference.remote import _extract_error_body
+
+        body = '{"error": "something went wrong"}'
+        assert _extract_error_body(body) == "something went wrong"
+
+    def test_extract_error_body_falls_back_to_raw(self):
+        """Non-JSON bodies should fall back to the first 500 chars."""
+        from natshell.inference.remote import _extract_error_body
+
+        assert _extract_error_body("plain text error") == "plain text error"
+        assert _extract_error_body("") == ""
+        long_body = "x" * 800
+        assert _extract_error_body(long_body) == "x" * 500
+
     async def test_fallback_on_connection_error(self):
         """Agent should recognize ConnectionError for fallback."""
         agent = _make_agent([CompletionResult(content="ok")])

@@ -42,6 +42,33 @@ class AuthenticationError(ConnectionError):
     """The remote API rejected the request due to a missing or invalid API key (401/403)."""
 
 
+def _extract_error_body(body: str) -> str:
+    """Extract a human-readable message from an OpenAI/Ollama error response body.
+
+    Ollama and OpenAI-compatible APIs return errors in the form:
+        {"error": {"message": "...", "type": "api_error", ...}}
+    or sometimes:
+        {"error": "plain string"}
+
+    Returns the extracted message (truncated to 500 chars) if parseable,
+    otherwise the first 500 chars of the raw body.
+    """
+    if not body:
+        return ""
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        return body[:500]
+    err = data.get("error") if isinstance(data, dict) else None
+    if isinstance(err, dict):
+        msg = err.get("message")
+        if isinstance(msg, str) and msg:
+            return msg[:500]
+    elif isinstance(err, str) and err:
+        return err[:500]
+    return body[:500]
+
+
 class RemoteEngine:
     """LLM inference via a remote OpenAI-compatible API."""
 
@@ -127,7 +154,8 @@ class RemoteEngine:
                 last_exc.__cause__ = e
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
-                body = e.response.text[:200] if e.response else ""
+                raw_body = e.response.text if e.response else ""
+                body = _extract_error_body(raw_body)
                 # Detect context window overflow (400/413 with known patterns)
                 if status in (400, 413):
                     body_lower = body.lower()

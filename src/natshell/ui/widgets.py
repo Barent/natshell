@@ -330,7 +330,12 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
         parts.append(f"{metrics['completion_tokens']} tokens")
     if metrics.get("response_time_ms"):
         secs = metrics["response_time_ms"] / 1000
-        parts.append(f"{secs:.1f}s")
+        if secs >= 60:
+            mins = int(secs // 60)
+            remainder = secs % 60
+            parts.append(f"{mins}m {remainder:.0f}s")
+        else:
+            parts.append(f"{secs:.1f}s")
     return " · ".join(parts) if parts else ""
 
 

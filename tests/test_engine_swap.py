@@ -262,8 +262,73 @@ class TestCompactionBeforeFallback:
 
         errors = [e for e in events if e.type == EventType.ERROR]
         assert any("compacted" in e.data.lower() and "retrying" in e.data.lower() for e in errors)
+        # Real ReadTimeout → the error banner should still say "timed out"
+        assert any("timed out" in e.data.lower() for e in errors)
         assert not any("local model" in e.data.lower() for e in errors)
         assert agent._context_recovery_attempted is True
+
+    async def test_http500_compacts_with_surfaced_error_message(self):
+        """Non-timeout ConnectionError (e.g. HTTP 500 from Ollama) should
+        still trigger compaction+retry but report the actual server error
+        rather than falsely claiming a timeout.
+        """
+        from natshell.inference.engine import CompletionResult
+
+        crash_msg = (
+            "Remote API error 500: model runner has unexpectedly stopped, "
+            "this may be due to resource limitations or an internal error, "
+            "check ollama server logs for details"
+        )
+        side_effects = [
+            ConnectionError(crash_msg),
+            CompletionResult(
+                content="Recovered.",
+                tool_calls=[],
+                finish_reason="stop",
+                prompt_tokens=100,
+                completion_tokens=20,
+            ),
+        ]
+        agent = _make_remote_agent_with_history(
+            side_effect=side_effects,
+            fallback_config=ModelConfig(
+                path="/tmp/test-model.gguf", n_ctx=0, n_threads=0, n_gpu_layers=0,
+            ),
+        )
+
+        with patch(_PING, new_callable=AsyncMock, return_value=True):
+            events = await _collect_events(agent, "fix the log path")
+
+        errors = [e for e in events if e.type == EventType.ERROR]
+        # Still compacts and retries — the failure mode is the same.
+        assert any("compacted" in e.data.lower() and "retrying" in e.data.lower() for e in errors)
+        # But the banner should NOT claim a timeout, and it SHOULD surface the
+        # actual crash reason so the user can diagnose.
+        assert not any("timed out" in e.data.lower() for e in errors)
+        assert any("model runner has unexpectedly stopped" in e.data for e in errors)
+        assert not any("local model" in e.data.lower() for e in errors)
+        assert agent._context_recovery_attempted is True
+
+    async def test_describe_remote_error_branches(self):
+        """Unit test for _describe_remote_error — timeouts vs everything else."""
+        agent = _make_remote_agent_with_history(
+            side_effect=[httpx.ReadTimeout("x")],
+        )
+        # httpx timeout types → "timed out"
+        assert agent._describe_remote_error(httpx.ReadTimeout("x")) == "Remote server timed out"
+        assert agent._describe_remote_error(httpx.PoolTimeout("x")) == "Remote server timed out"
+        assert agent._describe_remote_error(httpx.ConnectTimeout("x")) == "Remote server timed out"
+        # ConnectionError wrapping a timeout (remote.py's normal shape) → same
+        wrapped = ConnectionError("Request timed out")
+        wrapped.__cause__ = httpx.ReadTimeout("x")
+        assert agent._describe_remote_error(wrapped) == "Remote server timed out"
+        # Plain ConnectionError with arbitrary message → surfaces the message
+        described = agent._describe_remote_error(
+            ConnectionError("Remote API error 500: model runner crashed")
+        )
+        assert "timed out" not in described.lower()
+        assert "model runner crashed" in described
+        assert described.startswith("Remote server error:")
 
     async def test_timeout_falls_back_when_server_dead(self):
         """ReadTimeout + server dead → fall back to local model."""

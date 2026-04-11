@@ -662,9 +662,10 @@ class AgentLoop:
                             stats = self.compact_history()
                             if stats.get("compacted"):
                                 self._context_recovery_attempted = True
+                                reason = self._describe_remote_error(e)
                                 yield AgentEvent(
                                     type=EventType.ERROR,
-                                    data="Remote server timed out — compacted "
+                                    data=f"{reason} — compacted "
                                     "conversation and retrying\u2026",
                                 )
                                 continue  # retry on same remote engine
@@ -1226,6 +1227,30 @@ class AgentLoop:
                 total_completion_tokens,
             ),
         )
+
+    def _describe_remote_error(self, error: Exception) -> str:
+        """Build a short user-facing label for a remote inference failure.
+
+        Returns "Remote server timed out" when the underlying cause was a
+        timeout (so the existing phrasing is preserved for the common case),
+        or "Remote server error: {message}" otherwise — surfacing the actual
+        exception text (e.g. "Remote API error 500: model runner has
+        unexpectedly stopped…") instead of falsely claiming a timeout.
+        """
+        import httpx
+
+        timeout_types = (
+            httpx.ReadTimeout,
+            httpx.PoolTimeout,
+            httpx.ConnectTimeout,
+        )
+        if isinstance(error, timeout_types):
+            return "Remote server timed out"
+        cause = getattr(error, "__cause__", None)
+        if isinstance(cause, timeout_types):
+            return "Remote server timed out"
+        message = str(error) or error.__class__.__name__
+        return f"Remote server error: {message}"
 
     def _can_fallback(self, error: Exception) -> bool:
         """Check if we should attempt fallback to local model."""
