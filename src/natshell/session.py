@@ -15,11 +15,31 @@ from natshell.platform import data_dir as _data_dir
 logger = logging.getLogger(__name__)
 
 _SESSION_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+# Short-prefix form accepted by ``load`` — hex only, at least 4 chars so
+# that ``/load a`` doesn't resolve against every session that happens to
+# start with an ``a``. 31 is the upper bound because 32 is the full ID.
+_SESSION_ID_PREFIX_RE = re.compile(r"^[a-f0-9]{4,31}$")
 
 # Default max serialized session size: 10 MB
 _DEFAULT_MAX_SIZE = 10 * 1024 * 1024
 
 SESSION_DIR = _data_dir() / "sessions"
+
+
+class AmbiguousSessionID(ValueError):
+    """Raised when a short session-ID prefix matches more than one session.
+
+    ``candidates`` holds the full IDs of every matching session so callers
+    can surface them to the user.
+    """
+
+    def __init__(self, prefix: str, candidates: list[str]) -> None:
+        self.prefix = prefix
+        self.candidates = candidates
+        super().__init__(
+            f"Ambiguous session ID prefix {prefix!r} — matches "
+            f"{len(candidates)} sessions: {', '.join(candidates)}"
+        )
 
 
 class SessionManager:
@@ -123,16 +143,60 @@ class SessionManager:
         return sid
 
     def load(self, session_id: str) -> dict[str, Any] | None:
-        """Load a session by ID.  Returns ``None`` if not found."""
-        self._validate_session_id(session_id)
-        path = self._dir / f"{session_id}.json"
+        """Load a session by full ID or unique short prefix.
+
+        Accepts either a full 32-char lowercase hex ID or a short hex
+        prefix (4–31 chars) that uniquely identifies one session on disk.
+
+        Returns ``None`` if no session matches.
+
+        Raises
+        ------
+        ValueError
+            If ``session_id`` is neither a valid full ID nor a valid
+            short hex prefix (e.g. contains ``/``, ``.``, uppercase, or
+            is shorter than 4 characters).
+        AmbiguousSessionID
+            If a short prefix matches more than one session on disk.
+        """
+        resolved = self._resolve_session_id(session_id)
+        if resolved is None:
+            return None
+        path = self._dir / f"{resolved}.json"
         if not path.exists():
             return None
         try:
             return json.loads(path.read_text())
         except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load session %s: %s", session_id, exc)
+            logger.warning("Failed to load session %s: %s", resolved, exc)
             return None
+
+    def _resolve_session_id(self, session_id: str) -> str | None:
+        """Resolve a full ID or unique short prefix to a full session ID.
+
+        - Full 32-hex ID → returned unchanged (even if no file exists).
+        - Short hex prefix (4–31 chars) → scanned against ``self._dir``.
+          Returns the full ID on a single match, ``None`` on zero matches,
+          raises ``AmbiguousSessionID`` on multiple matches.
+        - Anything else (non-hex, too short, path separators) → raises
+          ``ValueError``.
+        """
+        if _SESSION_ID_RE.match(session_id):
+            return session_id
+        if not _SESSION_ID_PREFIX_RE.match(session_id):
+            raise ValueError(f"Invalid session ID: {session_id!r}")
+        if not self._dir.is_dir():
+            return None
+        matches = sorted(
+            p.stem
+            for p in self._dir.glob(f"{session_id}*.json")
+            if _SESSION_ID_RE.match(p.stem)
+        )
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise AmbiguousSessionID(session_id, matches)
+        return matches[0]
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Return a summary list of all saved sessions.

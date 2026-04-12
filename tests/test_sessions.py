@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from natshell.session import SessionManager
+from natshell.session import AmbiguousSessionID, SessionManager
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -230,3 +230,89 @@ class TestSessionSecurity:
         mgr.save(SAMPLE_MESSAGES)
         mode = session_dir.stat().st_mode & 0o777
         assert mode == 0o700
+
+
+# ── Short-prefix loading ──────────────────────────────────────────────
+
+
+class TestShortPrefixLoad:
+    def test_load_by_12_char_prefix(self, mgr: SessionManager) -> None:
+        """The 12-char prefix displayed by /sessions should resolve to the full ID."""
+        sid = mgr.save(SAMPLE_MESSAGES, name="prefix test")
+        data = mgr.load(sid[:12])
+        assert data is not None
+        assert data["id"] == sid
+        assert data["name"] == "prefix test"
+
+    def test_load_by_minimum_prefix(self, mgr: SessionManager) -> None:
+        """A 4-char prefix is the minimum accepted length."""
+        sid = mgr.save(SAMPLE_MESSAGES, session_id="abcd" + "0" * 28)
+        data = mgr.load("abcd")
+        assert data is not None
+        assert data["id"] == sid
+
+    def test_load_too_short_prefix_raises(self, mgr: SessionManager) -> None:
+        """Prefixes shorter than 4 chars are rejected as invalid."""
+        mgr.save(SAMPLE_MESSAGES)
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.load("abc")
+
+    def test_load_nonhex_prefix_raises(self, mgr: SessionManager) -> None:
+        """Non-hex characters in a prefix are rejected."""
+        mgr.save(SAMPLE_MESSAGES)
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.load("xyz1")
+
+    def test_load_prefix_no_match_returns_none(self, mgr: SessionManager) -> None:
+        """Valid prefix that matches nothing on disk returns None, not a crash."""
+        mgr.save(SAMPLE_MESSAGES)
+        assert mgr.load("ffff") is None
+
+    def test_load_ambiguous_prefix_raises(self, mgr: SessionManager) -> None:
+        """When a prefix matches multiple sessions, raise AmbiguousSessionID."""
+        sid1 = mgr.save(SAMPLE_MESSAGES, session_id="abcd1234" + "0" * 24)
+        sid2 = mgr.save(SAMPLE_MESSAGES, session_id="abcd5678" + "0" * 24)
+        with pytest.raises(AmbiguousSessionID) as excinfo:
+            mgr.load("abcd")
+        assert set(excinfo.value.candidates) == {sid1, sid2}
+        assert excinfo.value.prefix == "abcd"
+
+    def test_ambiguous_error_is_valueerror_subclass(
+        self, mgr: SessionManager
+    ) -> None:
+        """AmbiguousSessionID inherits from ValueError for backwards compat."""
+        mgr.save(SAMPLE_MESSAGES, session_id="abcd1234" + "0" * 24)
+        mgr.save(SAMPLE_MESSAGES, session_id="abcd5678" + "0" * 24)
+        with pytest.raises(ValueError):
+            mgr.load("abcd")
+
+    def test_load_full_id_does_not_scan(self, mgr: SessionManager) -> None:
+        """Full 32-hex IDs take the fast path and skip prefix resolution.
+
+        A valid-format ID with no matching file should return None, not
+        attempt to glob-match the directory.
+        """
+        mgr.save(SAMPLE_MESSAGES)
+        assert mgr.load("0" * 32) is None
+
+    def test_load_ignores_non_session_files_in_dir(
+        self, mgr: SessionManager, session_dir: Path
+    ) -> None:
+        """A stray file named `abcd_notes.json` must not satisfy an `abcd` lookup."""
+        sid = mgr.save(SAMPLE_MESSAGES, session_id="abcd" + "0" * 28)
+        # Drop a stray file with a matching prefix but non-hex stem
+        stray = session_dir / "abcd_notes.json"
+        stray.write_text('{"not": "a session"}')
+        data = mgr.load("abcd")
+        assert data is not None
+        assert data["id"] == sid
+
+    def test_save_still_requires_full_id(self, mgr: SessionManager) -> None:
+        """save() and delete() remain strict — no prefix-matching for writes."""
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.save(SAMPLE_MESSAGES, session_id="abcd")
+
+    def test_delete_still_requires_full_id(self, mgr: SessionManager) -> None:
+        mgr.save(SAMPLE_MESSAGES, session_id="abcd" + "0" * 28)
+        with pytest.raises(ValueError, match="Invalid session ID"):
+            mgr.delete("abcd")

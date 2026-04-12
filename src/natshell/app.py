@@ -53,7 +53,7 @@ from natshell.model_manager import (
     set_default_model,
 )
 from natshell.safety.classifier import Risk
-from natshell.session import SessionManager
+from natshell.session import AmbiguousSessionID, SessionManager
 from natshell.tools.execute_shell import (
     _has_sudo_invocation,
     execute_shell,
@@ -1408,7 +1408,30 @@ class NatShellApp(App):
             self._handle_sessions(conversation)
             return
 
-        data = self._session_mgr.load(session_id)
+        try:
+            data = self._session_mgr.load(session_id)
+        except AmbiguousSessionID as exc:
+            shown = ", ".join(c[:12] for c in exc.candidates[:5])
+            if len(exc.candidates) > 5:
+                shown += ", …"
+            conversation.mount(
+                SystemMessage(
+                    f"Ambiguous session ID: [bold]{_escape(session_id)}[/]\n"
+                    f"Matches {len(exc.candidates)}: {_escape(shown)}\n"
+                    "Use more characters to disambiguate."
+                )
+            )
+            return
+        except ValueError:
+            conversation.mount(
+                SystemMessage(
+                    f"Invalid session ID: [bold]{_escape(session_id)}[/]\n"
+                    "Expected lowercase hex (at least 4 chars). "
+                    "Run /sessions to see valid IDs."
+                )
+            )
+            return
+
         if data is None:
             conversation.mount(
                 SystemMessage(f"Session not found: {_escape(session_id)}")
@@ -1442,7 +1465,10 @@ class NatShellApp(App):
                 f"{_escape(name)}  "
                 f"[dim]({msg_count} msgs, {updated})[/]"
             )
-        lines.append("\n[dim]Use /load <id> to restore a session.[/]")
+        lines.append(
+            "\n[dim]Use /load <id> to restore — the 12-char prefix shown "
+            "above is enough.[/]"
+        )
         conversation.mount(SystemMessage("\n".join(lines)))
 
     def on_mouse_up(self, event: MouseUp) -> None:
