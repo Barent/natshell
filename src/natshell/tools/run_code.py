@@ -34,6 +34,25 @@ _COMPILERS: dict[str, tuple[str, str, list[str]]] = {
 
 # Special cases handled inline: go ("go run")
 
+# Common aliases — models often say "python3" or "js" instead of the canonical
+# name. Normalize before lookup so these don't error out.
+_LANGUAGE_ALIASES: dict[str, str] = {
+    "python3": "python",
+    "python2": "python",
+    "py": "python",
+    "js": "javascript",
+    "node": "javascript",
+    "nodejs": "javascript",
+    "sh": "bash",
+    "shell": "bash",
+    "rb": "ruby",
+    "pl": "perl",
+    "c++": "cpp",
+    "cxx": "cpp",
+    "rs": "rust",
+    "golang": "go",
+}
+
 DEFINITION = ToolDefinition(
     name="run_code",
     description=(
@@ -77,6 +96,8 @@ def _filtered_env() -> dict[str, str]:
 async def run_code(language: str, code: str, timeout: int = 30) -> ToolResult:
     """Execute a code snippet and return structured results."""
     language = language.lower().strip()
+    # Resolve common aliases (python3 → python, js → javascript, etc.)
+    language = _LANGUAGE_ALIASES.get(language, language)
     timeout = max(1, min(timeout, 300))
 
     # Check if language is supported
@@ -87,7 +108,13 @@ async def run_code(language: str, code: str, timeout: int = 30) -> ToolResult:
     if not (is_interpreted or is_compiled or is_go):
         supported = sorted(list(_INTERPRETERS.keys()) + list(_COMPILERS.keys()) + ["go"])
         return ToolResult(
-            error=f"Unsupported language: {language}. Supported: {', '.join(supported)}",
+            error=(
+                f"Unsupported language: {language}. "
+                f"Supported: {', '.join(supported)}. "
+                "For other languages, use execute_shell to invoke the "
+                "interpreter directly (e.g. `lua script.lua`, `Rscript "
+                "script.R`, `swift script.swift`)."
+            ),
             exit_code=1,
         )
 

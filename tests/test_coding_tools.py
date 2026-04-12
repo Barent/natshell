@@ -380,6 +380,22 @@ class TestRunCode:
         result = await run_code("brainfuck", "++++++++++.")
         assert result.exit_code == 1
         assert "unsupported language" in result.error.lower()
+        # Error should point the model at execute_shell as a fallback.
+        assert "execute_shell" in result.error
+
+    async def test_python3_alias(self):
+        """`python3` should map to python rather than erroring."""
+        result = await run_code("python3", "print('py3 alias works')")
+        assert result.exit_code == 0
+        assert "py3 alias works" in result.output
+
+    async def test_js_alias(self):
+        """`js` and `node` should map to javascript."""
+        from natshell.tools.run_code import _LANGUAGE_ALIASES
+
+        assert _LANGUAGE_ALIASES["js"] == "javascript"
+        assert _LANGUAGE_ALIASES["node"] == "javascript"
+        assert _LANGUAGE_ALIASES["nodejs"] == "javascript"
 
     async def test_language_case_insensitive(self):
         result = await run_code("Python", "print('case test')")
