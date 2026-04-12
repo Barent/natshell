@@ -35,7 +35,6 @@ SMALL_CONTEXT_TOOLS: set[str] = {
     "edit_file",
     "list_directory",
     "kiwix_search",
-    "recall_memory",
 }
 
 
@@ -208,8 +207,6 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.natshell_help import natshell_help
     from natshell.tools.read_file import DEFINITION as READ_DEF
     from natshell.tools.read_file import read_file
-    from natshell.tools.recall_memory import DEFINITION as RECALL_DEF
-    from natshell.tools.recall_memory import recall_memory
     from natshell.tools.run_code import DEFINITION as RUN_CODE_DEF
     from natshell.tools.run_code import run_code
     from natshell.tools.search_files import DEFINITION as SEARCH_DEF
@@ -232,5 +229,4 @@ def create_default_registry() -> ToolRegistry:
     registry.register(FETCH_URL_DEF, fetch_url)
     registry.register(CONFIG_DEF, update_config)
     registry.register(KIWIX_DEF, kiwix_search)
-    registry.register(RECALL_DEF, recall_memory)
     return registry

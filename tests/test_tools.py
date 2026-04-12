@@ -414,7 +414,7 @@ class TestRegistry:
     def test_get_tool_schemas(self):
         registry = create_default_registry()
         schemas = registry.get_tool_schemas()
-        assert len(schemas) == 13
+        assert len(schemas) == 12
         for schema in schemas:
             assert schema["type"] == "function"
             assert "function" in schema
@@ -581,4 +581,4 @@ class TestToolSchemaFiltering:
         schemas = registry.get_tool_schemas(allowed=SMALL_CONTEXT_TOOLS)
         names = {s["function"]["name"] for s in schemas}
         assert names == SMALL_CONTEXT_TOOLS
-        assert len(schemas) == 7
+        assert len(schemas) == 6

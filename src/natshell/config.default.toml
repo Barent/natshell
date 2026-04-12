@@ -139,25 +139,23 @@ max_per_file = 10
 # Theme: "dark" or "light"
 theme = "dark"
 
-# ─── Retrieval-Augmented Compaction (memory_store) ──────────────────
-# Content-addressed SQLite chunk store that preserves full detail of
-# messages dropped during /compact or automatic compaction. The short
-# summary that replaces dropped messages contains [mem:<hash>]
-# references, and the agent can call the recall_memory tool to fetch
-# full content on demand. Unrelated to the agents.md working-memory
-# feature above.
+# ─── Retrieval-Augmented Compaction (plain-file chunks) ─────────────
+# Dropped messages are written to plain .txt files under
+# ~/.local/share/natshell/memory/<session_id>/ during /compact or
+# automatic compaction. The summary replaces them with the resolved
+# absolute paths, and the agent retrieves full content on demand using
+# the existing read_file tool (or search_files for keyword lookup). No
+# new tool is registered; no SQLite; no dependencies. Unrelated to the
+# agents.md working-memory feature above.
 [memory_store]
-# Enable the store and the recall_memory tool. When false, compaction
-# falls back to the classic extractive text summary.
+# When false, compaction falls back to the classic extractive summary.
 enabled = true
-# Hard cap on total chunk content size (megabytes). LRU eviction runs
-# when this is exceeded.
-max_size_mb = 50
-# Chunks older than this are garbage-collected.
+# Chunks older than this many days are garbage-collected on the first
+# compaction of each process.
 max_age_days = 30
-# Per-chunk byte cap. Oversize content is stored as head+tail with an
-# elision marker.
-chunk_max_bytes = 65536
+# Informational cap for user awareness — actual disk usage depends on
+# how often /compact fires and how chatty tool output is.
+max_size_mb = 50
 
 # ─── System Prompt Customization ─────────────────────────────────────
 # Customize the LLM's system prompt. Core safety rules are always

@@ -1420,18 +1420,10 @@ class NatShellApp(App):
             return
 
         self.agent.messages = data["messages"]
-        # Reattach the loaded session to the agent so any [mem:<hash>]
-        # references in the saved messages can still resolve via
-        # recall_memory against the same chunk_sessions rows.
+        # Reattach the loaded session id so any compaction chunk paths in
+        # the saved messages still point at the same on-disk files under
+        # ~/.local/share/natshell/memory/<session_id>/.
         self.agent.session_id = data.get("id", session_id)
-        try:
-            from natshell.tools import recall_memory as _recall_mod
-
-            _recall_mod.configure(
-                self.agent.memory_store, self.agent.session_id
-            )
-        except Exception:  # pragma: no cover - defensive
-            pass
         name = data.get("name", session_id)
         msg_count = len(data["messages"])
         conversation.mount(

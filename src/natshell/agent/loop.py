@@ -13,9 +13,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from natshell.agent import memory_files
 from natshell.agent.context import SystemContext
 from natshell.agent.context_manager import ContextManager
-from natshell.agent.memory_store import MemoryStore
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import (
     AgentConfig,
@@ -144,34 +144,17 @@ class AgentLoop:
         self._prompt_config = prompt_config
         self._memory_config = memory_config or MemoryConfig()
         self._memory_store_config = memory_store_config or MemoryStoreConfig()
-        # Per-process session id used to scope chunk_sessions rows. The /save
-        # slash command can rebind this to the persisted session uuid later.
+        # Per-process session id used to scope per-session chunk directories
+        # at ``~/.local/share/natshell/memory/<session_id>/``. The /save
+        # slash command can rebind this to the persisted session uuid later
+        # so /load reconnects transparently.
         import uuid as _uuid
 
         self.session_id: str = _uuid.uuid4().hex
-        self.memory_store: MemoryStore | None = None
-        if self._memory_store_config.enabled:
-            try:
-                self.memory_store = MemoryStore(
-                    max_size_bytes=self._memory_store_config.max_size_mb * 1024 * 1024,
-                    max_age_days=self._memory_store_config.max_age_days,
-                    chunk_max_bytes=self._memory_store_config.chunk_max_bytes,
-                )
-                if not self.memory_store.healthy:
-                    self.memory_store = None
-            except Exception as exc:
-                logger.warning("MemoryStore disabled: %s", exc)
-                self.memory_store = None
-        # Inject the store + session id into the recall_memory tool so that
-        # the registry-driven dispatch can resolve them without explicit
-        # context plumbing.  When the store is disabled the tool reports a
-        # clear error from its handler.
-        try:
-            from natshell.tools import recall_memory as _recall_mod
-
-            _recall_mod.configure(self.memory_store, self.session_id)
-        except Exception:  # pragma: no cover - defensive only
-            pass
+        # Feature flag: when the user disables [memory_store], compaction
+        # falls back to the legacy extractive summary.
+        self._memory_files_enabled: bool = self._memory_store_config.enabled
+        self._pruned_this_process: bool = False
         self._system_context: SystemContext | None = None
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
@@ -235,6 +218,7 @@ class AgentLoop:
             working_memory=working_memory,
             memory_path=memory_path_str,
             max_memory_chars=effective_chars,
+            memory_chunk_dir=self._memory_chunk_dir_for_prompt(),
         )
         self.messages = [{"role": "system", "content": system_prompt}]
         self._setup_context_manager()
@@ -276,9 +260,20 @@ class AgentLoop:
             working_memory=content,
             memory_path=mem_path,
             max_memory_chars=effective_chars,
+            memory_chunk_dir=self._memory_chunk_dir_for_prompt(),
         )
         self.messages[0] = {"role": "system", "content": system_prompt}
         return content
+
+    def _memory_chunk_dir_for_prompt(self) -> str:
+        """Return the session chunk dir as a str, or '' when disabled.
+
+        Used by ``build_system_prompt`` to emit the compaction-memory
+        behavior rule only when the feature is actually on.
+        """
+        if not self._memory_files_enabled or not memory_files.healthy():
+            return ""
+        return str(memory_files.session_memory_dir(self.session_id))
 
     async def swap_engine(self, new_engine: InferenceEngine) -> None:
         """Replace the inference engine at runtime. Clears conversation history."""
@@ -1479,19 +1474,26 @@ class AgentLoop:
                 break
 
     def _auto_rehydrate(
-        self, last_2: list[dict[str, Any]], hashes: list[str]
-    ) -> list[str]:
-        """Heuristic: inline chunks whose stored args reference filenames
-        appearing in the most recent user message.
+        self,
+        last_2: list[dict[str, Any]],
+        dropped: list[dict[str, Any]],
+        paths: list[Any],
+    ) -> list[tuple[str, str]]:
+        """Heuristic: inline chunks whose source tool-call args reference
+        filenames appearing in the most recent user message.
 
-        Smaller models won't always call ``recall_memory`` spontaneously, so
-        when the user's next question mentions a filename we just stored,
-        bring that chunk's content back into the prompt directly.
+        Smaller models won't always call ``read_file`` on a path from the
+        summary spontaneously — so when the user's next question mentions
+        a filename we just captured, bring that chunk's content back into
+        the prompt directly.
 
-        Returns the (deduped) list of short hashes that should be inlined.
-        Capped at 2 to keep the rehydrated payload bounded.
+        ``dropped`` and ``paths`` are walked in parallel: each chunk file
+        in ``paths`` corresponds to one tool-result in the dropped list
+        (in order, pair-aware).  Returns a list of ``(label, content)``
+        tuples suitable for splicing into the summary.  Capped at 2 to
+        keep the rehydrated payload bounded.
         """
-        if not last_2 or not hashes or self.memory_store is None:
+        if not last_2 or not paths:
             return []
         # Find the most recent user message in the kept window.
         user_text = ""
@@ -1502,20 +1504,24 @@ class AgentLoop:
         if not user_text or len(user_text) < 3:
             return []
 
-        rehydrated: list[str] = []
-        for sh in hashes:
-            if len(rehydrated) >= 2:
-                break
-            row = self.memory_store.get(sh, session_id=self.session_id)
-            if row is None:
-                continue
-            args_json = row.get("args_json") or ""
-            file_path = row.get("file_path") or ""
-            # Try filename from args_json (read_file/write_file/edit_file path)
-            candidates: list[str] = []
-            if args_json:
+        # Walk dropped messages and build a parallel list of
+        # (candidate_filenames, tool_name) for each chunk that got written.
+        chunk_meta: list[tuple[list[str], str]] = []
+        i = 0
+        while i < len(dropped):
+            msg = dropped[i]
+            tool_calls = msg.get("tool_calls") or []
+            if (
+                tool_calls
+                and i + 1 < len(dropped)
+                and dropped[i + 1].get("role") == "tool"
+            ):
+                func = tool_calls[0].get("function", {})
+                name = func.get("name", "")
+                args_str = func.get("arguments", "") or ""
+                candidates: list[str] = []
                 try:
-                    args = json.loads(args_json)
+                    args = json.loads(args_str)
                     if isinstance(args, dict):
                         for key in ("path", "filename", "file"):
                             v = args.get(key)
@@ -1523,28 +1529,56 @@ class AgentLoop:
                                 candidates.append(v)
                 except (json.JSONDecodeError, TypeError):
                     pass
-            if file_path:
-                candidates.append(file_path)
+                chunk_meta.append((candidates, name))
+                i += 2
+                continue
+            if msg.get("role") == "user" and len((msg.get("content") or "")) > 100:
+                chunk_meta.append(([], "user_message"))
+            elif msg.get("role") == "assistant" and (msg.get("content") or "").strip():
+                chunk_meta.append(([], "assistant_text"))
+            elif msg.get("role") == "tool":
+                chunk_meta.append(([], "tool_result"))
+            i += 1
 
+        # Pair the metadata list with the paths list.  They may drift if
+        # a write failed for any single chunk, so iterate the shorter.
+        limit = min(len(chunk_meta), len(paths))
+        rehydrated: list[tuple[str, str]] = []
+        for idx in range(limit):
+            if len(rehydrated) >= 2:
+                break
+            candidates, tool_name = chunk_meta[idx]
+            path = paths[idx]
+            matched = False
             for cand in candidates:
                 cand_lower = cand.lower()
                 base = cand_lower.rsplit("/", 1)[-1]
                 if (cand_lower and cand_lower in user_text) or (
                     base and len(base) >= 3 and base in user_text
                 ):
-                    if sh not in rehydrated:
-                        rehydrated.append(sh)
+                    matched = True
                     break
+            if not matched:
+                continue
+            try:
+                content = Path(str(path)).read_text(errors="replace")[:2000]
+            except OSError:
+                continue
+            label = f"{tool_name} → {path}"
+            rehydrated.append((label, content))
         return rehydrated
 
     def compact_history(self, dry_run: bool = False) -> dict[str, Any]:
         """Compact conversation history, keeping system prompt and last 2 messages.
 
-        When ``self.memory_store`` is healthy, dropped messages are written
-        verbatim to the chunk store and the summary contains short
-        ``[mem:<hash>]`` references the agent can resolve via the
-        ``recall_memory`` tool.  On any failure the path falls back to the
-        legacy extractive summary so the agent loop is never broken.
+        When ``memory_files`` is healthy, dropped messages are written
+        verbatim to plain ``.txt`` files under
+        ``~/.local/share/natshell/memory/<session_id>/`` and the summary
+        emits the resolved absolute paths.  The agent can then call the
+        existing ``read_file`` tool on those paths to retrieve full
+        content on demand — no new tool needed.  On any failure the path
+        falls back to the legacy extractive summary so the agent loop is
+        never broken.
 
         Args:
             dry_run: If True, compute and return stats without mutating messages.
@@ -1566,40 +1600,58 @@ class AgentLoop:
         dropped = rest[:-2]
 
         # Build the summary — prefer the retrieval-augmented path when
-        # the chunk store is healthy.  Failures here always fall through
-        # to the legacy extractive summary.
+        # memory_files is healthy.  Failures always fall through to the
+        # legacy extractive summary.
         summary = ""
         chunks_stored = 0
         bytes_stored = 0
         used_refs = False
-        rehydrated_hashes: list[str] = []
-        store = self.memory_store
-        if cm and dropped and store is not None and store.healthy and not dry_run:
-            try:
-                summary, hashes = cm.build_summary_with_refs(
-                    dropped, store.put, self.session_id
-                )
-                if hashes:
-                    used_refs = True
-                    chunks_stored = len(hashes)
-                    # Sum bytes of stored chunks for stats display.
-                    for sh in hashes:
-                        row = store.get(sh, session_id=self.session_id)
-                        if row:
-                            bytes_stored += int(row.get("size_bytes") or 0)
+        stored_paths: list[Any] = []
+        rehydrated: list[tuple[str, str]] = []
 
-                    # Auto-rehydration heuristic: if the most recent user
-                    # message references content we just stored (e.g. mentions
-                    # a filename or a unique substring), inline that chunk
-                    # directly so smaller models that won't spontaneously
-                    # call recall_memory still get the detail they need.
-                    rehydrated_hashes = self._auto_rehydrate(last_2, hashes)
+        files_enabled = (
+            self._memory_files_enabled
+            and memory_files.healthy()
+            and not dry_run
+        )
+        if cm and dropped and files_enabled:
+            try:
+                summary, stored_paths = cm.build_summary_with_refs(
+                    dropped, memory_files.write_chunk, self.session_id
+                )
+                if stored_paths:
+                    used_refs = True
+                    chunks_stored = len(stored_paths)
+                    for path in stored_paths:
+                        try:
+                            bytes_stored += Path(str(path)).stat().st_size
+                        except OSError:
+                            pass
+
+                    # Auto-rehydration heuristic: inline chunks whose
+                    # source tool-call path matches the most recent user
+                    # message, for small-model ergonomics.
+                    rehydrated = self._auto_rehydrate(
+                        last_2, dropped, stored_paths
+                    )
+
+                # Lazy GC at most once per process lifetime.
+                if not self._pruned_this_process:
+                    self._pruned_this_process = True
+                    try:
+                        memory_files.prune_old(
+                            self._memory_store_config.max_age_days
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        pass
             except Exception as exc:
                 logger.warning(
                     "build_summary_with_refs failed, falling back: %s", exc
                 )
                 summary = ""
                 used_refs = False
+                stored_paths = []
+                rehydrated = []
 
         if not summary and cm and dropped:
             summary = cm.build_summary(dropped)
@@ -1610,19 +1662,12 @@ class AgentLoop:
             f"[Context compacted: {len(dropped)} messages replaced with summary.",
             summary,
         ]
-        if rehydrated_hashes and store is not None:
+        if rehydrated:
             summary_content_parts.append(
                 "\nAuto-rehydrated chunks (most recent user message referenced these):"
             )
-            for sh in rehydrated_hashes:
-                row = store.get(sh, session_id=self.session_id)
-                if row is None:
-                    continue
-                tool_name = row.get("tool_name") or row.get("kind") or ""
-                content = (row.get("content") or "")[:2000]
-                summary_content_parts.append(
-                    f"--- [mem:{sh[:12]}] {tool_name} ---\n{content}"
-                )
+            for label, content in rehydrated:
+                summary_content_parts.append(f"--- {label} ---\n{content}")
         summary_content_parts.append("Recent context follows.]")
         summary_msg: dict[str, Any] = {
             "role": "system",

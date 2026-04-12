@@ -17,9 +17,10 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# Per-ref token cap (rough cap on the inline ref string emitted in the
-# summary). 30 tokens ≈ 120 chars at the BPE 4-char fallback.
-_REF_MAX_CHARS = 120
+# Per-ref char cap for the inline ref line emitted in the summary.
+# Paths add ~60-100 chars, so the cap is generous enough to keep the
+# full absolute path visible without truncating the middle of it.
+_REF_MAX_CHARS = 260
 
 # Minimum number of recent messages (after system prompt) to always preserve.
 # This keeps at least 3 user/assistant exchanges in context.
@@ -274,35 +275,34 @@ class ContextManager:
         return summary
 
     # ------------------------------------------------------------------
-    # Retrieval-augmented summary with `[mem:<hash>]` references
+    # Retrieval-augmented summary with plain-file chunk references
     # ------------------------------------------------------------------
 
     def build_summary_with_refs(
         self,
         dropped_messages: list[dict[str, Any]],
-        put_fn: Callable[..., str | None],
+        write_fn: Callable[[str, str], Any],
         session_id: str,
-    ) -> tuple[str, list[str]]:
-        """Build a summary that stores full content in a chunk store and
-        emits short ``[mem:<hash>]`` references in place of bulky tool
-        results.
+    ) -> tuple[str, list[Any]]:
+        """Build a summary that writes bulky tool results to plain files and
+        emits their absolute paths in place of the content.
 
-        ``put_fn`` must accept the same kwargs as
-        ``MemoryStore.put`` (``role``, ``content``, ``session_id``,
-        ``tool_name``, ``args_json``) and return the full content hash or
-        ``None`` on failure.  Dependency injection lets ContextManager stay
-        testable without an actual SQLite store.
+        ``write_fn`` has the signature ``(session_id, content) -> Path | None``
+        matching ``natshell.agent.memory_files.write_chunk``.  Dependency
+        injection lets ContextManager stay testable without touching disk:
+        pass any callable returning a Path-like or None.
 
-        Returns ``(summary_text, list_of_short_hashes)``.
+        Returns ``(summary_text, list_of_paths)``.  Paths are whatever
+        ``write_fn`` returned (typically ``pathlib.Path``).
 
         Pair-aware: assistant ``tool_calls`` messages are processed
-        together with their following ``role="tool"`` result so the ref is
+        together with their following ``role="tool"`` result so the path is
         attributed to the originating tool call, not the bare result.
         """
         files_changed: list[str] = []
         ref_lines: list[str] = []
         plain_lines: list[str] = []
-        emitted_short_hashes: list[str] = []
+        stored_paths: list[Any] = []
 
         i = 0
         while i < len(dropped_messages):
@@ -314,23 +314,15 @@ class ContextManager:
                 if content:
                     snippet = content[:100]
                     plain_lines.append(f"User asked: {snippet}")
-                # Optionally store the full user message too — this is cheap
-                # and means recall_memory can fetch the original verbatim
-                # for long queries truncated in the summary.
+                # Long user messages also get captured to disk so the
+                # agent can re-read them verbatim if needed.
                 if len(content) > 100:
-                    full_hash = put_fn(
-                        role="user",
-                        content=content,
-                        session_id=session_id,
-                        tool_name="",
-                        kind="user_message",
-                    )
-                    if full_hash:
-                        sh = full_hash[:12]
-                        emitted_short_hashes.append(sh)
+                    path = write_fn(session_id, content)
+                    if path is not None:
+                        stored_paths.append(path)
                         ref_lines.append(
                             self._cap_ref(
-                                f"[mem:{sh}] user_message ({len(content)} chars)"
+                                f"user_message ({len(content)} chars) → {path}"
                             )
                         )
                 i += 1
@@ -354,38 +346,31 @@ class ContextManager:
                 # Track file changes for the legacy section.
                 if name in ("write_file", "edit_file"):
                     try:
-                        path = json.loads(args_str).get("path", "")
-                        if path:
+                        path_str = json.loads(args_str).get("path", "")
+                        if path_str:
                             action = "created" if name == "write_file" else "edited"
-                            entry = f"{action}: {path}"
+                            entry = f"{action}: {path_str}"
                             if entry not in files_changed:
                                 files_changed.append(entry)
                     except (json.JSONDecodeError, AttributeError):
                         pass
 
-                # Store the tool result (the bulky one) and emit a ref.
-                full_hash = put_fn(
-                    role="tool",
-                    content=result_content,
-                    session_id=session_id,
-                    tool_name=name,
-                    kind="tool_result",
-                    args_json=args_str,
-                )
-                if full_hash:
-                    sh = full_hash[:12]
-                    emitted_short_hashes.append(sh)
+                # Write the bulky tool result to a plain file and emit
+                # its absolute path.
+                path = write_fn(session_id, result_content)
+                if path is not None:
+                    stored_paths.append(path)
                     preview = self._tool_call_preview(name, args_str)
                     n_lines = result_content.count("\n") + (1 if result_content else 0)
                     exit_code = self._extract_exit_code(result_content)
                     suffix = f" exit={exit_code}" if exit_code is not None else ""
                     ref_lines.append(
                         self._cap_ref(
-                            f"[mem:{sh}] {name} {preview}{suffix} {n_lines}L"
+                            f"{name} {preview}{suffix} {n_lines}L → {path}"
                         )
                     )
                 else:
-                    # Fall back to a plain action line if storage failed.
+                    # Fall back to a plain action line if the write failed.
                     plain_lines.append(f"Called: {name}")
                 i += 2
                 continue
@@ -402,39 +387,26 @@ class ContextManager:
             if role == "tool":
                 # Orphan tool result (no preceding assistant message).
                 content = msg.get("content") or ""
-                full_hash = put_fn(
-                    role="tool",
-                    content=content,
-                    session_id=session_id,
-                    tool_name="",
-                    kind="tool_result",
-                )
-                if full_hash:
-                    sh = full_hash[:12]
-                    emitted_short_hashes.append(sh)
+                path = write_fn(session_id, content)
+                if path is not None:
+                    stored_paths.append(path)
                     n_lines = content.count("\n") + (1 if content else 0)
                     ref_lines.append(
-                        self._cap_ref(f"[mem:{sh}] tool_result {n_lines}L")
+                        self._cap_ref(f"tool_result {n_lines}L → {path}")
                     )
                 i += 1
                 continue
 
-            # assistant text content (model reasoning) — store and reference.
+            # assistant text content (model reasoning) — store + reference.
             if role == "assistant":
                 content = msg.get("content") or ""
                 if content.strip():
-                    full_hash = put_fn(
-                        role="assistant",
-                        content=content,
-                        session_id=session_id,
-                        kind="assistant_text",
-                    )
-                    if full_hash:
-                        sh = full_hash[:12]
-                        emitted_short_hashes.append(sh)
+                    path = write_fn(session_id, content)
+                    if path is not None:
+                        stored_paths.append(path)
                         ref_lines.append(
                             self._cap_ref(
-                                f"[mem:{sh}] assistant ({len(content)} chars)"
+                                f"assistant_text ({len(content)} chars) → {path}"
                             )
                         )
             i += 1
@@ -445,20 +417,23 @@ class ContextManager:
                 "Files changed:\n" + "\n".join(f"- {f}" for f in files_changed)
             )
         if ref_lines:
-            parts.append("Stored chunks:\n" + "\n".join(f"- {r}" for r in ref_lines))
+            parts.append(
+                "Stored chunks (use read_file on the paths to recall):\n"
+                + "\n".join(f"- {r}" for r in ref_lines)
+            )
         if plain_lines:
             parts.append(
                 "Notes:\n" + "\n".join(f"- {p}" for p in plain_lines[:8])
             )
-        if len(emitted_short_hashes) > 3:
+        if len(stored_paths) > 3:
             parts.append(
-                "To inspect any [mem:<hash>] reference, call "
-                'recall_memory(hash="<hash>") or '
-                'recall_memory(query="<keywords>").'
+                "To inspect any chunk above, call read_file(path=<path>). "
+                "To search across all chunks, call "
+                "search_files(path=<session memory dir>, pattern=<keyword>)."
             )
 
         summary = "\n".join(parts)
-        return summary, emitted_short_hashes
+        return summary, stored_paths
 
     @staticmethod
     def _cap_ref(line: str) -> str:

@@ -98,19 +98,21 @@ class MemoryConfig:
 
 @dataclass
 class MemoryStoreConfig:
-    """Configuration for retrieval-augmented compaction (memory_store).
+    """Configuration for retrieval-augmented compaction (plain-file chunks).
 
     This is a distinct feature from ``MemoryConfig`` above, which controls
     injection of an agents.md working-memory scratchpad.  ``MemoryStoreConfig``
-    controls the content-addressed SQLite chunk store that preserves full
+    controls the plain-file chunk memory under
+    ``~/.local/share/natshell/memory/<session_id>/`` that preserves full
     detail of messages dropped during ``/compact`` or automatic compaction.
-    When disabled, compaction falls back to the legacy extractive summary.
+    The agent retrieves chunks using the existing ``read_file`` and
+    ``search_files`` tools — no dedicated tool is registered.  When
+    disabled, compaction falls back to the legacy extractive summary.
     """
 
     enabled: bool = True
     max_size_mb: int = 50
     max_age_days: int = 30
-    chunk_max_bytes: int = 65536
 
 
 @dataclass
@@ -219,7 +221,6 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
         "enabled": "bool",
         "max_size_mb": "int",
         "max_age_days": "int",
-        "chunk_max_bytes": "int",
     },
 }
 

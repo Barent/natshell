@@ -78,7 +78,7 @@ def compact_chat(agent: AgentLoop, conversation: ScrollableContainer) -> None:
         kb = bytes_stored / 1024
         summary_lines.append(
             f"  Chunks:   {chunks_stored} stored (~{kb:.1f} KB) — "
-            f"agent can use [bold cyan]recall_memory[/] to retrieve"
+            f"agent can use [bold cyan]read_file[/] on the paths to retrieve"
         )
     if stats["summary"]:
         summary_lines.append(f"\n[dim]Preserved facts:[/]\n{_escape(stats['summary'])}")

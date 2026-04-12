@@ -341,25 +341,33 @@ class TestCalibrateFromActual:
 
 
 # ---------------------------------------------------------------------------
-# build_summary_with_refs (retrieval-augmented compaction)
+# build_summary_with_refs (retrieval-augmented compaction via plain files)
 # ---------------------------------------------------------------------------
 
 
-class _FakeStore:
-    """Lightweight stand-in for MemoryStore.put() in unit tests."""
+class _FakeWriter:
+    """Lightweight stand-in for memory_files.write_chunk() in unit tests.
+
+    Records every (session_id, content) call and returns a deterministic
+    fake path per call.  When ``fail`` is set, returns None so the
+    summary builder's fallback paths are exercised.
+    """
 
     def __init__(self) -> None:
-        self.calls: list[dict] = []
+        self.calls: list[tuple[str, str]] = []
         self._counter = 0
         self.fail = False
 
-    def put(self, **kwargs) -> str | None:
+    def __call__(self, session_id: str, content: str):
         if self.fail:
             return None
         self._counter += 1
-        self.calls.append(kwargs)
-        # Deterministic 64-char hex hash so tests can assert prefixes
-        return f"{self._counter:064x}"
+        self.calls.append((session_id, content))
+        from pathlib import PurePosixPath
+
+        return PurePosixPath(
+            f"/tmp/memtest/{session_id}/chunk{self._counter:04d}.txt"
+        )
 
 
 class TestBuildSummaryWithRefs:
@@ -374,117 +382,116 @@ class TestBuildSummaryWithRefs:
         legacy = cm.build_summary(msgs)
         assert "Ran: ls" in legacy or "ls" in legacy
 
-    def test_tool_pair_emits_single_ref(self):
+    def test_tool_pair_emits_single_path(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         msgs = [
             _tool_call_msg("execute_shell", {"command": "nmap -sV 10.0.0.0/24"}),
             _tool_result("Exit code: 0\nfound 5 hosts"),
         ]
-        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert len(hashes) == 1
-        assert "[mem:" in text
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert len(paths) == 1
+        assert ".txt" in text
         assert "execute_shell" in text
         assert "exit=0" in text
-        # Only the bulky tool result should be stored — not the assistant stub.
-        assert len(store.calls) == 1
-        assert store.calls[0]["role"] == "tool"
-        assert "found 5 hosts" in store.calls[0]["content"]
-        assert store.calls[0]["tool_name"] == "execute_shell"
+        # Only the bulky tool result should be stored, not the assistant stub.
+        assert len(writer.calls) == 1
+        assert writer.calls[0][0] == "sess1"
+        assert "found 5 hosts" in writer.calls[0][1]
 
     def test_pair_aware_iteration_handles_consecutive_pairs(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         msgs = [
             _tool_call_msg("read_file", {"path": "/a"}, tc_id="tc1"),
             _tool_result("contents of a", tc_id="tc1"),
             _tool_call_msg("read_file", {"path": "/b"}, tc_id="tc2"),
             _tool_result("contents of b", tc_id="tc2"),
         ]
-        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert len(hashes) == 2
-        assert text.count("[mem:") == 2
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert len(paths) == 2
+        assert text.count(".txt") == 2
         # Each tool call's result is stored once.
-        assert len(store.calls) == 2
+        assert len(writer.calls) == 2
 
     def test_files_changed_section_preserved(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         msgs = [
             _tool_call_msg("write_file", {"path": "/tmp/foo.py"}),
             _tool_result("File written"),
         ]
-        text, _ = cm.build_summary_with_refs(msgs, store.put, "sess1")
+        text, _ = cm.build_summary_with_refs(msgs, writer, "sess1")
         assert "Files changed:" in text
         assert "created: /tmp/foo.py" in text
 
     def test_user_message_short_no_ref(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         msgs = [_user("short question")]
-        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert hashes == []
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert paths == []
         assert "User asked: short question" in text
-        assert len(store.calls) == 0
+        assert len(writer.calls) == 0
 
     def test_user_message_long_gets_ref(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         long_q = "x" * 500
         msgs = [_user(long_q)]
-        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert len(hashes) == 1
-        assert "[mem:" in text
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert len(paths) == 1
+        assert ".txt" in text
         assert "user_message" in text
 
     def test_inspection_hint_when_many_refs(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         msgs = []
         for i in range(4):
-            msgs.append(_tool_call_msg("execute_shell", {"command": f"cmd{i}"}, tc_id=f"t{i}"))
+            msgs.append(
+                _tool_call_msg("execute_shell", {"command": f"cmd{i}"}, tc_id=f"t{i}")
+            )
             msgs.append(_tool_result(f"output{i}", tc_id=f"t{i}"))
-        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert len(hashes) == 4
-        assert "recall_memory" in text
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert len(paths) == 4
+        assert "read_file" in text
+        assert "search_files" in text
 
     def test_inspection_hint_absent_when_few_refs(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         msgs = [
             _tool_call_msg("execute_shell", {"command": "ls"}),
             _tool_result("a\nb\nc"),
         ]
-        text, _ = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert "recall_memory" not in text
+        text, _ = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert "search_files" not in text
 
-    def test_store_failure_falls_back_to_plain_action(self):
+    def test_write_failure_falls_back_to_plain_action(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
-        store.fail = True
+        writer = _FakeWriter()
+        writer.fail = True
         msgs = [
             _tool_call_msg("execute_shell", {"command": "ls"}),
             _tool_result("output"),
         ]
-        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert hashes == []
-        assert "[mem:" not in text
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert paths == []
+        assert ".txt" not in text
         assert "Called: execute_shell" in text
 
-    def test_ref_line_capped(self):
+    def test_ref_line_includes_path(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
-        # Long command should still produce a capped ref line
-        long_cmd = "echo " + "x" * 500
+        writer = _FakeWriter()
         msgs = [
-            _tool_call_msg("execute_shell", {"command": long_cmd}),
+            _tool_call_msg("execute_shell", {"command": "ls -la"}),
             _tool_result("Exit code: 0"),
         ]
-        text, _ = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        # Find the [mem:...] line and check its length
-        for line in text.splitlines():
-            if "[mem:" in line:
-                assert len(line) < 200  # well under any reasonable cap
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert len(paths) == 1
+        # The ref line contains the resolved path the fake writer returned.
+        assert str(paths[0]) in text
 
     def test_extract_exit_code(self):
         assert ContextManager._extract_exit_code("Exit code: 0\nfoo") == 0
@@ -503,8 +510,8 @@ class TestBuildSummaryWithRefs:
 
     def test_assistant_text_is_stored(self):
         cm = ContextManager(context_budget=10000)
-        store = _FakeStore()
+        writer = _FakeWriter()
         msgs = [_assistant("I will now run the test suite to verify.")]
-        text, hashes = cm.build_summary_with_refs(msgs, store.put, "sess1")
-        assert len(hashes) == 1
-        assert any(c["role"] == "assistant" for c in store.calls)
+        text, paths = cm.build_summary_with_refs(msgs, writer, "sess1")
+        assert len(paths) == 1
+        assert len(writer.calls) == 1

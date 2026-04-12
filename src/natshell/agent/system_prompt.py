@@ -28,6 +28,7 @@ def build_system_prompt(
     working_memory: str | None = None,
     memory_path: str = "",
     max_memory_chars: int = 4000,
+    memory_chunk_dir: str = "",
 ) -> str:
     """Construct the full system prompt with role, rules, and system context.
 
@@ -42,11 +43,42 @@ def build_system_prompt(
             prompt. Pass None to omit.
         memory_path: Filesystem path to the agents.md file, shown so the
             agent knows where to write updates.
+        memory_chunk_dir: Absolute path of the current session's compaction
+            chunk directory.  When non-empty, a behavior rule pointing the
+            agent at ``read_file``/``search_files`` is inserted into both
+            compact and full rule sections.  When empty, the memory
+            behavior rule is omitted entirely (e.g. when the feature is
+            disabled).
     """
     if prompt_config and prompt_config.persona:
         role = prompt_config.persona
     else:
         role = _platform_role()
+
+    # Behavior rule — shown only when plain-file compaction memory is
+    # enabled.  Kept brief so small models don't burn tokens on it.
+    compact_mem_rule = ""
+    full_mem_rule = ""
+    if memory_chunk_dir:
+        compact_mem_rule = (
+            f"\n9. Summaries after /compact include paths under {memory_chunk_dir}/…txt "
+            f"(preserved chunks from older messages). "
+            f"Call read_file(path=…) to retrieve a chunk verbatim, or "
+            f"search_files(path=\"{memory_chunk_dir}\", pattern=<keyword>) "
+            f"to search across chunks. Do NOT re-run commands or re-read "
+            f"source files whose output was captured there — fetch from "
+            f"the chunk file first."
+        )
+        full_mem_rule = (
+            f"\n16. Summaries after /compact include paths under "
+            f"{memory_chunk_dir}/…txt (preserved chunks from older messages "
+            f"that were dropped to fit the context window). To retrieve "
+            f"the full content of a chunk, call read_file(path=<chunk path>). "
+            f"To search across all chunks for this session, call "
+            f"search_files(path=\"{memory_chunk_dir}\", pattern=<keyword>). "
+            f"Do NOT re-run commands or re-read source files whose output "
+            f"was already captured there — fetch from the chunk file first."
+        )
 
     # Sections that are always included
     if compact:
@@ -66,8 +98,7 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
 5. For packages, check first. For sudo, explain why. For risky ops, warn the user.
 6. Keep output analysis concise. Format results clearly with tables or lists.
 7. Set appropriate timeouts for long commands: network scans 120-300s, installs 300s, builds 300s.
-8. When multiple approaches exist, mention alternatives but proceed with the best one.
-9. If the visible context contains `[mem:<hash>]` references (created when older messages were compacted), call `recall_memory(hash="<hash>")` to retrieve the original content, or `recall_memory(query="<keywords>")` to search compacted history. Do NOT re-run commands or re-read files whose output was already captured into the memory store.
+8. When multiple approaches exist, mention alternatives but proceed with the best one.{compact_mem_rule}
 
 ## System Information
 
@@ -114,8 +145,7 @@ IMPORTANT: You are running on the user's REAL system. Commands you execute have 
     - Builds and compiles (make, cargo, npm): timeout 300
     - Filesystem scans (find /, du -s /): timeout 120
     - Downloads (wget, curl -o): timeout 120
-15. When multiple approaches exist, briefly mention alternatives but proceed with the best one.
-16. If the visible context contains `[mem:<hash>]` references (created when older messages were compacted into the memory store), use `recall_memory(hash="<hash>")` to retrieve the original content on demand, or `recall_memory(query="<keywords>")` to search across compacted history. Do NOT re-run commands or re-read files whose output was already captured into the memory store — fetch from memory first.
+15. When multiple approaches exist, briefly mention alternatives but proceed with the best one.{full_mem_rule}
 
 ## System Information
 
