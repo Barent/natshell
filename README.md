@@ -131,26 +131,30 @@ The agent has access to 12 tools:
 ### Backup & Undo
 Every file edit creates a timestamped backup in `~/.local/share/natshell/backups/`. Use `/undo` to restore the most recent edit. Backups are pruned to 10 per file by default.
 
-### Memory Store (Retrieval-Augmented Compaction)
-When `/compact` (or automatic compaction) drops older messages to free context window space, their full content is written to a content-addressed SQLite chunk store instead of being discarded. The short summary that replaces them contains `[mem:<hash>]` references, and the agent can call the `recall_memory` tool to fetch full content on demand. If a later user message mentions a filename captured in a stored chunk, the chunk is auto-rehydrated inline so smaller models don't need to reason about calling `recall_memory` themselves.
+### Compaction Memory (Plain-File Chunk Store)
+When `/compact` (or automatic compaction) drops older messages to free context window space, each dropped tool result / user question / assistant reply is written verbatim to a plain `.txt` file instead of being discarded. The summary that replaces the dropped messages emits the resolved absolute path of each chunk, and the agent retrieves full content on demand using the **existing** `read_file` and `search_files` tools — no dedicated recall tool, no SQLite, no dependencies beyond the standard library. If a later user message mentions a filename captured in a stored chunk, the chunk is auto-rehydrated inline so smaller models (4B-class, 4K context) don't need to reason about calling `read_file` themselves.
 
 **Storage layout:**
-- Database: `~/.local/share/natshell/memory/store.db` (SQLite, WAL mode; parent dir `0o700`)
-- Schema: a `chunks` table keyed by SHA256 of `role + tool_name + content` (identical content deduplicates across sessions), a `chunk_sessions` join table scoping chunks to a session, and an optional FTS5 virtual table for full-text search (falls back to `LIKE` when FTS5 is unavailable)
+- Root: `~/.local/share/natshell/memory/` (directory mode `0o700`)
+- One subdirectory per session: `~/.local/share/natshell/memory/<session_id>/`
+- One file per chunk, named by the first 12 hex chars of the SHA256 of the content: `a3f21c9b0d21.txt` (file mode `0o600`). Content-addressed within a session — re-reading the same file collapses to a single chunk.
 
 **Limits and lifecycle (`[memory_store]` in `config.default.toml`):**
 
-| Setting | Default | Behavior when exceeded |
-|---------|---------|------------------------|
-| `chunk_max_bytes` | 64 KB (65536) | Oversize content is truncated head/tail at write time with a `[... N bytes elided ...]` marker and stored |
-| `max_size_mb` | 50 MB | `MemoryStore.gc()` runs LRU eviction (ranked by most recent `last_accessed` across sessions, oldest first) until the store is under budget |
-| `max_age_days` | 30 days | `MemoryStore.gc()` deletes any chunk whose `created_at` is older than the cutoff |
+| Setting | Default | Behavior |
+|---------|---------|----------|
+| `enabled` | `true` | When `false`, `/compact` falls back to the legacy extractive text summary and no chunk files are written |
+| `max_size_mb` | 50 MB | Informational cap — shown to the user via `/compact` stats. Actual disk usage depends on how often `/compact` fires and how chatty tool output is |
+| `max_age_days` | 30 days | Chunks older than this are garbage-collected lazily on the first `compact_history` call of each process lifetime |
 
-**How "full" is handled:** the `chunk_max_bytes` cap is enforced inline on every `put()` — oversize chunks are always truncated before storage, never rejected. The `max_size_mb` and `max_age_days` caps are only enforced when `MemoryStore.gc()` is called.
+Per-chunk size is capped by a module constant in `memory_files.py` (64 KB default). Oversize chunks are stored head+tail with an elision marker, never rejected.
 
-**When the database is cleared:** `gc()` and `delete_session()` are exposed as public APIs on `MemoryStore`, but in the current release **neither is wired to an automatic trigger** — no startup hook, no post-compaction hook, no slash command, and no call from `SessionManager.delete`. In practice the database grows until you manually remove `store.db`, and chunks scoped to a deleted session are not pruned when the session file is deleted. Passive growth control comes only from content-hash deduplication via `INSERT OR IGNORE` — re-reading the same file repeatedly collapses to a single chunk.
+**When chunks are cleaned up:**
+- **Age-based**: `memory_files.prune_old()` runs once per process on the first `compact_history` call, unlinking files whose mtime is past `max_age_days`. Empty session directories are removed.
+- **Session-based**: `memory_files.cleanup_session(sid)` is available to wipe a session's entire chunk directory, but is not yet wired to `SessionManager.delete()` — so sessions deleted from disk still leave their chunk files behind until the age cutoff.
+- **Manual**: `rm -rf ~/.local/share/natshell/memory/<session_id>` is safe at any time; missing chunks surface as `read_file` errors that the agent handles normally.
 
-**Failure isolation:** every public `MemoryStore` method catches exceptions. After 3 consecutive SQLite failures the store disables itself (`healthy = False`) and `compact_history()` falls back to the legacy extractive summary; the agent loop is never broken by a storage error. Set `enabled = false` under `[memory_store]` to opt out entirely.
+**Failure isolation:** every `write_chunk` call is wrapped in `try/except OSError`. After 3 consecutive write failures the helper self-disables (`memory_files.healthy()` returns `False`) and `compact_history` falls back to the legacy extractive summary — the agent loop is never broken by a storage error. Set `enabled = false` under `[memory_store]` to opt out entirely.
 
 ### Session Persistence
 Save and restore conversations with `/save`, `/load`, and `/sessions`. Sessions are stored as JSON in `~/.local/share/natshell/sessions/`.
