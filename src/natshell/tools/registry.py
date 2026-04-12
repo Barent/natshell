@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -116,7 +117,19 @@ class ToolRegistry:
         return self._definitions.get(name)
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Execute a tool by name with the given arguments."""
+        """Execute a tool by name with the given arguments.
+
+        Two failure modes are distinguished:
+
+        1. The provided argument names/shape don't match the handler's
+           signature (the LLM hallucinated a parameter name).  We try to
+           remap the values onto the schema's expected keys by position,
+           then re-bind.  If that still fails, we return a structured
+           "wrong arguments" error.
+        2. The handler raises an exception during execution.  We report
+           it directly — we do **not** retry with a remap, because that
+           masks real runtime bugs as kwarg-mismatch errors.
+        """
         handler = self._tools.get(name)
         if handler is None:
             return ToolResult(
@@ -125,39 +138,38 @@ class ToolRegistry:
                 exit_code=1,
             )
 
+        # ── Step 1: validate arguments against the handler signature ──
+        # ``sig.bind`` raises TypeError on unknown kwargs or missing
+        # required args, but does NOT execute the handler body.  This
+        # lets us separate "bad arg names" from "handler crashed mid-run".
+        try:
+            inspect.signature(handler).bind(**arguments)
+        except TypeError:
+            remapped = self._remap_arguments(name, arguments)
+            if remapped is None:
+                defn = self._definitions.get(name)
+                expected = (
+                    list(defn.parameters.get("properties", {}).keys()) if defn else []
+                )
+                return ToolResult(
+                    output="",
+                    error=f"Tool error: wrong arguments for {name}. "
+                    f"Got: {list(arguments.keys())}. "
+                    f"Expected: {expected}",
+                    exit_code=1,
+                )
+            logger.warning(
+                "Tool %s: remapped bad arg names %s → %s",
+                name,
+                list(arguments.keys()),
+                list(remapped.keys()),
+            )
+            arguments = remapped
+
+        # ── Step 2: execute the handler.  Any exception from here on is
+        #    a runtime error inside the tool, not a kwarg problem. ──
         try:
             return await handler(**arguments)
-        except TypeError:
-            # LLM may hallucinate wrong argument names (e.g. "param" instead
-            # of "topic").  Attempt to remap values to the schema's expected
-            # parameter names by position before giving up.
-            remapped = self._remap_arguments(name, arguments)
-            if remapped is not None:
-                logger.warning(
-                    "Tool %s: remapped bad arg names %s → %s",
-                    name,
-                    list(arguments.keys()),
-                    list(remapped.keys()),
-                )
-                try:
-                    return await handler(**remapped)
-                except Exception as e:
-                    logger.exception(f"Tool {name} raised an exception after remap")
-                    return ToolResult(
-                        output="",
-                        error=f"Tool error: {type(e).__name__}: {e}",
-                        exit_code=1,
-                    )
-            # Remap not possible — report the original TypeError with expected params
-            defn = self._definitions.get(name)
-            expected = list(defn.parameters.get("properties", {}).keys()) if defn else []
-            return ToolResult(
-                output="",
-                error=f"Tool error: wrong arguments for {name}. "
-                f"Got: {list(arguments.keys())}. "
-                f"Expected: {expected}",
-                exit_code=1,
-            )
         except Exception as e:
             logger.exception(f"Tool {name} raised an exception")
             return ToolResult(
@@ -172,17 +184,34 @@ class ToolRegistry:
         arguments: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Try to map LLM-provided argument values to the schema's expected
-        parameter names by position.  Returns None if remapping isn't possible
-        (e.g. argument count mismatch)."""
+        parameter names by position.
+
+        Two strategies, tried in order:
+
+        1. **All keys** — if the provided count matches the total number
+           of schema properties, zip values onto every expected key.
+        2. **Required keys only** — if the provided count matches the
+           number of ``required`` keys, zip values onto just those.  This
+           handles the common case where the model sends a right-shape
+           call but omits optional params (e.g. ``run_code(language,
+           command)`` where ``command`` should be ``code`` and
+           ``timeout`` is omitted).
+
+        Returns ``None`` when neither strategy applies.
+        """
         defn = self._definitions.get(name)
         if defn is None:
             return None
         props = defn.parameters.get("properties", {})
+        required_keys: list[str] = list(defn.parameters.get("required", []))
         expected_keys = list(props.keys())
         provided_values = list(arguments.values())
-        if len(provided_values) != len(expected_keys):
-            return None
-        return dict(zip(expected_keys, provided_values))
+
+        if len(provided_values) == len(expected_keys):
+            return dict(zip(expected_keys, provided_values))
+        if required_keys and len(provided_values) == len(required_keys):
+            return dict(zip(required_keys, provided_values))
+        return None
 
     @property
     def tool_names(self) -> list[str]:

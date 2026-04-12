@@ -442,13 +442,90 @@ class TestRegistry:
         assert "slash commands" in result.output.lower() or "/help" in result.output
 
     async def test_remap_wrong_arg_name_multiple_params(self):
-        """Remap works when value count matches schema property count."""
+        """A single wrong arg name is remapped onto the tool's sole
+        required parameter.
+
+        search_files has one required key (``pattern``) and several
+        optional ones.  Sending ``{"wrong": "value"}`` matches the
+        required-count remap strategy and lands on ``pattern="value"``.
+        """
         registry = create_default_registry()
-        # search_files expects {"path": ..., "pattern": ..., ...}
-        # Send wrong names but right count won't match (more required), so it
-        # should fail gracefully
         result = await registry.execute("search_files", {"wrong": "value"})
+        # The remap succeeded and search_files ran.  We don't assert
+        # on specific search output — we just want to confirm the
+        # registry didn't blow up or return a kwarg-mismatch error.
+        assert "wrong arguments" not in result.error
+
+    async def test_remap_required_arg_count(self):
+        """Remap handles the common case: model sends all *required* args
+        with one wrong name, and omits optional ones.
+
+        run_code(language, command=...) → run_code(language, code=...)
+        (Qwen3-Coder confabulates ``command`` from its shell tool-call
+        training data.  ``timeout`` is omitted because it's optional.)
+        """
+        registry = create_default_registry()
+        result = await registry.execute(
+            "run_code",
+            {"language": "bash", "command": "echo remapped_ok"},
+        )
+        assert result.exit_code == 0
+        assert "remapped_ok" in result.output
+
+    async def test_run_code_string_timeout(self):
+        """Model sometimes passes ``timeout`` as a string in the tool-call
+        JSON — run_code should coerce rather than crash with
+        ``TypeError: '<' not supported between instances of 'int' and 'str'``.
+        """
+        registry = create_default_registry()
+        result = await registry.execute(
+            "run_code",
+            {"language": "bash", "code": "echo str_timeout_ok", "timeout": "30"},
+        )
+        assert result.exit_code == 0
+        assert "str_timeout_ok" in result.output
+
+    async def test_run_code_invalid_timeout_falls_back(self):
+        """Non-numeric timeout strings fall back to the default, not crash."""
+        registry = create_default_registry()
+        result = await registry.execute(
+            "run_code",
+            {"language": "bash", "code": "echo bad_timeout_ok", "timeout": "forever"},
+        )
+        assert result.exit_code == 0
+        assert "bad_timeout_ok" in result.output
+
+    async def test_runtime_typeerror_not_retried_as_kwarg_error(self):
+        """A TypeError raised from *inside* a handler body is reported
+        directly — not silently re-interpreted as a kwarg mismatch and
+        retried via remap (which would mask the real bug)."""
+        from natshell.tools.registry import ToolDefinition, ToolRegistry
+
+        async def crashy_tool(value: int) -> ToolResult:
+            # Deliberately raise the same shape of error that run_code used
+            # to raise before v1.0.30 — int<str comparison.
+            _ = 1 < "nope"  # type: ignore[operator]
+            return ToolResult(output="unreachable")
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="crashy",
+                description="test",
+                parameters={
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}},
+                    "required": ["value"],
+                },
+            ),
+            crashy_tool,
+        )
+
+        result = await registry.execute("crashy", {"value": 1})
         assert result.exit_code == 1
+        # The real error surfaces — not a "wrong arguments" message.
+        assert "TypeError" in result.error
+        assert "wrong arguments" not in result.error
 
 
 # ─── Env var filtering ──────────────────────────────────────────────────────

@@ -98,6 +98,13 @@ async def run_code(language: str, code: str, timeout: int = 30) -> ToolResult:
     language = language.lower().strip()
     # Resolve common aliases (python3 → python, js → javascript, etc.)
     language = _LANGUAGE_ALIASES.get(language, language)
+    # Models sometimes pass timeout as a string ("30") or float (30.0) in
+    # the tool-call JSON.  Coerce defensively so `min(timeout, 300)` can't
+    # raise `TypeError: '<' not supported between instances of 'int' and 'str'`.
+    try:
+        timeout = int(timeout)
+    except (TypeError, ValueError):
+        timeout = 30
     timeout = max(1, min(timeout, 300))
 
     # Check if language is supported
