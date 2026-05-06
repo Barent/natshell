@@ -414,7 +414,7 @@ class TestRegistry:
     def test_get_tool_schemas(self):
         registry = create_default_registry()
         schemas = registry.get_tool_schemas()
-        assert len(schemas) == 12
+        assert len(schemas) == 13  # 12 original + skill tool
         for schema in schemas:
             assert schema["type"] == "function"
             assert "function" in schema
@@ -651,11 +651,11 @@ class TestToolSchemaFiltering:
         assert "natshell_help" not in SMALL_CONTEXT_TOOLS
 
     def test_small_context_tools_filters_correctly(self):
-        """Using SMALL_CONTEXT_TOOLS with get_tool_schemas produces exactly 6 schemas."""
+        """Using SMALL_CONTEXT_TOOLS with get_tool_schemas produces schemas matching the set."""
         from natshell.tools.registry import SMALL_CONTEXT_TOOLS
 
         registry = create_default_registry()
         schemas = registry.get_tool_schemas(allowed=SMALL_CONTEXT_TOOLS)
         names = {s["function"]["name"] for s in schemas}
         assert names == SMALL_CONTEXT_TOOLS
-        assert len(schemas) == 6
+        assert len(schemas) == len(SMALL_CONTEXT_TOOLS)

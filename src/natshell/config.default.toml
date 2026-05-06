@@ -219,3 +219,12 @@ theme = "dark"
 #
 # [kiwix]
 # url = "http://localhost:8080"  # URL of your kiwix-serve instance
+
+# ─── Skills ─────────────────────────────────────────────────────────
+# Skills bundle model instructions, reference docs, and optional tools.
+# The agent automatically selects skills based on task context.
+#
+[skills]
+enabled = true
+disabled = []
+inject_in_compact = false

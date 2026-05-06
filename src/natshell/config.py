@@ -103,6 +103,13 @@ class PromptConfig:
 
 
 @dataclass
+class SkillsConfig:
+    enabled: bool = True
+    disabled: list[str] = field(default_factory=list)
+    inject_in_compact: bool = False
+
+
+@dataclass
 class ProfileConfig:
     """A named configuration profile that can override settings across sections."""
     # Ollama/remote
@@ -134,6 +141,7 @@ class NatShellConfig:
     kiwix: KiwixConfig = field(default_factory=KiwixConfig)
     prompt: PromptConfig = field(default_factory=PromptConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
 
 
@@ -196,6 +204,11 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
         "enabled": "bool",
         "max_chars": "int",
         "min_ctx": "int",
+    },
+    "skills": {
+        "enabled": "bool",
+        "disabled": "list",
+        "inject_in_compact": "bool",
     },
 }
 
@@ -326,7 +339,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
 
 _SECTIONS = (
     "model", "remote", "ollama", "agent", "safety",
-    "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory",
+    "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory", "skills",
 )
 
 
@@ -352,6 +365,54 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
                     if hasattr(profile, key):
                         setattr(profile, key, value)
                 config.profiles[name] = profile
+
+
+def save_skills_disabled(disabled: list[str]) -> Path:
+    """Persist the skills.disabled list to the user config file."""
+    cfg_dir = _get_config_dir()
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    config_path = cfg_dir / "config.toml"
+
+    if config_path.exists():
+        lines = config_path.read_text().splitlines(keepends=True)
+    else:
+        lines = []
+
+    items = ", ".join(f'"{n}"' for n in disabled)
+    val_str = f"[{items}]"
+    key = "disabled"
+    section_header = "[skills]"
+
+    section_idx = None
+    next_section_idx = None
+    key_idx = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == section_header:
+            section_idx = i
+        elif section_idx is not None and next_section_idx is None:
+            if re.match(r"^\[.+\]", stripped):
+                next_section_idx = i
+            elif re.match(rf"^#?\s*{re.escape(key)}\s*=", stripped):
+                key_idx = i
+
+    new_line = f"{key} = {val_str}\n"
+
+    if section_idx is not None:
+        insert_at = next_section_idx if next_section_idx is not None else len(lines)
+        if key_idx is not None:
+            lines[key_idx] = new_line
+        else:
+            lines.insert(insert_at, new_line)
+    else:
+        if lines and not lines[-1].endswith("\n"):
+            lines.append("\n")
+        lines.append(f"\n{section_header}\n")
+        lines.append(new_line)
+
+    config_path.write_text("".join(lines))
+    return config_path
 
 
 def save_config_values(

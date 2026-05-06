@@ -30,7 +30,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 14. Edit failure tracking — escalating warnings after 2+ failures; completion guard prevents declaring success when all edits failed
 15. Headless mode — `--headless "prompt"` for single-shot invocations. `--danger-fast` auto-approves. Exit 1 on error.
 16. Session persistence — JSON in `~/.local/share/natshell/sessions/`. IDs validated as 32-char hex. 10 MB size limit. 0o700 perms.
-17. Plugin system — `~/.config/natshell/plugins/*.py`, each with `register(registry)` entry point
+17. Skill system — `src/natshell/skills/` ships 10 built-ins; user skills in `~/.config/natshell/skills/<name>/SKILL.md`. Model auto-loads via `skill` tool. `/skills` commands for list/show/enable/disable
 18. MCP server mode — `--mcp` exposes all tools via JSON-RPC over stdin/stdout
 19. Backup & undo — `BackupManager` snapshots files before edits; `/undo` restores. Symlinks refused. 0o700 perms.
 20. Small context tool filtering — n_ctx ≤ 8192 auto-filters to 5 core tools (`SMALL_CONTEXT_TOOLS`: execute_shell, read_file, write_file, edit_file, list_directory)
@@ -51,7 +51,7 @@ Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`
 - `headless.py` — `--headless` single-shot mode
 - `session.py` — Session save/load/delete/list with security hardening
 - `mcp_server.py` — MCP JSON-RPC server
-- `plugins.py` — Plugin loader
+- `skills/` — Skill registry + 10 built-in skills; user/project skill discovery; `tools.py` optional tool registration
 - `model_manager.py` — Model discovery, download, switching
 
 ### Agent
@@ -82,6 +82,7 @@ Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`
 - `tools/limits.py` — Centralized context-aware truncation limits
 - `tools/natshell_help.py` — Self-documentation with static/dynamic topics, injected `SafetyConfig`
 - `tools/fetch_url.py` — URL fetch with SSRF blocking, 1 MB cap, GET-only
+- `tools/skill.py` — Loads full skill body on demand; lists references/ and scripts/ assets
 
 ### Safety & UI
 - `safety/classifier.py` — Command risk classifier, chained command splitting, subshell detection, sensitive path gating
@@ -120,7 +121,7 @@ Default: Qwen3-4B, auto-downloaded to `~/.local/share/natshell/models/`. Context
 
 Run with `pytest` (1,175 tests, 39 files). Mock `InferenceEngine` for agent loop tests. Use `/tmp` for write_file tests.
 
-Key test files: `test_agent.py`, `test_safety.py`, `test_tools.py`, `test_coding_tools.py`, `test_file_tracker.py`, `test_sessions.py`, `test_backup.py`, `test_headless.py`, `test_git_tool.py`, `test_mcp_server.py`, `test_plugins.py`, `test_plan_*.py`, `test_engine_*.py`, `test_ollama*.py`, `test_slash_commands.py`, `test_context_manager.py`, `test_widgets.py`, `test_commands.py`, `test_gpu.py`, `test_platform.py`, `test_clipboard.py`, `test_fetch_url.py`, `test_natshell_help.py`, `test_history_input.py`, `test_prompt_cache.py`, `test_context.py`
+Key test files: `test_agent.py`, `test_safety.py`, `test_tools.py`, `test_coding_tools.py`, `test_file_tracker.py`, `test_sessions.py`, `test_backup.py`, `test_headless.py`, `test_git_tool.py`, `test_mcp_server.py`, `test_skills.py`, `test_plan_*.py`, `test_engine_*.py`, `test_ollama*.py`, `test_slash_commands.py`, `test_context_manager.py`, `test_widgets.py`, `test_commands.py`, `test_gpu.py`, `test_platform.py`, `test_clipboard.py`, `test_fetch_url.py`, `test_natshell_help.py`, `test_history_input.py`, `test_prompt_cache.py`, `test_context.py`
 
 ## Cross-Platform Notes
 

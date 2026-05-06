@@ -424,12 +424,15 @@ def main() -> None:
 
     tools = create_default_registry()
 
-    # Load plugins
-    from natshell.plugins import load_plugins
+    # Load skills (subsumes the old plugin system)
+    from natshell.skills import load_skills
+    from natshell.tools.skill import set_skill_registry
 
-    loaded = load_plugins(tools)
-    if loaded:
-        print(f"Loaded {loaded} plugin(s)")
+    skill_registry = load_skills(tools, config)
+    set_skill_registry(skill_registry)
+    enabled_skills = skill_registry.enabled()
+    if enabled_skills:
+        print(f"Loaded {len(enabled_skills)} skill(s)")
 
     # Build the safety classifier
     from natshell.safety.classifier import SafetyClassifier
@@ -474,6 +477,8 @@ def main() -> None:
         fallback_config=fallback_config,
         prompt_config=config.prompt,
         memory_config=config.memory,
+        skills=skill_registry.enabled(),
+        inject_skills_in_compact=config.skills.inject_in_compact,
     )
 
     # Gather system context and initialize agent
@@ -520,7 +525,10 @@ def main() -> None:
 
         if args.danger_fast:
             print("WARNING: --danger-fast is active. All confirmations will be skipped.")
-        app = NatShellApp(agent=agent, config=config, skip_permissions=args.danger_fast)
+        app = NatShellApp(
+            agent=agent, config=config,
+            skip_permissions=args.danger_fast, skill_registry=skill_registry,
+        )
         # Silence the console handler before the TUI takes the terminal —
         # ANY stderr output during Textual rendering corrupts the display.
         console_handler.setLevel(logging.CRITICAL)

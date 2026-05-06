@@ -28,6 +28,7 @@ from natshell.commands import (
     show_help,
     show_history_info,
     show_memory,
+    show_skills,
 )
 from natshell.config import (
     NatShellConfig,
@@ -106,6 +107,10 @@ logger = logging.getLogger(__name__)
 
 SLASH_COMMANDS = [
     ("/help", "Show available commands"),
+    ("/skills", "List available skills"),
+    ("/skills show", "Show full instructions for a skill"),
+    ("/skills enable", "Enable a skill"),
+    ("/skills disable", "Disable a skill"),
     ("/clear", "Clear chat and model context"),
     ("/compact", "Compact context, keeping key facts"),
     ("/cmd", "Execute a shell command directly"),
@@ -155,6 +160,7 @@ class NatShellApp(App):
         agent: AgentLoop,
         config: NatShellConfig | None = None,
         skip_permissions: bool = False,
+        skill_registry: object = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -163,6 +169,7 @@ class NatShellApp(App):
         self._busy = False
         self._skip_permissions = skip_permissions
         self._session_mgr = SessionManager()
+        self._skill_registry = skill_registry
         # Tab completion state
         self._completion_matches: list[str] = []
         self._completion_index: int = -1
@@ -473,6 +480,8 @@ class NatShellApp(App):
         match command:
             case "/help":
                 self._show_help(conversation)
+            case "/skills":
+                self._handle_skills(args, conversation)
             case "/clear":
                 self.action_clear_chat()
             case "/compact":
@@ -1374,6 +1383,10 @@ class NatShellApp(App):
     def _handle_memory(self, args: str, conversation: ScrollableContainer) -> None:
         """Handle /memory subcommands."""
         show_memory(self.agent, conversation, args)
+
+    def _handle_skills(self, args: str, conversation: ScrollableContainer) -> None:
+        """Handle /skills subcommands."""
+        show_skills(self._skill_registry, conversation, args, self._config)
 
     def _handle_undo(self, conversation: ScrollableContainer) -> None:
         """Undo the last file edit or write by restoring from backup."""

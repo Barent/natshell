@@ -127,6 +127,8 @@ class AgentLoop:
         fallback_config: ModelConfig | None = None,
         prompt_config: PromptConfig | None = None,
         memory_config: MemoryConfig | None = None,
+        skills: list | None = None,
+        inject_skills_in_compact: bool = False,
     ) -> None:
         self.engine = engine
         self.tools = tools
@@ -135,6 +137,8 @@ class AgentLoop:
         self.fallback_config = fallback_config
         self._prompt_config = prompt_config
         self._memory_config = memory_config or MemoryConfig()
+        self._skills = skills or []
+        self._inject_skills_in_compact = inject_skills_in_compact
         self._system_context: SystemContext | None = None
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
@@ -198,6 +202,8 @@ class AgentLoop:
             working_memory=working_memory,
             memory_path=memory_path_str,
             max_memory_chars=effective_chars,
+            skills=self._skills or None,
+            inject_skills_in_compact=self._inject_skills_in_compact,
         )
         self.messages = [{"role": "system", "content": system_prompt}]
         self._setup_context_manager()
@@ -239,6 +245,8 @@ class AgentLoop:
             working_memory=content,
             memory_path=mem_path,
             max_memory_chars=effective_chars,
+            skills=self._skills or None,
+            inject_skills_in_compact=self._inject_skills_in_compact,
         )
         self.messages[0] = {"role": "system", "content": system_prompt}
         return content

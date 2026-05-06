@@ -123,19 +123,24 @@ install_pkg() {
 # Search for a suitable python3 binary, including Homebrew paths that may not
 # be in PATH yet (Apple Silicon: /opt/homebrew/bin, Intel: /usr/local/bin).
 find_python() {
-    for cmd in python3.13 python3.12 python3.11 python3; do
+    for cmd in python3.15 python3.14 python3.13 python3.12 python3.11 python3; do
         if command -v "$cmd" &>/dev/null; then
-            echo "$cmd"
-            return 0
+            # Reject if it's too old (e.g. Apple's /usr/bin/python3 = 3.9)
+            if "$cmd" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' &>/dev/null; then
+                echo "$cmd"
+                return 0
+            fi
         fi
     done
     # Check Homebrew prefixes directly (macOS installs may not be in PATH)
     if [[ "$IS_MACOS" == true ]]; then
         for prefix in /opt/homebrew/bin /usr/local/bin; do
-            for cmd in python3.13 python3.12 python3.11 python3; do
+            for cmd in python3.15 python3.14 python3.13 python3.12 python3.11 python3; do
                 if [[ -x "$prefix/$cmd" ]]; then
-                    echo "$prefix/$cmd"
-                    return 0
+                    if "$prefix/$cmd" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' &>/dev/null; then
+                        echo "$prefix/$cmd"
+                        return 0
+                    fi
                 fi
             done
         done

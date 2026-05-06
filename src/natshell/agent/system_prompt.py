@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from natshell.agent.context import SystemContext
 from natshell.config import PromptConfig
 from natshell.platform import current_platform
+
+if TYPE_CHECKING:
+    from natshell.skills import Skill
 
 
 def _platform_role() -> str:
@@ -28,6 +33,8 @@ def build_system_prompt(
     working_memory: str | None = None,
     memory_path: str = "",
     max_memory_chars: int = 4000,
+    skills: list[Skill] | None = None,
+    inject_skills_in_compact: bool = False,
 ) -> str:
     """Construct the full system prompt with role, rules, and system context.
 
@@ -215,6 +222,18 @@ If the user asks about NatShell, its commands, settings, safety rules, or troubl
 - Topics: overview, commands, config, config_reference, models, safety, tools, troubleshooting
 - To change a setting, use the update_config tool (e.g. update_config section="agent" key="temperature" value="0.7")"""
 
+    skills_section = ""
+    if skills and (not compact or inject_skills_in_compact):
+        lines = ["<available_skills>"]
+        lines.append(
+            "The following skills are available. Call the `skill` tool with a name to load full "
+            "instructions when the user's task matches a skill's description."
+        )
+        for s in sorted(skills, key=lambda s: s.name):
+            lines.append(f"- {s.name}: {s.description}")
+        lines.append("</available_skills>")
+        skills_section = "\n\n" + "\n".join(lines)
+
     memory_section = ""
     if working_memory and not compact:
         memory_section = (
@@ -229,4 +248,4 @@ If the user asks about NatShell, its commands, settings, safety rules, or troubl
     if prompt_config and prompt_config.extra_instructions:
         custom_section = f"\n\n## Additional Instructions\n\n{prompt_config.extra_instructions}"
 
-    return header + code_section + memory_section + extra_sections + custom_section + "\n\n/no_think"
+    return header + skills_section + code_section + memory_section + extra_sections + custom_section + "\n\n/no_think"

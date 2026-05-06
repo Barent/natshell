@@ -14,6 +14,10 @@ def show_help(conversation: ScrollableContainer) -> None:
     help_text = (
         "[bold]Available Commands[/]\n\n"
         "  [bold cyan]/help[/]                  Show this help message\n"
+        "  [bold cyan]/skills[/]               List available skills\n"
+        "  [bold cyan]/skills show <name>[/]   Show a skill's full instructions\n"
+        "  [bold cyan]/skills enable <name>[/] Enable a skill\n"
+        "  [bold cyan]/skills disable <name>[/] Disable a skill\n"
         "  [bold cyan]/clear[/]                 Clear chat and model context\n"
         "  [bold cyan]/compact[/]               Compact context, keeping key facts\n"
         "  [bold cyan]/cmd <command>[/]         Execute a shell command directly\n"
@@ -188,6 +192,76 @@ def show_memory(
     if len(mem.content) > 2000:
         lines.append(f"\n[dim]... ({len(mem.content) - 2000} more chars)[/]")
     conversation.mount(SystemMessage("\n".join(lines)))
+
+
+def show_skills(
+    skill_registry: object,
+    conversation: ScrollableContainer,
+    args: str = "",
+    config: object = None,
+) -> None:
+    """Handle /skills subcommands."""
+    from natshell.skills import SkillRegistry
+
+    if not isinstance(skill_registry, SkillRegistry):
+        conversation.mount(SystemMessage("Skill system not initialized."))
+        return
+
+    args = args.strip()
+
+    if not args:
+        rows = []
+        for s in sorted(skill_registry.all(), key=lambda x: x.name):
+            state = "disabled" if s.name in skill_registry._disabled else "enabled"
+            rows.append(f"  {s.name:<16} [{s.source:<7}] {state:<8} {s.description}")
+        text = "Available skills:\n" + ("\n".join(rows) if rows else "  (none)")
+        conversation.mount(SystemMessage(text))
+        return
+
+    parts = args.split(maxsplit=1)
+    sub = parts[0].lower()
+    name = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub == "show":
+        if not name:
+            conversation.mount(SystemMessage("Usage: /skills show <name>"))
+            return
+        body = skill_registry.load_body(name)
+        if body is None:
+            conversation.mount(SystemMessage(f"Unknown skill: {name!r}"))
+        else:
+            conversation.mount(SystemMessage(f"[bold]Skill: {name}[/]\n\n{_escape(body)}"))
+        return
+
+    if sub in {"enable", "disable"} and name:
+        skill = skill_registry.get(name)
+        if skill is None:
+            conversation.mount(SystemMessage(f"Unknown skill: {name!r}"))
+            return
+        if sub == "disable":
+            changed = skill_registry.disable(name)
+        else:
+            changed = skill_registry.enable(name)
+
+        if not changed:
+            conversation.mount(SystemMessage(f"Skill {name!r} is already {sub}d."))
+            return
+
+        # Persist to user config
+        try:
+            from natshell.config import save_skills_disabled
+
+            save_skills_disabled(sorted(skill_registry._disabled))
+            conversation.mount(SystemMessage(
+                f"Skill {name!r} {sub}d and saved to config."
+            ))
+        except Exception as exc:
+            conversation.mount(SystemMessage(f"Skill {name!r} {sub}d (config save failed: {exc})."))
+        return
+
+    conversation.mount(SystemMessage(
+        "Usage: /skills | /skills show <name> | /skills enable <name> | /skills disable <name>"
+    ))
 
 
 def handle_undo(conversation: ScrollableContainer) -> None:

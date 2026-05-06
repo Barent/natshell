@@ -140,8 +140,17 @@ Run NatShell non-interactively with `--headless "prompt"`. Response text goes to
 ### MCP Server
 Run NatShell as an MCP (Model Context Protocol) server with `--mcp`. Exposes all tools via JSON-RPC over stdin/stdout for integration with other AI tools.
 
-### Plugin System
-Extend NatShell with custom tools by placing Python files in `~/.config/natshell/plugins/`. Each plugin defines a `register()` function that receives the tool registry.
+### Skill System
+NatShell ships 10 built-in skills covering spreadsheets, PDFs, Word docs, coding, testing, git, system administration, data analysis, web research, and markdown documentation. The model automatically sees a short description of each skill and calls `skill(name=...)` to load full instructions on demand.
+
+Add your own skills by creating a directory under `~/.config/natshell/skills/<name>/` containing a `SKILL.md` file with YAML frontmatter and an instructions body. An optional `tools.py` with a `register()` function can add custom tools. See [`SKILL_AUTHORING.md`](SKILL_AUTHORING.md) for full details.
+
+```
+/skills                   # list all discovered skills
+/skills show <name>       # print skill body inline
+/skills enable <name>     # re-enable a disabled skill
+/skills disable <name>    # hide a skill from the model
+```
 
 ### Prompt Caching
 System prompt tokens are cached across requests to reduce latency on local inference. Cache is invalidated when the system prompt changes.
@@ -222,7 +231,7 @@ src/natshell/
 ├── mcp_server.py            # MCP server (JSON-RPC over stdin/stdout)
 ├── model_manager.py         # Model discovery, download, and switching
 ├── platform.py              # Platform detection (Linux/macOS/WSL)
-├── plugins.py               # Plugin system for custom tools
+├── skills/                  # Built-in skills (10 shipped; user skills in ~/.config/natshell/skills/)
 ├── session.py               # Conversation session persistence
 ├── agent/
 │   ├── loop.py              # ReAct agent loop with safety checks
