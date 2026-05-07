@@ -202,7 +202,10 @@ class NatShellApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Handle application startup: focus the input widget and show warnings if in danger mode."""
+        """Handle application startup: focus the input widget.
+        
+        Shows warnings if in danger mode.
+        """
         self.query_one("#user-input", Input).focus()
         if self._skip_permissions:
             conversation = self.query_one("#conversation", ScrollableContainer)

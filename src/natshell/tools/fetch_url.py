@@ -132,7 +132,9 @@ async def fetch_url(url: str, timeout: int = _DEFAULT_TIMEOUT) -> ToolResult:
                 try:
                     addrinfo = socket.getaddrinfo(hostname, None)
                 except (socket.gaierror, OSError) as e:
-                    return ToolResult(error=f"DNS resolution failed for {hostname}: {e}", exit_code=1)
+                    return ToolResult(
+                        error=f"DNS resolution failed for {hostname}: {e}", exit_code=1
+                    )
 
                 for family, _, _, _, sockaddr in addrinfo:
                     ip = sockaddr[0]
@@ -151,15 +153,17 @@ async def fetch_url(url: str, timeout: int = _DEFAULT_TIMEOUT) -> ToolResult:
                 if response.is_redirect:
                     redirects += 1
                     if redirects > max_redirects:
-                        return ToolResult(error=f"Too many redirects (max {max_redirects}): {url}", exit_code=1)
-                    
+                        return ToolResult(
+                            error=f"Too many redirects (max {max_redirects}): {url}", exit_code=1
+                        )
+
                     location = response.headers.get("location")
                     if not location:
                         break
-                    
+
                     current_url = urllib.parse.urljoin(current_url, location)
                     continue
-                
+
                 break
 
     except httpx.TimeoutException:

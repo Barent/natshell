@@ -408,7 +408,7 @@ class TestRedirectSsrf:
             "natshell.tools.fetch_url.socket.getaddrinfo",
             side_effect=[
                 _PUBLIC_DNS,  # initial hostname check
-                _PUBLIC_DNS,  # redirect target check (now triggered since we always check before fetch)
+                _PUBLIC_DNS,  # redirect target check
             ],
         ):
             result = await fetch_url("https://example.com/redirect")
