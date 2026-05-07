@@ -181,6 +181,7 @@ class NatShellApp(App):
             super().copy_to_clipboard(text)
 
     def compose(self) -> ComposeResult:
+        """Yield the child widgets to construct the main application UI layout."""
         yield LogoBanner()
         yield ScrollableContainer(
             Static(
@@ -201,6 +202,7 @@ class NatShellApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        """Handle application startup: focus the input widget and show warnings if in danger mode."""
         self.query_one("#user-input", Input).focus()
         if self._skip_permissions:
             conversation = self.query_one("#conversation", ScrollableContainer)
@@ -309,6 +311,7 @@ class NatShellApp(App):
 
     @on(Input.Submitted, "#user-input")
     async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Process the user's input when they press Enter."""
         input_widget = self.query_one("#user-input", HistoryInput)
         user_text = input_widget.get_submit_text().strip()
         self.query_one("#slash-suggestions", Static).display = False

@@ -123,6 +123,11 @@ class SafetyClassifier:
             path = arguments.get("path", "")
             if _is_agents_md(path):
                 return Risk.SAFE
+            for pattern in _SENSITIVE_PATH_PATTERNS:
+                if pattern in path:
+                    return Risk.CONFIRM
+            if self.mode == "danger":
+                return Risk.SAFE
             return Risk.CONFIRM
 
         if tool_name == "edit_file":

@@ -105,74 +105,67 @@ async def fetch_url(url: str, timeout: int = _DEFAULT_TIMEOUT) -> ToolResult:
     # Clamp timeout
     timeout = max(1, min(timeout, _MAX_TIMEOUT))
 
-    # Extract hostname for SSRF check
-    try:
-        parsed = httpx.URL(url)
-        hostname = parsed.host
-    except Exception:
-        return ToolResult(error=f"Could not parse URL: {url}", exit_code=1)
+    current_url = url
+    redirects = 0
+    max_redirects = 5
 
-    if not hostname:
-        return ToolResult(error=f"No hostname in URL: {url}", exit_code=1)
+    import urllib.parse
 
-    # Resolve hostname and check all IPs against blocklist BEFORE connecting
-    try:
-        addrinfo = socket.getaddrinfo(hostname, None)
-    except (socket.gaierror, OSError) as e:
-        return ToolResult(error=f"DNS resolution failed for {hostname}: {e}", exit_code=1)
-
-    for family, _, _, _, sockaddr in addrinfo:
-        ip = sockaddr[0]
-        if _is_private_ip(ip):
-            return ToolResult(
-                error=(
-                    f"Blocked: {hostname} resolves to private/reserved address {ip}. "
-                    "fetch_url cannot access internal network addresses."
-                ),
-                exit_code=1,
-            )
-
-    # Fetch
     try:
         async with httpx.AsyncClient(
             timeout=timeout,
-            max_redirects=5,
-            follow_redirects=True,
+            follow_redirects=False,
             headers={"User-Agent": _USER_AGENT},
         ) as client:
-            response = await client.get(url)
+            while True:
+                # Extract hostname for SSRF check
+                try:
+                    parsed = httpx.URL(current_url)
+                    hostname = parsed.host
+                except Exception:
+                    return ToolResult(error=f"Could not parse URL: {current_url}", exit_code=1)
+
+                if not hostname:
+                    return ToolResult(error=f"No hostname in URL: {current_url}", exit_code=1)
+
+                # Resolve hostname and check all IPs against blocklist BEFORE connecting
+                try:
+                    addrinfo = socket.getaddrinfo(hostname, None)
+                except (socket.gaierror, OSError) as e:
+                    return ToolResult(error=f"DNS resolution failed for {hostname}: {e}", exit_code=1)
+
+                for family, _, _, _, sockaddr in addrinfo:
+                    ip = sockaddr[0]
+                    if _is_private_ip(ip):
+                        return ToolResult(
+                            error=(
+                                f"Blocked: {hostname} resolves to private/reserved address {ip}. "
+                                "fetch_url cannot access internal network addresses."
+                            ),
+                            exit_code=1,
+                        )
+
+                # Fetch
+                response = await client.get(current_url)
+
+                if response.is_redirect:
+                    redirects += 1
+                    if redirects > max_redirects:
+                        return ToolResult(error=f"Too many redirects (max {max_redirects}): {url}", exit_code=1)
+                    
+                    location = response.headers.get("location")
+                    if not location:
+                        break
+                    
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+                
+                break
+
     except httpx.TimeoutException:
         return ToolResult(error=f"Request timed out after {timeout}s: {url}", exit_code=1)
-    except httpx.TooManyRedirects:
-        return ToolResult(error=f"Too many redirects (max 5): {url}", exit_code=1)
     except httpx.HTTPError as e:
         return ToolResult(error=f"HTTP error: {e}", exit_code=1)
-
-    # Check for redirect-based SSRF: if the final URL hostname differs from
-    # the original, verify the new hostname doesn't resolve to a private IP.
-    # Note: there is still a theoretical TOCTOU gap (DNS rebinding on the same
-    # hostname) but this is not a practical concern for a CLI tool.
-    final_url = response.url
-    try:
-        final_host = final_url.host
-    except Exception:
-        final_host = None
-    if final_host and final_host != hostname:
-        try:
-            redirect_addrinfo = socket.getaddrinfo(final_host, None)
-            for _, _, _, _, sockaddr in redirect_addrinfo:
-                ip = sockaddr[0]
-                if _is_private_ip(ip):
-                    return ToolResult(
-                        error=(
-                            f"Blocked: redirect target {final_host} resolves to "
-                            f"private/reserved address {ip}. "
-                            "fetch_url cannot follow redirects to internal network addresses."
-                        ),
-                        exit_code=1,
-                    )
-        except (socket.gaierror, OSError):
-            pass  # DNS failure on redirect target — response already received
 
     content_type = response.headers.get("content-type", "")
     status = response.status_code
