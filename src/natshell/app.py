@@ -203,7 +203,7 @@ class NatShellApp(App):
 
     def on_mount(self) -> None:
         """Handle application startup: focus the input widget.
-        
+
         Shows warnings if in danger mode.
         """
         self.query_one("#user-input", Input).focus()
