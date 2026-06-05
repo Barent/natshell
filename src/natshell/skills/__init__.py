@@ -57,6 +57,11 @@ class SkillRegistry:
         self._skills: dict[str, Skill] = {s.name: s for s in skills}
         self._disabled: set[str] = disabled
 
+    @staticmethod
+    def _normalize(name: str) -> str:
+        """Fold a skill name for tolerant lookup (hyphen/underscore/case agnostic)."""
+        return name.strip().lower().replace("_", "-")
+
     def all(self) -> list[Skill]:
         return list(self._skills.values())
 
@@ -64,7 +69,16 @@ class SkillRegistry:
         return [s for s in self._skills.values() if s.name not in self._disabled]
 
     def get(self, name: str) -> Skill | None:
-        return self._skills.get(name)
+        s = self._skills.get(name)
+        if s is not None:
+            return s
+        # Tolerate hyphen/underscore/case variants — models often emit e.g.
+        # "web_research" for a skill registered as "web-research".
+        target = self._normalize(name)
+        for skill in self._skills.values():
+            if self._normalize(skill.name) == target:
+                return skill
+        return None
 
     def load_body(self, name: str) -> str | None:
         s = self.get(name)
@@ -86,16 +100,27 @@ class SkillRegistry:
         return out
 
     def enable(self, name: str) -> bool:
-        """Remove name from disabled set. Returns True if it was disabled."""
-        if name in self._disabled:
-            self._disabled.discard(name)
+        """Remove name from disabled set. Returns True if it was disabled.
+
+        Tolerant of hyphen/underscore/case variants. Falls back to the raw name
+        so a skill disabled in config but not currently present can still be
+        re-enabled.
+        """
+        s = self.get(name)
+        canonical = s.name if s is not None else name
+        if canonical in self._disabled:
+            self._disabled.discard(canonical)
             return True
         return False
 
     def disable(self, name: str) -> bool:
-        """Add name to disabled set. Returns True if it was enabled."""
-        if name in self._skills and name not in self._disabled:
-            self._disabled.add(name)
+        """Add name to disabled set. Returns True if it was enabled.
+
+        Tolerant of hyphen/underscore/case variants.
+        """
+        s = self.get(name)
+        if s is not None and s.name not in self._disabled:
+            self._disabled.add(s.name)
             return True
         return False
 

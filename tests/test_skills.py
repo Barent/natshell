@@ -122,6 +122,15 @@ class TestSkillRegistry:
         assert reg.get("foo") is s
         assert reg.get("missing") is None
 
+    def test_get_tolerates_underscore_and_case(self):
+        # Models often emit "web_research" for a skill named "web-research".
+        s = self._make_skill("web-research")
+        reg = self._make_registry([s])
+        assert reg.get("web_research") is s
+        assert reg.get("Web_Research") is s
+        assert reg.get("WEB-RESEARCH") is s
+        assert reg.get("nope") is None
+
     def test_enable_removes_from_disabled(self):
         s = self._make_skill("foo")
         reg = self._make_registry([s], disabled=["foo"])
@@ -137,6 +146,18 @@ class TestSkillRegistry:
         changed = reg.disable("foo")
         assert changed is True
         assert "foo" not in {x.name for x in reg.enabled()}
+
+    def test_enable_disable_tolerate_underscore_and_case(self):
+        s = self._make_skill("web-research")
+        reg = self._make_registry([s])
+        # disable via underscore variant
+        assert reg.disable("web_research") is True
+        assert "web-research" in reg._disabled
+        assert "web-research" not in {x.name for x in reg.enabled()}
+        # enable via mixed-case variant
+        assert reg.enable("Web_Research") is True
+        assert "web-research" not in reg._disabled
+        assert "web-research" in {x.name for x in reg.enabled()}
 
     def test_enable_already_enabled_returns_false(self):
         s = self._make_skill("foo")
