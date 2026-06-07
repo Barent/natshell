@@ -17,15 +17,16 @@ MODEL_TIERS: dict[str, dict[str, str]] = {
     "1": BUNDLED_TIERS["light"],
     "2": BUNDLED_TIERS["standard"],
     "3": BUNDLED_TIERS["enhanced"],
-    "4": BUNDLED_TIERS["gemma"],
-    "5": BUNDLED_TIERS["gemma12b"],
-    "6": {
+    "4": BUNDLED_TIERS["gemma-light"],
+    "5": BUNDLED_TIERS["gemma-standard"],
+    "6": BUNDLED_TIERS["gemma-enhanced"],
+    "7": {
         "name": "Remote only",
         "description": "Use an Ollama/remote server (no local download)",
         "hf_repo": "",
         "hf_file": "",
     },
-    "7": {
+    "8": {
         "name": "Skip",
         "description": "Configure later",
         "hf_repo": "",
@@ -156,7 +157,7 @@ def run_setup_wizard(
             "    Ollama is recommended for Windows.\n"
             "\n"
         )
-        default_choice = "6"
+        default_choice = "7"
     else:
         default_choice = "2"
 
@@ -164,32 +165,36 @@ def run_setup_wizard(
     output.write("\n")
     local_tag = " (requires llama-cpp-python)" if not llama_available else ""
     output.write(
-        f"    1) Light       — Qwen3-4B        (~2.5 GB, low RAM)"
+        f"    1) Light          — Qwen3-4B        (~2.5 GB, low RAM)"
         f"{local_tag}\n"
     )
     rec = " ★ Recommended" if llama_available else local_tag
     output.write(
-        f"    2) Standard    — Qwen3-8B        (~5 GB, general purpose)"
+        f"    2) Standard       — Qwen3-8B        (~5 GB, general purpose)"
         f"{rec}\n"
     )
     output.write(
-        f"    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context)"
+        f"    3) Enhanced       — Mistral Nemo 12B (~7.5 GB, 128K context)"
         f"{local_tag}\n"
     )
     output.write(
-        f"    4) Gemma 4     — Gemma 4 E4B     (~5 GB, 128K context)"
+        f"    4) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
         f"{local_tag}\n"
     )
     output.write(
-        f"    5) Gemma 4 12B — Gemma 4 12B     (~7.1 GB, 128K context)"
+        f"    5) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
+        f"{local_tag}\n"
+    )
+    output.write(
+        f"    6) Gemma Enhanced — Gemma 4 12B     (~7.1 GB, 128K context)"
         f"{local_tag}\n"
     )
     ollama_rec = " ★ Recommended" if not llama_available else ""
     output.write(
-        f"    6) Remote only — use an Ollama server"
+        f"    7) Remote only    — use an Ollama server"
         f" (no local download){ollama_rec}\n"
     )
-    output.write("    7) Skip        — configure later\n")
+    output.write("    8) Skip           — configure later\n")
     output.write("\n")
 
     try:
@@ -211,9 +216,9 @@ def run_setup_wizard(
     tier = MODEL_TIERS[choice]
     output.write(f"  Selected: {tier['name']} — {tier['description']}\n")
 
-    if choice in ("6", "7"):
+    if choice in ("7", "8"):
         # Remote-only or skip — don't write model config
-        if choice == "6":
+        if choice == "7":
             output.write(
                 "\n"
                 "  To get started with Ollama:\n"

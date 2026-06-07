@@ -4,6 +4,15 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.36] - 2026-06-07
+
+### Added
+
+- Add Gemma 4 E2B as `gemma-light` tier (~1.5 GB, 128K context)
+- Rename Gemma tiers to match light/standard/enhanced nomenclature: `gemma-light` (E2B), `gemma-standard` (E4B), `gemma-enhanced` (12B)
+- Fix size hint for Mistral Nemo 12B in first-run download prompt (was showing ~2.5 GB since v1.0.34)
+- Fix size hint for Gemma 4 E4B (~5 GB) and E2B (~1.5 GB)
+
 ## [1.0.35] - 2026-06-07
 
 ### Added

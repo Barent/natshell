@@ -103,13 +103,14 @@ Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`
 
 ## Models
 
-| Tier | Model | Size | Context | Tool format |
-|------|-------|------|---------|-------------|
-| Light | Qwen3-4B Q4_K_M | ~2.5 GB | 4096 | `<tool_call>` XML |
-| Standard | Qwen3-8B Q4_K_M | ~5 GB | 8192 | `<tool_call>` XML |
-| Enhanced | Mistral Nemo 12B Q4_K_M | ~7.5 GB | 32768 | `[TOOL_CALLS]` JSON |
-| Gemma 4 | Gemma 4 E4B Q4_K_M | ~5 GB | 32768 | `<tool_call>` XML |
-| Gemma 4 12B | Gemma 4 12B Q4_K_M | ~7.1 GB | 32768 | `<tool_call>` XML |
+| Tier | Key | Model | Size | Context | Tool format |
+|------|-----|-------|------|---------|-------------|
+| Light | `light` | Qwen3-4B Q4_K_M | ~2.5 GB | 4096 | `<tool_call>` XML |
+| Standard | `standard` | Qwen3-8B Q4_K_M | ~5 GB | 8192 | `<tool_call>` XML |
+| Enhanced | `enhanced` | Mistral Nemo 12B Q4_K_M | ~7.5 GB | 32768 | `[TOOL_CALLS]` JSON |
+| Gemma Light | `gemma-light` | Gemma 4 E2B Q4_K_M | ~1.5 GB | 32768 | `<tool_call>` XML |
+| Gemma Standard | `gemma-standard` | Gemma 4 E4B Q4_K_M | ~5 GB | 32768 | `<tool_call>` XML |
+| Gemma Enhanced | `gemma-enhanced` | Gemma 4 12B Q4_K_M | ~7.1 GB | 32768 | `<tool_call>` XML |
 
 Default: Qwen3-4B, auto-downloaded to `~/.local/share/natshell/models/`. Context size auto-detected from filename when `n_ctx = 0`.
 

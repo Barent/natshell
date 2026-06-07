@@ -27,8 +27,8 @@ class TestModelTiers:
             assert "hf_repo" in tier
             assert "hf_file" in tier
 
-    def test_seven_tiers(self):
-        assert len(MODEL_TIERS) == 7
+    def test_eight_tiers(self):
+        assert len(MODEL_TIERS) == 8
 
     def test_tier_1_is_light(self):
         assert MODEL_TIERS["1"]["name"] == "Light"
@@ -42,22 +42,25 @@ class TestModelTiers:
         assert MODEL_TIERS["3"]["name"] == "Enhanced"
         assert "Mistral" in MODEL_TIERS["3"]["hf_file"]
 
-    def test_tier_4_is_gemma(self):
-        assert MODEL_TIERS["4"]["name"] == "Gemma 4"
-        assert "gemma" in MODEL_TIERS["4"]["hf_file"].lower()
+    def test_tier_4_is_gemma_light(self):
+        assert MODEL_TIERS["4"]["name"] == "Gemma Light"
+        assert "E2B" in MODEL_TIERS["4"]["hf_file"]
 
-    def test_tier_5_is_gemma12b(self):
-        assert MODEL_TIERS["5"]["name"] == "Gemma 4 12B"
-        assert "gemma" in MODEL_TIERS["5"]["hf_file"].lower()
-        assert "12b" in MODEL_TIERS["5"]["hf_file"].lower()
+    def test_tier_5_is_gemma_standard(self):
+        assert MODEL_TIERS["5"]["name"] == "Gemma Standard"
+        assert "E4B" in MODEL_TIERS["5"]["hf_file"]
 
-    def test_tier_6_is_remote(self):
-        assert MODEL_TIERS["6"]["name"] == "Remote only"
-        assert MODEL_TIERS["6"]["hf_repo"] == ""
+    def test_tier_6_is_gemma_enhanced(self):
+        assert MODEL_TIERS["6"]["name"] == "Gemma Enhanced"
+        assert "12b" in MODEL_TIERS["6"]["hf_file"].lower()
 
-    def test_tier_7_is_skip(self):
-        assert MODEL_TIERS["7"]["name"] == "Skip"
+    def test_tier_7_is_remote(self):
+        assert MODEL_TIERS["7"]["name"] == "Remote only"
         assert MODEL_TIERS["7"]["hf_repo"] == ""
+
+    def test_tier_8_is_skip(self):
+        assert MODEL_TIERS["8"]["name"] == "Skip"
+        assert MODEL_TIERS["8"]["hf_repo"] == ""
 
 
 # ── TestWriteInitialConfig ───────────────────────────────────────────────
@@ -209,7 +212,7 @@ class TestRunSetupWizard:
             data = tomllib.load(f)
         assert "Mistral" in data["model"]["hf_file"]
 
-    def test_choice_4_gemma(self, tmp_path: Path):
+    def test_choice_4_gemma_light(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -230,9 +233,9 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "gemma" in data["model"]["hf_file"].lower()
+        assert "E2B" in data["model"]["hf_file"]
 
-    def test_choice_5_gemma12b(self, tmp_path: Path):
+    def test_choice_5_gemma_standard(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -253,10 +256,9 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "gemma" in data["model"]["hf_file"].lower()
-        assert "12b" in data["model"]["hf_file"].lower()
+        assert "E4B" in data["model"]["hf_file"]
 
-    def test_choice_6_remote(self, tmp_path: Path):
+    def test_choice_6_gemma_enhanced(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -271,15 +273,15 @@ class TestRunSetupWizard:
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "6"
             )
-        # Choice 6 writes an Ollama config and returns the path
         assert result is not None
-        config_path = tmp_path / ".config" / "natshell" / "config.toml"
-        assert config_path.exists()
-        content = config_path.read_text()
-        assert "ollama" in content.lower()
-        assert "localhost:11434" in content
+        config_path = (
+            tmp_path / ".config" / "natshell" / "config.toml"
+        )
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "12b" in data["model"]["hf_file"].lower()
 
-    def test_choice_7_skip(self, tmp_path: Path):
+    def test_choice_7_remote(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -293,6 +295,29 @@ class TestRunSetupWizard:
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "7"
+            )
+        # Choice 7 writes an Ollama config and returns the path
+        assert result is not None
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        assert config_path.exists()
+        content = config_path.read_text()
+        assert "ollama" in content.lower()
+        assert "localhost:11434" in content
+
+    def test_choice_8_skip(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
+        ):
+            result = run_setup_wizard(
+                output=output, input_fn=lambda _: "8"
             )
         assert result is None
 
@@ -378,7 +403,7 @@ class TestRunSetupWizard:
                 return_value=mock_gpu_info,
             ),
         ):
-            run_setup_wizard(output=output, input_fn=lambda _: "7")
+            run_setup_wizard(output=output, input_fn=lambda _: "8")
         text = output.getvalue()
         assert "NVIDIA RTX 4090" in text
 
@@ -399,7 +424,7 @@ class TestRunSetupWizard:
                 return_value=mock_gpu_info,
             ),
         ):
-            run_setup_wizard(output=output, input_fn=lambda _: "7")
+            run_setup_wizard(output=output, input_fn=lambda _: "8")
         text = output.getvalue()
         assert "without GPU support" in text
 

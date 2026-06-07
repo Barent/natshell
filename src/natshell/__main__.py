@@ -634,10 +634,14 @@ def _ensure_model(config) -> str:
 
     # Estimate download size from filename
     fname = config.model.hf_file.lower()
-    if "12b" in fname:
+    if "mistral" in fname and "nemo" in fname:
+        size_hint = "~7.5 GB"
+    elif "12b" in fname:
         size_hint = "~7.1 GB"
-    elif "8b" in fname:
+    elif "8b" in fname or "e4b" in fname:
         size_hint = "~5 GB"
+    elif "e2b" in fname:
+        size_hint = "~1.5 GB"
     else:
         size_hint = "~2.5 GB"
 

@@ -15,15 +15,19 @@ from natshell.model_manager import (
 
 
 class TestBundledTiers:
-    def test_has_five_tiers(self):
-        assert len(BUNDLED_TIERS) == 5
+    def test_has_six_tiers(self):
+        assert len(BUNDLED_TIERS) == 6
 
     def test_tier_keys(self):
         assert set(BUNDLED_TIERS.keys()) == {
-            "light", "standard", "enhanced", "gemma", "gemma12b"
+            "light", "standard", "enhanced",
+            "gemma-light", "gemma-standard", "gemma-enhanced",
         }
 
-    @pytest.mark.parametrize("tier", ["light", "standard", "enhanced", "gemma", "gemma12b"])
+    @pytest.mark.parametrize(
+        "tier",
+        ["light", "standard", "enhanced", "gemma-light", "gemma-standard", "gemma-enhanced"],
+    )
     def test_tier_has_required_fields(self, tier: str):
         t = BUNDLED_TIERS[tier]
         assert "name" in t
@@ -40,8 +44,9 @@ class TestFormatDownloadMenu:
         assert "light" in text
         assert "standard" in text
         assert "enhanced" in text
-        assert "gemma" in text
-        assert "gemma12b" in text
+        assert "gemma-light" in text
+        assert "gemma-standard" in text
+        assert "gemma-enhanced" in text
 
     def test_marks_downloaded(self, tmp_path: Path):
         # Create a fake downloaded model
@@ -124,4 +129,6 @@ class TestSetupWizardTierSharing:
         assert MODEL_TIERS["1"] is BUNDLED_TIERS["light"]
         assert MODEL_TIERS["2"] is BUNDLED_TIERS["standard"]
         assert MODEL_TIERS["3"] is BUNDLED_TIERS["enhanced"]
-        assert MODEL_TIERS["4"] is BUNDLED_TIERS["gemma"]
+        assert MODEL_TIERS["4"] is BUNDLED_TIERS["gemma-light"]
+        assert MODEL_TIERS["5"] is BUNDLED_TIERS["gemma-standard"]
+        assert MODEL_TIERS["6"] is BUNDLED_TIERS["gemma-enhanced"]

@@ -47,14 +47,20 @@ BUNDLED_TIERS: dict[str, dict[str, str]] = {
         "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
         "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
     },
-    "gemma": {
-        "name": "Gemma 4",
+    "gemma-light": {
+        "name": "Gemma Light",
+        "description": "Gemma 4 E2B (~1.5 GB, 128K context)",
+        "hf_repo": "unsloth/gemma-4-E2B-it-GGUF",
+        "hf_file": "gemma-4-E2B-it-Q4_K_M.gguf",
+    },
+    "gemma-standard": {
+        "name": "Gemma Standard",
         "description": "Gemma 4 E4B (~5 GB, 128K context)",
         "hf_repo": "unsloth/gemma-4-E4B-it-GGUF",
         "hf_file": "gemma-4-E4B-it-Q4_K_M.gguf",
     },
-    "gemma12b": {
-        "name": "Gemma 4 12B",
+    "gemma-enhanced": {
+        "name": "Gemma Enhanced",
         "description": "Gemma 4 12B (~7.1 GB, 128K context)",
         "hf_repo": "unsloth/gemma-4-12b-it-GGUF",
         "hf_file": "gemma-4-12b-it-Q4_K_M.gguf",
@@ -75,7 +81,8 @@ def format_download_menu(models_dir: Path | None = None) -> str:
         lines.append(f"  [bold]{key:<10}[/] {tier['description']}{mark}")
     lines.append(
         "\n[dim]Use /model download <tier> to download"
-        " (light, standard, enhanced, gemma, gemma12b)[/]"
+        " (light, standard, enhanced,"
+        " gemma-light, gemma-standard, gemma-enhanced)[/]"
     )
     return "\n".join(lines)
 
@@ -88,7 +95,7 @@ async def download_bundled_model(
     """Download a bundled model tier via huggingface_hub.
 
     Args:
-        tier_key: One of 'light', 'standard', 'enhanced'.
+        tier_key: One of 'light', 'standard', 'enhanced', 'gemma-light', 'gemma-standard', 'gemma-enhanced'.
         models_dir: Directory to save to (default: ~/.local/share/natshell/models/).
         progress_callback: Optional callable for status messages.
 

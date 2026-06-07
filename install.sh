@@ -561,13 +561,14 @@ echo "  ─── NatShell Setup ───"
 echo ""
 echo "  Select a model preset:"
 echo ""
-echo "    1) Light       — Qwen3-4B        (~2.5 GB, low RAM)"
-echo "    2) Standard    — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
-echo "    3) Enhanced    — Mistral Nemo 12B (~7.5 GB, 128K context)"
-echo "    4) Gemma 4     — Gemma 4 E4B     (~5 GB, 128K context)"
-echo "    5) Gemma 4 12B — Gemma 4 12B     (~7.1 GB, 128K context)"
-echo "    6) Remote only — use an Ollama server (no local download)"
-echo "    7) Skip        — configure later"
+echo "    1) Light          — Qwen3-4B        (~2.5 GB, low RAM)"
+echo "    2) Standard       — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
+echo "    3) Enhanced       — Mistral Nemo 12B (~7.5 GB, 128K context)"
+echo "    4) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
+echo "    5) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
+echo "    6) Gemma Enhanced — Gemma 4 12B     (~7.1 GB, 128K context)"
+echo "    7) Remote only    — use an Ollama server (no local download)"
+echo "    8) Skip           — configure later"
 echo ""
 read -rp "  Choice [2]: " model_choice
 model_choice="${model_choice:-2}"
@@ -598,24 +599,31 @@ case "$model_choice" in
         HF_FILE="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
         ;;
     4)
-        info "Gemma 4 preset selected (Gemma 4 E4B)"
+        info "Gemma Light preset selected (Gemma 4 E2B)"
+        DOWNLOAD_MODEL=true
+        WRITE_MODEL_CONFIG=true
+        HF_REPO="unsloth/gemma-4-E2B-it-GGUF"
+        HF_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
+        ;;
+    5)
+        info "Gemma Standard preset selected (Gemma 4 E4B)"
         DOWNLOAD_MODEL=true
         WRITE_MODEL_CONFIG=true
         HF_REPO="unsloth/gemma-4-E4B-it-GGUF"
         HF_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
         ;;
-    5)
-        info "Gemma 4 12B preset selected (Gemma 4 12B)"
+    6)
+        info "Gemma Enhanced preset selected (Gemma 4 12B)"
         DOWNLOAD_MODEL=true
         WRITE_MODEL_CONFIG=true
         HF_REPO="unsloth/gemma-4-12b-it-GGUF"
         HF_FILE="gemma-4-12b-it-Q4_K_M.gguf"
         ;;
-    6)
+    7)
         info "Remote only — skipping local model download"
         SETUP_OLLAMA=true
         ;;
-    7)
+    8)
         info "Skipping setup. Run 'natshell' later to configure."
         ;;
     *)
@@ -629,7 +637,7 @@ case "$model_choice" in
 esac
 
 # Offer Ollama setup for local model options
-if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" || "$model_choice" == "4" || "$model_choice" == "5" ]]; then
+if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" || "$model_choice" == "4" || "$model_choice" == "5" || "$model_choice" == "6" ]]; then
     echo ""
     read -rp "  Configure a remote Ollama server too? [y/N]: " ollama_answer
     if is_yes "$ollama_answer"; then
