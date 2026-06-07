@@ -43,15 +43,21 @@ BUNDLED_TIERS: dict[str, dict[str, str]] = {
     },
     "enhanced": {
         "name": "Enhanced",
-        "description": "Gemma 4 12B (~7.1 GB, 128K context)",
-        "hf_repo": "unsloth/gemma-4-12b-it-GGUF",
-        "hf_file": "gemma-4-12b-it-Q4_K_M.gguf",
+        "description": "Mistral Nemo 12B (~7.5 GB, 128K context)",
+        "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+        "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
     },
     "gemma": {
         "name": "Gemma 4",
         "description": "Gemma 4 E4B (~5 GB, 128K context)",
         "hf_repo": "unsloth/gemma-4-E4B-it-GGUF",
         "hf_file": "gemma-4-E4B-it-Q4_K_M.gguf",
+    },
+    "gemma12b": {
+        "name": "Gemma 4 12B",
+        "description": "Gemma 4 12B (~7.1 GB, 128K context)",
+        "hf_repo": "unsloth/gemma-4-12b-it-GGUF",
+        "hf_file": "gemma-4-12b-it-Q4_K_M.gguf",
     },
 }
 
@@ -67,7 +73,7 @@ def format_download_menu(models_dir: Path | None = None) -> str:
         downloaded = (models_dir / tier["hf_file"]).exists()
         mark = " [green]✓ downloaded[/]" if downloaded else ""
         lines.append(f"  [bold]{key:<10}[/] {tier['description']}{mark}")
-    lines.append("\n[dim]Use /model download <tier> to download (light, standard, enhanced)[/]")
+    lines.append("\n[dim]Use /model download <tier> to download (light, standard, enhanced, gemma, gemma12b)[/]")
     return "\n".join(lines)
 
 

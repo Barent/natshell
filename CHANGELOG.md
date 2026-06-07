@@ -4,6 +4,14 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.35] - 2026-06-07
+
+### Added
+
+- Add Gemma 4 12B as a fifth local model tier (`gemma12b`) — `unsloth/gemma-4-12b-it-GGUF`, ~7.1 GB, 128K context
+- Installer and setup wizard now offer Gemma 4 12B as option 5; Remote only moves to 6, Skip to 7
+- Restore Mistral Nemo 12B as the `enhanced` tier (reverts the replacement made in v1.0.34)
+
 ## [1.0.2] - 2026-03-12
 
 ### Added

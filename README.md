@@ -32,9 +32,11 @@ The installer handles everything — Python venv, GPU detection (Vulkan/Metal/CP
 | Light | Qwen3-4B (Q4_K_M) | ~2.5 GB | Low RAM systems, fast responses |
 | Standard | Qwen3-8B (Q4_K_M) | ~5 GB | General purpose, better reasoning |
 | Enhanced | Mistral Nemo 12B (Q4_K_M) | ~7.5 GB | Best quality, 128K context |
+| Gemma 4 | Gemma 4 E4B (Q4_K_M) | ~5 GB | Efficient MoE, 128K context |
+| Gemma 4 12B | Gemma 4 12B (Q4_K_M) | ~7.1 GB | Dense 12B, 128K context |
 | Remote only | Ollama server | 0 GB | Offload to a remote machine |
 
-Mistral Nemo 12B is recommended for most systems with 16+ GB RAM (or a GPU with 8+ GB VRAM). It offers the best reasoning quality and supports 128K context windows.
+Mistral Nemo 12B is recommended for most systems with 16+ GB RAM (or a GPU with 8+ GB VRAM). It offers the best reasoning quality and supports 128K context windows. Gemma 4 12B is a strong alternative for users who prefer Google's model family.
 
 ### Development setup
 
@@ -69,7 +71,7 @@ natshell --mcp                    # Start as MCP server (stdin/stdout JSON-RPC)
 NatShell uses a ReAct-style agent loop — the model reasons about your request, calls tools (shell commands, file operations, etc.), observes results, and iterates until the task is complete. Up to 15 tool calls per request by default.
 
 ### Inference Backends
-- **Local**: Bundled llama.cpp via llama-cpp-python. Three model tiers: Qwen3-4B (~2.5 GB, light), Qwen3-8B (~5 GB, standard), and Mistral Nemo 12B (~7.5 GB, enhanced). Selected during install, auto-downloaded on first run.
+- **Local**: Bundled llama.cpp via llama-cpp-python. Five model tiers: Qwen3-4B (~2.5 GB, light), Qwen3-8B (~5 GB, standard), Mistral Nemo 12B (~7.5 GB, enhanced), Gemma 4 E4B (~5 GB, gemma), and Gemma 4 12B (~7.1 GB, gemma12b). Selected during install, auto-downloaded on first run.
 - **Remote**: Any OpenAI-compatible API — Ollama, vLLM, LM Studio, etc.
 - **Fallback**: If the remote server is unreachable, NatShell automatically falls back to the local model.
 - **Runtime switching**: Switch models on the fly with `/model` commands without restarting.

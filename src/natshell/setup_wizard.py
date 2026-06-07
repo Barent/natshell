@@ -18,13 +18,14 @@ MODEL_TIERS: dict[str, dict[str, str]] = {
     "2": BUNDLED_TIERS["standard"],
     "3": BUNDLED_TIERS["enhanced"],
     "4": BUNDLED_TIERS["gemma"],
-    "5": {
+    "5": BUNDLED_TIERS["gemma12b"],
+    "6": {
         "name": "Remote only",
         "description": "Use an Ollama/remote server (no local download)",
         "hf_repo": "",
         "hf_file": "",
     },
-    "6": {
+    "7": {
         "name": "Skip",
         "description": "Configure later",
         "hf_repo": "",
@@ -155,7 +156,7 @@ def run_setup_wizard(
             "    Ollama is recommended for Windows.\n"
             "\n"
         )
-        default_choice = "5"
+        default_choice = "6"
     else:
         default_choice = "2"
 
@@ -179,12 +180,16 @@ def run_setup_wizard(
         f"    4) Gemma 4     — Gemma 4 E4B     (~5 GB, 128K context)"
         f"{local_tag}\n"
     )
+    output.write(
+        f"    5) Gemma 4 12B — Gemma 4 12B     (~7.1 GB, 128K context)"
+        f"{local_tag}\n"
+    )
     ollama_rec = " ★ Recommended" if not llama_available else ""
     output.write(
-        f"    5) Remote only — use an Ollama server"
+        f"    6) Remote only — use an Ollama server"
         f" (no local download){ollama_rec}\n"
     )
-    output.write("    6) Skip        — configure later\n")
+    output.write("    7) Skip        — configure later\n")
     output.write("\n")
 
     try:
@@ -206,9 +211,9 @@ def run_setup_wizard(
     tier = MODEL_TIERS[choice]
     output.write(f"  Selected: {tier['name']} — {tier['description']}\n")
 
-    if choice in ("5", "6"):
+    if choice in ("6", "7"):
         # Remote-only or skip — don't write model config
-        if choice == "5":
+        if choice == "6":
             output.write(
                 "\n"
                 "  To get started with Ollama:\n"
