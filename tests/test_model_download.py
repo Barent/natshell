@@ -15,13 +15,15 @@ from natshell.model_manager import (
 
 
 class TestBundledTiers:
-    def test_has_four_tiers(self):
-        assert len(BUNDLED_TIERS) == 4
+    def test_has_five_tiers(self):
+        assert len(BUNDLED_TIERS) == 5
 
     def test_tier_keys(self):
-        assert set(BUNDLED_TIERS.keys()) == {"light", "standard", "enhanced", "gemma"}
+        assert set(BUNDLED_TIERS.keys()) == {
+            "light", "standard", "enhanced", "gemma", "gemma12b"
+        }
 
-    @pytest.mark.parametrize("tier", ["light", "standard", "enhanced", "gemma"])
+    @pytest.mark.parametrize("tier", ["light", "standard", "enhanced", "gemma", "gemma12b"])
     def test_tier_has_required_fields(self, tier: str):
         t = BUNDLED_TIERS[tier]
         assert "name" in t
@@ -39,6 +41,7 @@ class TestFormatDownloadMenu:
         assert "standard" in text
         assert "enhanced" in text
         assert "gemma" in text
+        assert "gemma12b" in text
 
     def test_marks_downloaded(self, tmp_path: Path):
         # Create a fake downloaded model
