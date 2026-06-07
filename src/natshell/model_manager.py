@@ -73,7 +73,10 @@ def format_download_menu(models_dir: Path | None = None) -> str:
         downloaded = (models_dir / tier["hf_file"]).exists()
         mark = " [green]✓ downloaded[/]" if downloaded else ""
         lines.append(f"  [bold]{key:<10}[/] {tier['description']}{mark}")
-    lines.append("\n[dim]Use /model download <tier> to download (light, standard, enhanced, gemma, gemma12b)[/]")
+    lines.append(
+        "\n[dim]Use /model download <tier> to download"
+        " (light, standard, enhanced, gemma, gemma12b)[/]"
+    )
     return "\n".join(lines)
 
 
