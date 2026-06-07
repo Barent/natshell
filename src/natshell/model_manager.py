@@ -95,7 +95,8 @@ async def download_bundled_model(
     """Download a bundled model tier via huggingface_hub.
 
     Args:
-        tier_key: One of 'light', 'standard', 'enhanced', 'gemma-light', 'gemma-standard', 'gemma-enhanced'.
+        tier_key: One of 'light', 'standard', 'enhanced',
+            'gemma-light', 'gemma-standard', 'gemma-enhanced'.
         models_dir: Directory to save to (default: ~/.local/share/natshell/models/).
         progress_callback: Optional callable for status messages.
 
