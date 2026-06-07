@@ -295,6 +295,14 @@ if [[ "$IS_MACOS" != true ]]; then
             NEED_VULKAN_DEPS=true
         fi
 
+        # Check for SPIRV-Headers (required by llama.cpp CMake for Vulkan builds)
+        if ! find /usr /usr/local -name "SPIRV-HeadersConfig.cmake" \
+                                  -o -name "spirv-headers-config.cmake" \
+                                  -o -name "SPIRV-Headers.cps" \
+                                  -o -name "spirv-headers.cps" 2>/dev/null | grep -q .; then
+            NEED_VULKAN_DEPS=true
+        fi
+
         # Check for GLSL shader compiler (glslc or glslangValidator)
         if ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; then
             NEED_VULKAN_DEPS=true
@@ -310,6 +318,15 @@ if [[ "$IS_MACOS" != true ]]; then
                 warn "Vulkan development headers not found (needed to build GPU support)."
                 (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || \
                     warn "Vulkan headers could not be installed — GPU build may fail"
+            fi
+
+            # Install SPIRV-Headers (required by llama.cpp CMake for Vulkan builds)
+            if ! find /usr /usr/local -name "SPIRV-HeadersConfig.cmake" \
+                                      -o -name "spirv-headers-config.cmake" \
+                                      -o -name "SPIRV-Headers.cps" \
+                                      -o -name "spirv-headers.cps" 2>/dev/null | grep -q .; then
+                (install_pkg "spirv-headers" "spirv-headers-devel" "spirv-headers") || \
+                    warn "SPIRV-Headers could not be installed — Vulkan GPU build may fail"
             fi
 
             # Install shader compiler
@@ -461,15 +478,16 @@ if [[ "$GPU_DETECTED" == true ]]; then
         else
             warn "  To fix: install Vulkan development packages and re-run install.sh"
             case "$PKG_MGR" in
-                apt)  warn "    sudo apt install libvulkan-dev glslang-tools" ;;
-                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel glslc  (then reboot)" ;;
-                dnf)  warn "    sudo dnf install vulkan-devel glslc" ;;
-                pacman) warn "    sudo pacman -S vulkan-headers glslang" ;;
+                apt)  warn "    sudo apt install libvulkan-dev spirv-headers glslang-tools" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel spirv-headers-devel glslc  (then reboot)" ;;
+                dnf)  warn "    sudo dnf install vulkan-devel spirv-headers-devel glslc" ;;
+                pacman) warn "    sudo pacman -S vulkan-headers spirv-headers glslang" ;;
             esac
             echo ""
             read -rp "  Install Vulkan dev packages and rebuild now? [Y/n]: " rebuild_answer
             if [[ -z "$rebuild_answer" ]] || is_yes "$rebuild_answer"; then
                 (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || true
+                (install_pkg "spirv-headers" "spirv-headers-devel" "spirv-headers") || true
                 (install_pkg "glslang-tools" "glslc" "glslang") || true
                 if pkg-config --exists vulkan 2>/dev/null; then
                     info "Rebuilding llama-cpp-python with Vulkan support..."
