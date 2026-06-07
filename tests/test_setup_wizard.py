@@ -40,7 +40,7 @@ class TestModelTiers:
 
     def test_tier_3_is_enhanced(self):
         assert MODEL_TIERS["3"]["name"] == "Enhanced"
-        assert "Mistral" in MODEL_TIERS["3"]["hf_file"]
+        assert "gemma" in MODEL_TIERS["3"]["hf_file"].lower()
 
     def test_tier_4_is_gemma(self):
         assert MODEL_TIERS["4"]["name"] == "Gemma 4"
@@ -202,7 +202,7 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "Mistral" in data["model"]["hf_file"]
+        assert "gemma" in data["model"]["hf_file"].lower()
 
     def test_choice_4_gemma(self, tmp_path: Path):
         output = io.StringIO()

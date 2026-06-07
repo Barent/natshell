@@ -160,10 +160,12 @@ def _infer_context_size(model_path: str) -> int:
     # Mistral Nemo supports 128K; 32K default fits ~11 GB VRAM (integrated GPUs)
     if "mistral" in name and "nemo" in name:
         return 32768
-    # Gemma 4: E2B/E4B support 128K, 26B-A4B/31B support 256K.
+    # Gemma 4: E2B/E4B support 128K, 12B supports 128K, 26B-A4B/31B support 256K.
     # 32K fits comfortably on integrated GPUs (16+ GB shared RAM).
     if "gemma" in name:
         if "e2b" in name or "e4b" in name:
+            return 32768
+        if "12b" in name:
             return 32768
         if "26b" in name or "31b" in name:
             return 65536

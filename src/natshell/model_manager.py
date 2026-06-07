@@ -43,9 +43,9 @@ BUNDLED_TIERS: dict[str, dict[str, str]] = {
     },
     "enhanced": {
         "name": "Enhanced",
-        "description": "Mistral Nemo 12B (~7.5 GB, 128K context)",
-        "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
-        "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+        "description": "Gemma 4 12B (~7.1 GB, 128K context)",
+        "hf_repo": "unsloth/gemma-4-12b-it-GGUF",
+        "hf_file": "gemma-4-12b-it-Q4_K_M.gguf",
     },
     "gemma": {
         "name": "Gemma 4",
