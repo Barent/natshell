@@ -24,11 +24,17 @@ is_yes() { [[ "$1" =~ ^[Yy]$ ]]; }
 OS="$(uname -s)"
 IS_MACOS=false
 IS_WSL=false
+IS_RPI=false
 
 if [[ "$OS" == "Darwin" ]]; then
     IS_MACOS=true
 elif [[ "$OS" == "Linux" ]] && grep -qi microsoft /proc/version 2>/dev/null; then
     IS_WSL=true
+elif [[ "$OS" == "Linux" ]]; then
+    if grep -qi "raspberry pi" /sys/firmware/devicetree/base/model 2>/dev/null || \
+       grep -qi "raspberry pi" /proc/cpuinfo 2>/dev/null; then
+        IS_RPI=true
+    fi
 fi
 
 # ─── Preflight checks ────────────────────────────────────────────────────────
@@ -331,8 +337,8 @@ if [[ "$IS_MACOS" != true ]]; then
             NEED_VULKAN_DEPS=true
         fi
 
-        # Check for GLSL shader compiler (glslc or glslangValidator)
-        if ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; then
+        # Check for glslc — CMake's FindVulkan requires it specifically; glslangValidator is not sufficient
+        if ! command -v glslc &>/dev/null; then
             NEED_VULKAN_DEPS=true
         fi
 
@@ -357,11 +363,24 @@ if [[ "$IS_MACOS" != true ]]; then
                     warn "SPIRV-Headers could not be installed — Vulkan GPU build may fail"
             fi
 
-            # Install shader compiler
-            if ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; then
-                warn "GLSL shader compiler not found (needed to build GPU support)."
-                (install_pkg "glslang-tools" "glslc" "glslang") || \
-                    warn "Shader compiler could not be installed — GPU build may fail"
+            # Install shader compiler — CMake's FindVulkan requires glslc specifically (not glslangValidator)
+            # On apt systems: try 'shaderc' (Ubuntu) then 'glslc' as fallbacks; on Debian some versions
+            # do not package glslc at all, in which case we fall back to CPU build.
+            if ! command -v glslc &>/dev/null; then
+                warn "glslc shader compiler not found (required by CMake's FindVulkan)."
+                if [[ "$PKG_MGR" == "apt" ]]; then
+                    if apt-cache show shaderc &>/dev/null 2>&1; then
+                        sudo apt-get install -y shaderc || true
+                    elif apt-cache show glslc &>/dev/null 2>&1; then
+                        sudo apt-get install -y glslc || true
+                    else
+                        warn "glslc is not available in apt — Vulkan GPU build will be skipped."
+                        warn "  NatShell will run on CPU. For GPU support, install a Vulkan SDK that provides glslc."
+                    fi
+                else
+                    (install_pkg "shaderc" "glslc" "shaderc") || \
+                        warn "glslc could not be installed — GPU build may fail"
+                fi
             fi
 
             # Verify after install
@@ -370,15 +389,15 @@ if [[ "$IS_MACOS" != true ]]; then
             else
                 warn "Vulkan headers still not found — GPU build may fail"
             fi
-            if command -v glslc &>/dev/null || command -v glslangValidator &>/dev/null; then
+            if command -v glslc &>/dev/null; then
                 ok "GLSL shader compiler — OK"
             else
-                warn "Shader compiler still not found — GPU build may fail"
+                warn "glslc still not found — GPU build may fail"
             fi
 
             # On Fedora Atomic, layered packages need a reboot to take effect
             if [[ "$PKG_MGR" == "rpm-ostree" ]]; then
-                if ! pkg-config --exists vulkan 2>/dev/null || { ! command -v glslc &>/dev/null && ! command -v glslangValidator &>/dev/null; }; then
+                if ! pkg-config --exists vulkan 2>/dev/null || ! command -v glslc &>/dev/null; then
                     warn "On Fedora Atomic, layered packages take effect after reboot."
                     warn "  Reboot, then re-run install.sh to build with GPU support."
                     warn "  (Continuing with CPU-only build for now.)"
@@ -437,37 +456,53 @@ ok "Virtual environment created at $VENV_DIR"
 CMAKE_ARGS=""
 GPU_DETECTED=false
 
-if [[ "$IS_MACOS" == true ]]; then
+if [[ "$IS_RPI" == true ]]; then
+    info "Raspberry Pi detected — building llama-cpp-python for CPU (Vulkan disabled)"
+    info "  (Vulkan shader compilation exceeds available RAM on Raspberry Pi)"
+    CMAKE_ARGS="-DGGML_VULKAN=OFF"
+elif [[ "$IS_MACOS" == true ]]; then
     info "macOS detected — building llama-cpp-python with Metal support"
     CMAKE_ARGS="-DGGML_METAL=on"
     GPU_DETECTED=true
 elif command -v vulkaninfo &>/dev/null 2>&1; then
     # vulkaninfo (runtime) is present — verify the dev libs are too
-    if pkg-config --exists vulkan 2>/dev/null; then
+    # CMake's FindVulkan also requires glslc; skip Vulkan build if it's unavailable
+    if pkg-config --exists vulkan 2>/dev/null && command -v glslc &>/dev/null; then
         info "Vulkan detected — building llama-cpp-python with Vulkan support"
         CMAKE_ARGS="-DGGML_VULKAN=on"
         GPU_DETECTED=true
     else
-        warn "Vulkan runtime found but development libraries are missing."
-        warn "  GPU support requires the Vulkan dev package."
-        case "$PKG_MGR" in
-            apt)       warn "    sudo apt install libvulkan-dev" ;;
-            rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel  (then reboot)" ;;
-            dnf)       warn "    sudo dnf install vulkan-devel" ;;
-            pacman)    warn "    sudo pacman -S vulkan-headers" ;;
-        esac
-        echo ""
-        read -rp "  Try to install Vulkan dev libraries now? [Y/n]: " vk_answer
-        if [[ -z "$vk_answer" ]] || is_yes "$vk_answer"; then
-            (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") && \
-                pkg-config --exists vulkan 2>/dev/null && {
-                    info "Vulkan dev libraries installed — building with Vulkan support"
-                    CMAKE_ARGS="-DGGML_VULKAN=on"
-                    GPU_DETECTED=true
-                }
+        if ! pkg-config --exists vulkan 2>/dev/null; then
+            warn "Vulkan runtime found but development libraries are missing."
+            warn "  GPU support requires the Vulkan dev package."
+            case "$PKG_MGR" in
+                apt)       warn "    sudo apt install libvulkan-dev" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel  (then reboot)" ;;
+                dnf)       warn "    sudo dnf install vulkan-devel" ;;
+                pacman)    warn "    sudo pacman -S vulkan-headers" ;;
+            esac
+            echo ""
+            read -rp "  Try to install Vulkan dev libraries now? [Y/n]: " vk_answer
+            if [[ -z "$vk_answer" ]] || is_yes "$vk_answer"; then
+                (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || true
+            fi
         fi
-        if [[ -z "$CMAKE_ARGS" ]]; then
-            warn "Continuing with CPU-only build. Re-run install.sh after installing Vulkan dev libs for GPU support."
+        if ! command -v glslc &>/dev/null; then
+            warn "Vulkan runtime found but glslc shader compiler is missing (required by CMake)."
+            warn "  GPU support requires glslc. It is not packaged on all distros."
+            case "$PKG_MGR" in
+                apt)       warn "    sudo apt install shaderc  (Ubuntu) — not available on all Debian variants" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install glslc  (then reboot)" ;;
+                dnf)       warn "    sudo dnf install glslc" ;;
+                pacman)    warn "    sudo pacman -S shaderc" ;;
+            esac
+        fi
+        if pkg-config --exists vulkan 2>/dev/null && command -v glslc &>/dev/null; then
+            info "Vulkan dev libraries and glslc found — building with Vulkan support"
+            CMAKE_ARGS="-DGGML_VULKAN=on"
+            GPU_DETECTED=true
+        else
+            warn "Continuing with CPU-only build. Re-run install.sh after resolving Vulkan build dependencies."
         fi
     fi
 elif command -v nvidia-smi &>/dev/null 2>&1; then
@@ -506,7 +541,7 @@ if [[ "$GPU_DETECTED" == true ]]; then
         else
             warn "  To fix: install Vulkan development packages and re-run install.sh"
             case "$PKG_MGR" in
-                apt)  warn "    sudo apt install libvulkan-dev spirv-headers glslang-tools" ;;
+                apt)  warn "    sudo apt install libvulkan-dev spirv-headers shaderc" ;;
                 rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel spirv-headers-devel glslc  (then reboot)" ;;
                 dnf)  warn "    sudo dnf install vulkan-devel spirv-headers-devel glslc" ;;
                 pacman) warn "    sudo pacman -S vulkan-headers spirv-headers glslang" ;;
@@ -516,7 +551,7 @@ if [[ "$GPU_DETECTED" == true ]]; then
             if [[ -z "$rebuild_answer" ]] || is_yes "$rebuild_answer"; then
                 (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || true
                 (install_pkg "spirv-headers" "spirv-headers-devel" "spirv-headers") || true
-                (install_pkg "glslang-tools" "glslc" "glslang") || true
+                (install_pkg "shaderc" "glslc" "shaderc") || true
                 if pkg-config --exists vulkan 2>/dev/null; then
                     info "Rebuilding llama-cpp-python with Vulkan support..."
                     CMAKE_ARGS="-DGGML_VULKAN=on" "$VENV_DIR/bin/pip" install llama-cpp-python \
