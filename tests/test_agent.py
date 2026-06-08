@@ -543,6 +543,14 @@ class TestGemmaParsing:
         result = _GEMMA_THINK_RE.sub("", text).strip()
         assert result == "Answer"
 
+    def test_gemma_tool_call_hyphenated_name(self):
+        """Skill names contain hyphens (e.g. web-research) and must parse."""
+        text = '<|tool_call>call:web-research{url:<|"|>https://example.com<|"|>}<tool_call|>'
+        match = _GEMMA_TOOL_CALL_RE.search(text)
+        assert match is not None
+        assert match.group(1) == "web-research"
+        assert _parse_gemma_tool_args(match.group(2)) == {"url": "https://example.com"}
+
 
 class TestGemmaToolArgParser:
     def test_string_value(self):
@@ -655,6 +663,14 @@ class TestGemmaToolCallTextFormatter:
         assert match is not None
         parsed = _parse_gemma_tool_args(match.group(2))
         assert parsed == original
+
+    def test_roundtrip_hyphenated_name(self):
+        """A hyphenated name survives format → regex → arg-parse."""
+        text = _format_gemma_tool_call_text("web-research", {"url": "https://x"})
+        match = _GEMMA_TOOL_CALL_RE.search(text)
+        assert match is not None
+        assert match.group(1) == "web-research"
+        assert _parse_gemma_tool_args(match.group(2)) == {"url": "https://x"}
 
 
 class TestGemmaToolMessageConversion:

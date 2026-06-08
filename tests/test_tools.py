@@ -527,6 +527,64 @@ class TestRegistry:
         assert "TypeError" in result.error
         assert "wrong arguments" not in result.error
 
+    async def test_skill_name_as_tool_routes_to_skill_loader(self, tmp_path):
+        """Calling an enabled skill by name (as if it were a tool) routes to
+        the ``skill`` loader instead of failing with ``Unknown tool``."""
+        from natshell.skills import Skill, SkillRegistry
+        from natshell.tools import skill as skill_mod
+
+        skill_dir = tmp_path / "web-research"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: web-research\ndescription: d\n---\nFETCH AND SUMMARIZE PAGES\n",
+            encoding="utf-8",
+        )
+        reg = SkillRegistry(
+            [Skill(name="web-research", description="d", path=skill_dir, source="builtin")],
+            set(),
+        )
+        skill_mod.set_skill_registry(reg)
+        try:
+            registry = create_default_registry()
+            result = await registry.execute("web-research", {"url": "https://x"})
+            assert result.exit_code == 0
+            assert "FETCH AND SUMMARIZE PAGES" in result.output
+        finally:
+            skill_mod.set_skill_registry(None)
+
+    async def test_disabled_skill_name_does_not_route(self, tmp_path):
+        """A *disabled* skill name is not routed — it stays an Unknown tool."""
+        from natshell.skills import Skill, SkillRegistry
+        from natshell.tools import skill as skill_mod
+
+        skill_dir = tmp_path / "web-research"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: web-research\ndescription: d\n---\nbody\n", encoding="utf-8"
+        )
+        reg = SkillRegistry(
+            [Skill(name="web-research", description="d", path=skill_dir, source="builtin")],
+            {"web-research"},
+        )
+        skill_mod.set_skill_registry(reg)
+        try:
+            registry = create_default_registry()
+            result = await registry.execute("web-research", {"url": "https://x"})
+            assert result.exit_code == 1
+            assert "Unknown tool" in result.error
+        finally:
+            skill_mod.set_skill_registry(None)
+
+    async def test_unknown_name_still_errors(self):
+        """A name that is neither a tool nor a skill still returns Unknown tool."""
+        from natshell.tools import skill as skill_mod
+
+        skill_mod.set_skill_registry(None)
+        registry = create_default_registry()
+        result = await registry.execute("definitely-not-a-thing", {})
+        assert result.exit_code == 1
+        assert "Unknown tool" in result.error
+
 
 # ─── Env var filtering ──────────────────────────────────────────────────────
 

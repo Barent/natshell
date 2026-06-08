@@ -118,6 +118,16 @@ class ToolRegistry:
         """Get a tool definition by name."""
         return self._definitions.get(name)
 
+    @staticmethod
+    def _is_enabled_skill(name: str) -> bool:
+        """True if ``name`` is a registered, enabled skill (not a tool)."""
+        from natshell.tools.skill import _SKILL_REGISTRY
+
+        if _SKILL_REGISTRY is None:
+            return False
+        skill = _SKILL_REGISTRY.get(name)
+        return skill is not None and skill.name not in _SKILL_REGISTRY._disabled
+
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """Execute a tool by name with the given arguments.
 
@@ -134,6 +144,14 @@ class ToolRegistry:
         """
         handler = self._tools.get(name)
         if handler is None:
+            # Models frequently invoke a skill by its name as though it were a
+            # tool (e.g. ``web-research``).  Skills aren't tools — they're loaded
+            # via the ``skill`` tool.  If the unknown name matches an *enabled*
+            # skill, transparently route to the skill loader so the next turn
+            # has the instructions and can proceed.
+            if "skill" in self._tools and self._is_enabled_skill(name):
+                logger.warning("Routing skill-as-tool call %r to skill loader", name)
+                return await self.execute("skill", {"name": name})
             return ToolResult(
                 output="",
                 error=f"Unknown tool: {name}",

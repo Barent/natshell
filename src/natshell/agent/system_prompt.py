@@ -226,8 +226,9 @@ If the user asks about NatShell, its commands, settings, safety rules, or troubl
     if skills and (not compact or inject_skills_in_compact):
         lines = ["<available_skills>"]
         lines.append(
-            "The following skills are available. Call the `skill` tool with a name to load full "
-            "instructions when the user's task matches a skill's description."
+            "The following skills are available. To use one, call the `skill` tool with the "
+            "skill's name to load its full instructions — do NOT call the skill name directly "
+            "as if it were a tool. Do this when the user's task matches a skill's description."
         )
         for s in sorted(skills, key=lambda s: s.name):
             lines.append(f"- {s.name}: {s.description}")

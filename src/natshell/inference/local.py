@@ -28,8 +28,9 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 # Regex to match unclosed <think> blocks (truncated responses)
 _THINK_UNCLOSED_RE = re.compile(r"<think>(?:(?!</think>).)*$", re.DOTALL)
 # Gemma 4 tool call: <|tool_call>call:NAME{...}<tool_call|>
+# NAME may contain hyphens (skills like "web-research" are invoked by name).
 _GEMMA_TOOL_CALL_RE = re.compile(
-    r"<\|tool_call>call:(\w+)\{(.*?)\}<tool_call\|>", re.DOTALL
+    r"<\|tool_call>call:([\w-]+)\{(.*?)\}<tool_call\|>", re.DOTALL
 )
 # Gemma 4 think blocks: <|channel>thought...<channel|>
 _GEMMA_THINK_RE = re.compile(r"<\|channel>.*?<channel\|>", re.DOTALL)
