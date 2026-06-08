@@ -243,6 +243,34 @@ if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v 
 fi
 ok "C++ compiler — OK"
 
+# A stale CC/CXX in the environment (e.g. CC=gcc-12 left over from before a
+# distro upgrade removed that binary) makes CMake fail with "Could not find the
+# compiler specified in the environment variable CC" — long before it would fall
+# back to the system compiler. If CC/CXX is unset or does not resolve to an
+# existing executable, pin it to the system compiler so the llama-cpp-python
+# build always uses a working toolchain regardless of inherited environment.
+# (`command -v` rejects a bare name like "gcc-12" that isn't on PATH, and also
+# rejects a path/symlink whose target no longer exists.)
+if [[ "$IS_MACOS" != true ]]; then
+    for _pair in "CC:gcc:cc:clang" "CXX:g++:c++:clang++"; do
+        IFS=: read -r _var _c1 _c2 _c3 <<<"$_pair"
+        _cur="${!_var:-}"
+        if [[ -n "$_cur" ]] && command -v "$_cur" &>/dev/null; then
+            continue   # already valid — respect an intentional override
+        fi
+        for _cand in "$_c1" "$_c2" "$_c3"; do
+            if _resolved="$(command -v "$_cand" 2>/dev/null)"; then
+                if [[ -n "$_cur" ]]; then
+                    warn "$_var=$_cur does not resolve to a compiler; using $_resolved instead."
+                fi
+                export "$_var=$_resolved"
+                break
+            fi
+        done
+    done
+    unset _pair _var _c1 _c2 _c3 _cur _cand _resolved
+fi
+
 # Clipboard tool — needed for copy buttons in the TUI
 if [[ "$IS_MACOS" == true ]]; then
     ok "Clipboard — OK (pbcopy built-in)"
