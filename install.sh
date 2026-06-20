@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # NatShell installer — supports Linux, macOS, and WSL
-# Usage: bash install.sh
+# Usage: bash install.sh [--lite]
+#   --lite  Skip llama-cpp-python build; configure a remote Ollama or
+#           LM Studio / OpenAI-compatible endpoint only. Ideal for devices
+#           like Raspberry Pi where building llama-cpp-python is impractical.
 set -euo pipefail
+
+LITE_MODE=false
+for _arg in "$@"; do
+    [[ "$_arg" == "--lite" ]] && LITE_MODE=true
+done
+unset _arg
 
 INSTALL_DIR="$HOME/.local/share/natshell/app"
 VENV_DIR="$INSTALL_DIR/.venv"
@@ -34,6 +43,22 @@ elif [[ "$OS" == "Linux" ]]; then
     if grep -qi "raspberry pi" /sys/firmware/devicetree/base/model 2>/dev/null || \
        grep -qi "raspberry pi" /proc/cpuinfo 2>/dev/null; then
         IS_RPI=true
+    fi
+fi
+
+# Auto-offer lite mode on Raspberry Pi when --lite was not already passed
+if [[ "$IS_RPI" == true && "$LITE_MODE" != true ]]; then
+    echo ""
+    echo "  Raspberry Pi detected."
+    echo "  Building llama-cpp-python from source on Raspberry Pi is slow and"
+    echo "  often fails due to limited RAM. The lite install skips the local"
+    echo "  inference engine and configures a remote Ollama or LM Studio"
+    echo "  endpoint instead."
+    echo ""
+    read -rp "  Use lite install (remote endpoint only)? [Y/n]: " rpi_lite_answer
+    if [[ -z "$rpi_lite_answer" ]] || is_yes "$rpi_lite_answer"; then
+        LITE_MODE=true
+        info "Lite mode enabled — skipping llama-cpp-python build"
     fi
 fi
 
@@ -227,7 +252,9 @@ else
 fi
 
 # Verify a C++ compiler is available (needed to build llama-cpp-python)
-if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v clang++ &>/dev/null; then
+if [[ "$LITE_MODE" == true ]]; then
+    info "Lite mode — skipping C++ compiler check (llama-cpp-python will not be built)"
+elif ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v clang++ &>/dev/null; then
     warn "A C++ compiler is required to build llama-cpp-python."
     if [[ "$IS_MACOS" == true ]]; then
         echo "  macOS requires Xcode Command Line Tools."
@@ -247,7 +274,9 @@ if ! command -v g++ &>/dev/null && ! command -v c++ &>/dev/null && ! command -v 
         die "C++ compiler still not available after install attempt."
     fi
 fi
-ok "C++ compiler — OK"
+if [[ "$LITE_MODE" != true ]]; then
+    ok "C++ compiler — OK"
+fi
 
 # A stale CC/CXX in the environment (e.g. CC=gcc-12 left over from before a
 # distro upgrade removed that binary) makes CMake fail with "Could not find the
@@ -257,7 +286,7 @@ ok "C++ compiler — OK"
 # build always uses a working toolchain regardless of inherited environment.
 # (`command -v` rejects a bare name like "gcc-12" that isn't on PATH, and also
 # rejects a path/symlink whose target no longer exists.)
-if [[ "$IS_MACOS" != true ]]; then
+if [[ "$IS_MACOS" != true && "$LITE_MODE" != true ]]; then
     for _pair in "CC:gcc:cc:clang" "CXX:g++:c++:clang++"; do
         IFS=: read -r _var _c1 _c2 _c3 <<<"$_pair"
         _cur="${!_var:-}"
@@ -310,7 +339,9 @@ fi
 
 # ─── Vulkan build dependencies (Linux only) ──────────────────────────────────
 
-if [[ "$IS_MACOS" != true ]]; then
+if [[ "$LITE_MODE" == true ]]; then
+    info "Lite mode — skipping Vulkan dependency check"
+elif [[ "$IS_MACOS" != true ]]; then
     # Check if there's a GPU that would benefit from Vulkan
     HAS_GPU=false
     if command -v vulkaninfo &>/dev/null 2>&1 || command -v nvidia-smi &>/dev/null 2>&1; then
@@ -456,7 +487,9 @@ ok "Virtual environment created at $VENV_DIR"
 CMAKE_ARGS=""
 GPU_DETECTED=false
 
-if [[ "$IS_RPI" == true ]]; then
+if [[ "$LITE_MODE" == true ]]; then
+    info "Lite mode — skipping llama-cpp-python (remote inference only)"
+elif [[ "$IS_RPI" == true ]]; then
     info "Raspberry Pi detected — building llama-cpp-python for CPU (Vulkan disabled)"
     info "  (Vulkan shader compilation exceeds available RAM on Raspberry Pi)"
     CMAKE_ARGS="-DGGML_VULKAN=OFF"
@@ -513,13 +546,15 @@ else
     info "No GPU detected — building llama-cpp-python for CPU"
 fi
 
-info "Installing llama-cpp-python (this may take a few minutes)..."
-if [[ -n "$CMAKE_ARGS" ]]; then
-    CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir -q
-else
-    "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q
+if [[ "$LITE_MODE" != true ]]; then
+    info "Installing llama-cpp-python (this may take a few minutes)..."
+    if [[ -n "$CMAKE_ARGS" ]]; then
+        CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir -q
+    else
+        "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q
+    fi
+    ok "llama-cpp-python installed"
 fi
-ok "llama-cpp-python installed"
 
 # ─── Install NatShell package ─────────────────────────────────────────────────
 # llama-cpp-python is already installed above with GPU support, so pip will
@@ -530,7 +565,7 @@ info "Installing NatShell..."
 ok "NatShell package installed"
 
 # Verify GPU support in the build
-if [[ "$GPU_DETECTED" == true ]]; then
+if [[ "$LITE_MODE" != true && "$GPU_DETECTED" == true ]]; then
     if "$VENV_DIR/bin/python" -c "from llama_cpp import llama_supports_gpu_offload; exit(0 if llama_supports_gpu_offload() else 1)" 2>/dev/null; then
         ok "GPU backend — verified working"
     else
@@ -637,92 +672,125 @@ fi
 CONFIG_DIR="$HOME/.config/natshell"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 
-echo ""
-echo "  ─── NatShell Setup ───"
-echo ""
-echo "  Select a model preset:"
-echo ""
-echo "    1) Light          — Qwen3-4B        (~2.5 GB, low RAM)"
-echo "    2) Standard       — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
-echo "    3) Enhanced       — Mistral Nemo 12B (~7.5 GB, 128K context)"
-echo "    4) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
-echo "    5) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
-echo "    6) Gemma Enhanced — Gemma 4 12B     (~7.1 GB, 128K context)"
-echo "    7) Remote only    — use an Ollama server (no local download)"
-echo "    8) Skip           — configure later"
-echo ""
-read -rp "  Choice [2]: " model_choice
-model_choice="${model_choice:-2}"
-
 DOWNLOAD_MODEL=false
 SETUP_OLLAMA=false
+SETUP_REMOTE=false
 WRITE_MODEL_CONFIG=false
 HF_REPO=""
 HF_FILE=""
 
-case "$model_choice" in
-    1)
-        info "Light preset selected (Qwen3-4B)"
-        DOWNLOAD_MODEL=true
-        ;;
-    2)
-        info "Standard preset selected (Qwen3-8B)"
-        DOWNLOAD_MODEL=true
-        WRITE_MODEL_CONFIG=true
-        HF_REPO="Qwen/Qwen3-8B-GGUF"
-        HF_FILE="Qwen3-8B-Q4_K_M.gguf"
-        ;;
-    3)
-        info "Enhanced preset selected (Mistral Nemo 12B)"
-        DOWNLOAD_MODEL=true
-        WRITE_MODEL_CONFIG=true
-        HF_REPO="bartowski/Mistral-Nemo-Instruct-2407-GGUF"
-        HF_FILE="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
-        ;;
-    4)
-        info "Gemma Light preset selected (Gemma 4 E2B)"
-        DOWNLOAD_MODEL=true
-        WRITE_MODEL_CONFIG=true
-        HF_REPO="unsloth/gemma-4-E2B-it-GGUF"
-        HF_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
-        ;;
-    5)
-        info "Gemma Standard preset selected (Gemma 4 E4B)"
-        DOWNLOAD_MODEL=true
-        WRITE_MODEL_CONFIG=true
-        HF_REPO="unsloth/gemma-4-E4B-it-GGUF"
-        HF_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
-        ;;
-    6)
-        info "Gemma Enhanced preset selected (Gemma 4 12B)"
-        DOWNLOAD_MODEL=true
-        WRITE_MODEL_CONFIG=true
-        HF_REPO="unsloth/gemma-4-12b-it-GGUF"
-        HF_FILE="gemma-4-12b-it-Q4_K_M.gguf"
-        ;;
-    7)
-        info "Remote only — skipping local model download"
-        SETUP_OLLAMA=true
-        ;;
-    8)
-        info "Skipping setup. Run 'natshell' later to configure."
-        ;;
-    *)
-        warn "Invalid choice '$model_choice', defaulting to Standard preset"
-        model_choice=2
-        DOWNLOAD_MODEL=true
-        WRITE_MODEL_CONFIG=true
-        HF_REPO="Qwen/Qwen3-8B-GGUF"
-        HF_FILE="Qwen3-8B-Q4_K_M.gguf"
-        ;;
-esac
+echo ""
+echo "  ─── NatShell Setup ───"
+echo ""
 
-# Offer Ollama setup for local model options
-if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" || "$model_choice" == "4" || "$model_choice" == "5" || "$model_choice" == "6" ]]; then
+if [[ "$LITE_MODE" == true ]]; then
+    # Lite mode: only offer remote endpoint options
+    echo "  Select an inference endpoint:"
     echo ""
-    read -rp "  Configure a remote Ollama server too? [y/N]: " ollama_answer
-    if is_yes "$ollama_answer"; then
-        SETUP_OLLAMA=true
+    echo "    1) Ollama server        — e.g. http://raspberrypi.local:11434"
+    echo "    2) LM Studio / OpenAI-compatible endpoint"
+    echo "    3) Skip                 — configure manually in config.toml"
+    echo ""
+    read -rp "  Choice [1]: " lite_choice
+    lite_choice="${lite_choice:-1}"
+
+    case "$lite_choice" in
+        1)
+            info "Ollama endpoint selected"
+            SETUP_OLLAMA=true
+            ;;
+        2)
+            info "LM Studio / OpenAI-compatible endpoint selected"
+            SETUP_REMOTE=true
+            ;;
+        3)
+            info "Skipping setup. Run 'natshell' later to configure."
+            ;;
+        *)
+            warn "Invalid choice '$lite_choice', defaulting to Ollama"
+            SETUP_OLLAMA=true
+            ;;
+    esac
+else
+    # Standard mode: offer local models and optionally a remote endpoint
+    echo "  Select a model preset:"
+    echo ""
+    echo "    1) Light          — Qwen3-4B        (~2.5 GB, low RAM)"
+    echo "    2) Standard       — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
+    echo "    3) Enhanced       — Mistral Nemo 12B (~7.5 GB, 128K context)"
+    echo "    4) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
+    echo "    5) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
+    echo "    6) Gemma Enhanced — Gemma 4 12B     (~7.1 GB, 128K context)"
+    echo "    7) Remote only    — use an Ollama server (no local download)"
+    echo "    8) Skip           — configure later"
+    echo ""
+    read -rp "  Choice [2]: " model_choice
+    model_choice="${model_choice:-2}"
+
+    case "$model_choice" in
+        1)
+            info "Light preset selected (Qwen3-4B)"
+            DOWNLOAD_MODEL=true
+            ;;
+        2)
+            info "Standard preset selected (Qwen3-8B)"
+            DOWNLOAD_MODEL=true
+            WRITE_MODEL_CONFIG=true
+            HF_REPO="Qwen/Qwen3-8B-GGUF"
+            HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+            ;;
+        3)
+            info "Enhanced preset selected (Mistral Nemo 12B)"
+            DOWNLOAD_MODEL=true
+            WRITE_MODEL_CONFIG=true
+            HF_REPO="bartowski/Mistral-Nemo-Instruct-2407-GGUF"
+            HF_FILE="Mistral-Nemo-Instruct-2407-Q4_K_M.gguf"
+            ;;
+        4)
+            info "Gemma Light preset selected (Gemma 4 E2B)"
+            DOWNLOAD_MODEL=true
+            WRITE_MODEL_CONFIG=true
+            HF_REPO="unsloth/gemma-4-E2B-it-GGUF"
+            HF_FILE="gemma-4-E2B-it-Q4_K_M.gguf"
+            ;;
+        5)
+            info "Gemma Standard preset selected (Gemma 4 E4B)"
+            DOWNLOAD_MODEL=true
+            WRITE_MODEL_CONFIG=true
+            HF_REPO="unsloth/gemma-4-E4B-it-GGUF"
+            HF_FILE="gemma-4-E4B-it-Q4_K_M.gguf"
+            ;;
+        6)
+            info "Gemma Enhanced preset selected (Gemma 4 12B)"
+            DOWNLOAD_MODEL=true
+            WRITE_MODEL_CONFIG=true
+            HF_REPO="unsloth/gemma-4-12b-it-GGUF"
+            HF_FILE="gemma-4-12b-it-Q4_K_M.gguf"
+            ;;
+        7)
+            info "Remote only — skipping local model download"
+            SETUP_OLLAMA=true
+            ;;
+        8)
+            info "Skipping setup. Run 'natshell' later to configure."
+            ;;
+        *)
+            warn "Invalid choice '$model_choice', defaulting to Standard preset"
+            model_choice=2
+            DOWNLOAD_MODEL=true
+            WRITE_MODEL_CONFIG=true
+            HF_REPO="Qwen/Qwen3-8B-GGUF"
+            HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+            ;;
+    esac
+
+    # Offer Ollama setup for local model options
+    if [[ "$model_choice" == "1" || "$model_choice" == "2" || "$model_choice" == "3" || "$model_choice" == "4" || "$model_choice" == "5" || "$model_choice" == "6" ]]; then
+        echo ""
+        read -rp "  Configure a remote Ollama server too? [y/N]: " ollama_answer
+        if is_yes "$ollama_answer"; then
+            SETUP_OLLAMA=true
+        fi
     fi
 fi
 
@@ -788,10 +856,83 @@ except Exception:
     fi
 fi
 
+# ─── LM Studio / OpenAI-compatible Remote Endpoint Setup ─────────────────────
+
+REMOTE_URL=""
+REMOTE_MODEL=""
+REMOTE_API_KEY=""
+
+if [[ "$SETUP_REMOTE" == true ]]; then
+    echo ""
+    echo "  ─── LM Studio / OpenAI-Compatible Endpoint Setup ───"
+    echo ""
+    echo "  Enter the base URL of the OpenAI-compatible API."
+    echo "  Examples:"
+    echo "    LM Studio (local):   http://localhost:1234/v1"
+    echo "    LM Studio (network): http://192.168.1.x:1234/v1"
+    echo "    Ollama (v1 API):     http://localhost:11434/v1"
+    echo "    Custom server:       https://myserver.example.com/v1"
+    echo ""
+    read -rp "  API URL [http://localhost:1234/v1]: " remote_url_input
+    REMOTE_URL="${remote_url_input:-http://localhost:1234/v1}"
+
+    if [[ -n "$REMOTE_URL" && "$REMOTE_URL" != http://* && "$REMOTE_URL" != https://* ]]; then
+        REMOTE_URL="http://$REMOTE_URL"
+    fi
+
+    echo ""
+    read -rp "  API key (leave blank if not required): " remote_key_input
+    REMOTE_API_KEY="${remote_key_input:-}"
+
+    # Probe the models endpoint
+    echo ""
+    info "Checking endpoint at $REMOTE_URL..."
+    if [[ -n "$REMOTE_API_KEY" ]]; then
+        models_json=$(curl -sf "${REMOTE_URL%/}/models" --connect-timeout 5 \
+            -H "Authorization: Bearer $REMOTE_API_KEY" 2>/dev/null || true)
+    else
+        models_json=$(curl -sf "${REMOTE_URL%/}/models" --connect-timeout 5 2>/dev/null || true)
+    fi
+    if [[ -n "$models_json" ]]; then
+        ok "Endpoint is reachable"
+        echo ""
+        echo "$models_json" | "$PYTHON" -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    models = data.get('data', [])
+    if models:
+        print('  Available models:')
+        for m in models[:10]:
+            print(f'    - {m.get(\"id\", \"?\")}')
+        if len(models) > 10:
+            print(f'    ... and {len(models) - 10} more')
+    else:
+        print('  No models listed by server.')
+except Exception:
+    print('  Could not parse model list.')
+" 2>/dev/null || echo "  Could not query model list."
+        echo ""
+        read -rp "  Model name/ID to use [llama-3.2-3b-instruct]: " remote_model_input
+        REMOTE_MODEL="${remote_model_input:-llama-3.2-3b-instruct}"
+    else
+        warn "Endpoint not reachable or returned no data at $REMOTE_URL"
+        echo ""
+        read -rp "  Save this URL anyway for later? [Y/n]: " save_anyway
+        if [[ -z "$save_anyway" ]] || is_yes "$save_anyway"; then
+            read -rp "  Model name/ID to use [llama-3.2-3b-instruct]: " remote_model_input
+            REMOTE_MODEL="${remote_model_input:-llama-3.2-3b-instruct}"
+        else
+            info "Skipping remote endpoint configuration"
+            REMOTE_URL=""
+        fi
+    fi
+fi
+
 # ─── Write Config ────────────────────────────────────────────────────────────
 
 # Write config if any section needs non-default values
-if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true || -n "$OLLAMA_URL" ]]; then
+if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true || -n "$OLLAMA_URL" || -n "$REMOTE_URL" || "$LITE_MODE" == true ]]; then
     # Back up existing config if present
     if [[ -f "$CONFIG_FILE" ]]; then
         cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
@@ -801,7 +942,7 @@ if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true || -n "$OLLAMA_UR
     # Build config content (only sections that differ from defaults)
     config_content=""
 
-    # [model] section — written for 8B preset and/or GPU detection
+    # [model] section — written for non-default local model preset and/or GPU detection
     if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true ]]; then
         config_content="[model]"$'\n'
         if [[ "$WRITE_MODEL_CONFIG" == true ]]; then
@@ -814,10 +955,31 @@ if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true || -n "$OLLAMA_UR
         config_content+=$'\n'
     fi
 
+    # [ollama] section
     if [[ -n "$OLLAMA_URL" ]]; then
         config_content+="[ollama]
 url = \"${OLLAMA_URL}\"
 default_model = \"${OLLAMA_MODEL}\"
+"
+        config_content+=$'\n'
+    fi
+
+    # [remote] section — for LM Studio / OpenAI-compatible endpoint
+    if [[ -n "$REMOTE_URL" ]]; then
+        config_content+="[remote]
+url = \"${REMOTE_URL}\"
+model = \"${REMOTE_MODEL}\"
+"
+        if [[ -n "$REMOTE_API_KEY" ]]; then
+            config_content+="api_key = \"${REMOTE_API_KEY}\""$'\n'
+        fi
+        config_content+=$'\n'
+    fi
+
+    # [engine] section — force remote engine in lite mode (no local inference)
+    if [[ "$LITE_MODE" == true ]]; then
+        config_content+="[engine]
+preferred = \"remote\"
 "
     fi
 
@@ -844,6 +1006,14 @@ echo ""
 echo "  Run:       natshell"
 echo "  Direct:    $INSTALL_DIR/.venv/bin/natshell"
 echo "  Config:    ~/.config/natshell/config.toml"
-echo "  Models:    ~/.local/share/natshell/models/"
+if [[ "$LITE_MODE" != true ]]; then
+    echo "  Models:    ~/.local/share/natshell/models/"
+fi
 echo "  Uninstall: bash $INSTALL_DIR/uninstall.sh"
+if [[ "$LITE_MODE" == true ]]; then
+    echo ""
+    echo "  Lite install: local inference is disabled. NatShell routes all"
+    echo "  requests through the configured remote endpoint. To add or change"
+    echo "  the endpoint later, edit ~/.config/natshell/config.toml."
+fi
 echo ""
