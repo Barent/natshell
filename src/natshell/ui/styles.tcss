@@ -14,7 +14,7 @@ Footer {
 /* Conversation area */
 #conversation {
     height: 1fr;
-    padding: 1 2;
+    padding: 0 1;
     scrollbar-size: 1 1;
     scrollbar-color: #30304a;
     scrollbar-color-hover: #4a4a6a;
@@ -40,7 +40,7 @@ Footer {
 
 /* Input row (input + paste button) */
 #input-row {
-    height: 3;
+    height: auto;
     margin: 0 1 1 1;
 }
 
@@ -61,7 +61,7 @@ Footer {
 #quit-btn {
     width: 6;
     min-width: 6;
-    height: 3;
+    height: auto;
     background: #16213e;
     color: #6a3a3a;
     border: none;
@@ -78,7 +78,7 @@ Footer {
 #paste-btn {
     width: 5;
     min-width: 5;
-    height: 3;
+    height: auto;
     background: #16213e;
     color: #a0a0a0;
     border: none;
@@ -135,29 +135,29 @@ CopyableMessage {
 
 /* User messages */
 UserMessage {
-    margin: 1 0 0 4;
+    margin: 0 0 0 4;
     padding: 0 1;
     color: #48bfe6;
 }
 
 /* Assistant messages */
 AssistantMessage {
-    margin: 1 0 0 0;
+    margin: 0 0 0 0;
     padding: 0 1;
     color: #e2e2e2;
 }
 
 /* Planning/reasoning text */
 PlanningMessage {
-    margin: 1 0 0 0;
+    margin: 0 0 0 0;
     padding: 0 1;
     color: #7a7a9a;
 }
 
 /* Command execution blocks */
 CommandBlock {
-    margin: 0 2;
-    padding: 1 2;
+    margin: 0 1;
+    padding: 0 1;
     border: round #30304a;
     background: #0d1b2a;
     height: auto;
@@ -201,14 +201,14 @@ BlockedMessage {
 
 /* Error messages */
 ErrorMessage {
-    margin: 1 0 0 0;
+    margin: 0;
     padding: 0 1;
     color: #d4884b;
 }
 
 /* System messages (slash command feedback) */
 SystemMessage {
-    margin: 1 0 0 0;
+    margin: 0;
     padding: 0 1;
     color: #e6b800;
 }
@@ -249,7 +249,7 @@ PlanSummaryMessage {
 
 /* Thinking indicator */
 ThinkingIndicator {
-    margin: 1 0 0 0;
+    margin: 0;
     padding: 0 1;
     color: #7a7a9a;
 }
@@ -260,7 +260,7 @@ ConfirmScreen {
 }
 
 #confirm-dialog {
-    width: 70;
+    width: auto;
     max-width: 90%;
     height: auto;
     max-height: 80%;
@@ -297,7 +297,7 @@ SudoPasswordScreen {
 }
 
 #sudo-dialog {
-    width: 70;
+    width: auto;
     max-width: 90%;
     height: auto;
     max-height: 80%;
@@ -327,7 +327,7 @@ QuitConfirmScreen {
 }
 
 #quit-dialog {
-    width: 60;
+    width: auto;
     max-width: 90%;
     height: auto;
     padding: 2 4;

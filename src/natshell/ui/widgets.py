@@ -183,6 +183,9 @@ _LOGO_STATIC = (
     "  [#30304a]██[/] [#00ff88]·[/]"
 )
 
+# Compact single-line logo for small screens (< 30 rows)
+_LOGO_COMPACT = "[bold #00ffff]NatShell[/] [#00ccaa]v[/]"
+
 _LOGO_FRAMES = [
     _LOGO_STATIC,
     # Frame 1: sparkle upper-right
@@ -246,6 +249,7 @@ class LogoBanner(Horizontal):
         self._animation_timer = None
         self._auto_stop_timer = None
         self._frame_index = 0
+        self._compact = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="logo-lines"):
@@ -254,7 +258,28 @@ class LogoBanner(Horizontal):
         with Vertical(id="banner-btn-wrap"):
             yield Button("\U0001f4cb Copy Chat", id="copy-chat-btn")
 
+    def on_resize(self, event: events.Resize) -> None:
+        """Switch to compact single-line logo when the terminal is short."""
+        new_compact = event.size.height < 30
+        if self._compact != new_compact:
+            self._compact = new_compact
+            self._rebuild_logo()
+
+    def _rebuild_logo(self) -> None:
+        """Rebuild logo lines for compact or full mode."""
+        # Remove existing logo lines using the public query API
+        for child in self.query(".logo-line"):
+            child.remove()
+        content = _LOGO_COMPACT if self._compact else _LOGO_STATIC
+        lines_container = self.query_one("#logo-lines", Vertical)
+        for line in content.split("\n"):
+            lines_container.mount(Static(line, classes="logo-line"))
+
     def _update_content(self, content: str) -> None:
+        # In compact mode the banner is a single line; the multi-line animation
+        # frames and static logo must not overwrite it.
+        if self._compact:
+            return
         lines = content.split("\n")
         children = list(self.query(".logo-line"))
         for i, child in enumerate(children):
