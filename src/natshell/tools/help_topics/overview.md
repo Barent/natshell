@@ -1,0 +1,3 @@
+NatShell is an agentic TUI that provides a natural language interface to Linux, macOS, and WSL. Users type requests in plain English and a bundled local LLM plans and executes multi-step shell operations. It also serves as a coding assistant — it can read, edit, and write source files, and execute code snippets in 10 languages.
+
+It uses the ReAct agent pattern (reason → act → observe), with a bundled llama.cpp backend, optional Ollama or remote API fallback, and a Textual-based TUI. The safety classifier is regex-based and deterministic. Config file: ~/.config/natshell/config.toml

@@ -59,7 +59,13 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-natshell = ["config.default.toml", "ui/styles.tcss", "skills/**/*", "skills/**/.*"]
+natshell = [
+    "config.default.toml",
+    "ui/styles.tcss",
+    "skills/**/*",
+    "skills/**/.*",
+    "tools/help_topics/*.md",
+]
 
 [tool.ruff]
 line-length = 100

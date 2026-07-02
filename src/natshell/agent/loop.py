@@ -19,6 +19,12 @@ from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import Risk, SafetyClassifier
+from natshell.scaling import (
+    MAX_OUTPUT_CHARS_TABLE,
+    MAX_STEPS_TABLE,
+    READ_FILE_LINES_TABLE,
+    scale_for_context,
+)
 from natshell.tools import edit_file as _edit_file_mod
 from natshell.tools import execute_shell as _exec_shell_mod
 from natshell.tools import read_file as _read_file_mod
@@ -288,57 +294,15 @@ class AgentLoop:
         """
         if self.config.max_steps != self._DEFAULT_MAX_STEPS:
             return self.config.max_steps
-        if n_ctx >= 1048576:
-            return 200
-        elif n_ctx >= 524288:
-            return 150
-        elif n_ctx >= 262144:
-            return 120
-        elif n_ctx >= 131072:
-            return 60
-        elif n_ctx >= 32768:
-            return 50
-        elif n_ctx >= 16384:
-            return 35
-        elif n_ctx >= 8192:
-            return 25
-        return self._DEFAULT_MAX_STEPS
+        return scale_for_context(n_ctx, MAX_STEPS_TABLE, self._DEFAULT_MAX_STEPS)
 
     def _effective_max_output_chars(self, n_ctx: int) -> int:
         """Scale shell output truncation with context window."""
-        if n_ctx >= 1048576:
-            return 128000
-        elif n_ctx >= 524288:
-            return 96000
-        elif n_ctx >= 262144:
-            return 64000
-        elif n_ctx >= 131072:
-            return 32000
-        elif n_ctx >= 65536:
-            return 16000
-        elif n_ctx >= 32768:
-            return 12000
-        elif n_ctx >= 16384:
-            return 8000
-        return 4000
+        return scale_for_context(n_ctx, MAX_OUTPUT_CHARS_TABLE, 4000)
 
     def _effective_read_file_lines(self, n_ctx: int) -> int:
         """Scale read_file default line count with context window."""
-        if n_ctx >= 1048576:
-            return 8000
-        elif n_ctx >= 524288:
-            return 6000
-        elif n_ctx >= 262144:
-            return 4000
-        elif n_ctx >= 131072:
-            return 3000
-        elif n_ctx >= 65536:
-            return 2000
-        elif n_ctx >= 32768:
-            return 1000
-        elif n_ctx >= 16384:
-            return 500
-        return 200
+        return scale_for_context(n_ctx, READ_FILE_LINES_TABLE, 200)
 
     def enqueue_message(self, text: str) -> None:
         """Queue a user message for injection between agent steps."""
@@ -1237,110 +1201,26 @@ class AgentLoop:
         )
 
     def _describe_remote_error(self, error: Exception) -> str:
-        """Build a short user-facing label for a remote inference failure.
+        """Build a short user-facing label for a remote inference failure."""
+        from natshell.agent.fallback import describe_remote_error
 
-        Returns "Remote server timed out" when the underlying cause was a
-        timeout (so the existing phrasing is preserved for the common case),
-        or "Remote server error: {message}" otherwise — surfacing the actual
-        exception text (e.g. "Remote API error 500: model runner has
-        unexpectedly stopped…") instead of falsely claiming a timeout.
-        """
-        import httpx
-
-        timeout_types = (
-            httpx.ReadTimeout,
-            httpx.PoolTimeout,
-            httpx.ConnectTimeout,
-        )
-        if isinstance(error, timeout_types):
-            return "Remote server timed out"
-        cause = getattr(error, "__cause__", None)
-        if isinstance(cause, timeout_types):
-            return "Remote server timed out"
-        message = str(error) or error.__class__.__name__
-        return f"Remote server error: {message}"
+        return describe_remote_error(error)
 
     def _can_fallback(self, error: Exception) -> bool:
         """Check if we should attempt fallback to local model."""
-        import httpx
+        from natshell.agent.fallback import can_fallback
 
-        from natshell.inference.remote import (
-            AuthenticationError,
-            ContextOverflowError,
-            RemoteEngine,
-        )
-
-        # Context overflow is not a connectivity issue — don't swap engines
-        if isinstance(error, ContextOverflowError):
-            return False
-        # Auth errors mean the server is reachable but the key is wrong — don't swap
-        if isinstance(error, AuthenticationError):
-            return False
-        if not isinstance(self.engine, RemoteEngine):
-            return False
-        if self.fallback_config is None:
-            return False
-        return isinstance(
-            error,
-            (
-                httpx.ConnectError,
-                httpx.ConnectTimeout,
-                httpx.ReadTimeout,
-                httpx.PoolTimeout,
-                httpx.RemoteProtocolError,
-                ConnectionError,
-                OSError,
-            ),
-        )
+        return can_fallback(error, self.engine, self.fallback_config)
 
     async def _try_local_fallback(self) -> bool:
         """Attempt to load and swap to the local model. Returns True on success."""
-        if self.fallback_config is None:
+        from natshell.agent.fallback import load_fallback_engine
+
+        engine = await load_fallback_engine(self.fallback_config)
+        if engine is None:
             return False
-
-        # Resolve model path
-        model_path = self.fallback_config.path
-        if model_path == "auto":
-            from natshell.platform import data_dir
-
-            model_dir = data_dir() / "models"
-            model_path = str(model_dir / self.fallback_config.hf_file)
-
-        if not Path(model_path).exists():
-            logger.warning("Local model not found at %s — cannot fall back", model_path)
-            return False
-
-        try:
-            from natshell.inference.local import LocalEngine
-
-            engine = await asyncio.to_thread(
-                LocalEngine,
-                model_path=model_path,
-                n_ctx=self.fallback_config.n_ctx,
-                n_threads=self.fallback_config.n_threads,
-                n_gpu_layers=self.fallback_config.n_gpu_layers,
-                main_gpu=self.fallback_config.main_gpu,
-            )
-            await self.swap_engine(engine)
-
-            # Warn if GPU offload was requested but unavailable
-            if self.fallback_config.n_gpu_layers != 0:
-                try:
-                    from llama_cpp import llama_supports_gpu_offload
-
-                    if not llama_supports_gpu_offload():
-                        logger.warning(
-                            "Fallback model running on CPU — llama-cpp-python"
-                            " was built without GPU support. Reinstall with"
-                            ' CMAKE_ARGS="-DGGML_VULKAN=on" for GPU acceleration.'
-                        )
-                except ImportError:
-                    pass
-
-            return True
-        except Exception:
-            logger.exception("Failed to load local model for fallback")
-            return False
+        await self.swap_engine(engine)
+        return True
 
     # Number of most-recent messages to keep uncompressed (3 tool exchanges)
     _COMPRESS_PRESERVE_RECENT = 6
