@@ -18,13 +18,13 @@ from natshell.agent.context_manager import ContextManager
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
+from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.scaling import (
     MAX_OUTPUT_CHARS_TABLE,
     MAX_STEPS_TABLE,
     READ_FILE_LINES_TABLE,
     scale_for_context,
 )
-from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.tools import edit_file as _edit_file_mod
 from natshell.tools import execute_shell as _exec_shell_mod
 from natshell.tools import read_file as _read_file_mod
