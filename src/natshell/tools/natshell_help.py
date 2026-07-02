@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from importlib import resources
 from pathlib import Path
 
 from natshell.config import SafetyConfig
@@ -22,8 +23,6 @@ def set_safety_config(config: SafetyConfig) -> None:
 
 
 # ── Static topic loading ──────────────────────────────────────────────────
-
-from importlib import resources
 
 
 def _topics_dir():
