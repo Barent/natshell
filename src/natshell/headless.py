@@ -17,6 +17,74 @@ from typing import Any
 from natshell.agent.loop import AgentLoop, EventType
 
 
+def make_confirm_callback(auto_approve: bool):
+    """Build the standard headless confirmation callback."""
+
+    async def _confirm_callback(tool_call: Any) -> bool:
+        if auto_approve:
+            _err(f"[auto-approved] {tool_call.name}: {tool_call.arguments}")
+            return True
+        _err(f"[declined — use --danger-fast to auto-approve] {tool_call.name}")
+        return False
+
+    return _confirm_callback
+
+
+async def consume_events(
+    stream,
+    *,
+    emit=None,
+    on_response=None,
+    on_tool_result=None,
+    on_executing=None,
+    on_stats=None,
+) -> bool:
+    """Shared event loop for all headless runners.
+
+    emit: line sink (defaults to _err; exeplan passes its step logger).
+    on_response: handler for the final RESPONSE text (required).
+    on_tool_result: optional extra hook, called after standard output logging.
+    on_executing: optional replacement for the default "[executing] name" line.
+    Returns True if any ERROR event was seen.
+    """
+    if emit is None:
+        emit = _err
+    had_error = False
+    async for event in stream:
+        match event.type:
+            case EventType.RESPONSE:
+                on_response(event.data)
+            case EventType.TOOL_RESULT:
+                if event.tool_result and event.tool_result.output:
+                    emit(event.tool_result.output)
+                if event.tool_result and event.tool_result.error:
+                    emit(f"[stderr] {event.tool_result.error}")
+                if on_tool_result:
+                    on_tool_result(event)
+            case EventType.PLANNING:
+                emit(f"[thinking] {event.data}")
+            case EventType.EXECUTING:
+                if event.tool_call:
+                    if on_executing:
+                        on_executing(event)
+                    else:
+                        emit(f"[executing] {event.tool_call.name}")
+            case EventType.BLOCKED:
+                if event.tool_call:
+                    emit(f"[BLOCKED] {event.tool_call.name}: {event.tool_call.arguments}")
+            case EventType.ERROR:
+                emit(f"[error] {event.data}")
+                had_error = True
+            case EventType.RUN_STATS:
+                if event.metrics:
+                    steps = event.metrics.get("steps", "?")
+                    wall = event.metrics.get("total_wall_ms", 0)
+                    emit(f"[stats] {steps} steps in {wall}ms")
+                    if on_stats:
+                        on_stats(event.metrics)
+    return had_error
+
+
 async def run_headless(
     agent: AgentLoop,
     prompt: str,
@@ -34,57 +102,13 @@ async def run_headless(
         Exit code (0 = success, 1 = error).
     """
 
-    async def _confirm_callback(tool_call: Any) -> bool:
-        if auto_approve:
-            _err(f"[auto-approved] {tool_call.name}: {tool_call.arguments}")
-            return True
-        _err(f"[declined — use --danger-fast to auto-approve] {tool_call.name}")
-        return False
-
-    had_error = False
-
-    async for event in agent.handle_user_message(
-        prompt,
-        confirm_callback=_confirm_callback,
-    ):
-        match event.type:
-            case EventType.RESPONSE:
-                # Final text → stdout (pipeable)
-                print(event.data, flush=True)
-
-            case EventType.TOOL_RESULT:
-                # Tool output → stderr for debugging
-                if event.tool_result and event.tool_result.output:
-                    _err(event.tool_result.output)
-                if event.tool_result and event.tool_result.error:
-                    _err(f"[stderr] {event.tool_result.error}")
-
-            case EventType.PLANNING:
-                _err(f"[thinking] {event.data}")
-
-            case EventType.EXECUTING:
-                if event.tool_call:
-                    _err(f"[executing] {event.tool_call.name}")
-
-            case EventType.BLOCKED:
-                if event.tool_call:
-                    _err(f"[BLOCKED] {event.tool_call.name}: {event.tool_call.arguments}")
-
-            case EventType.ERROR:
-                _err(f"[error] {event.data}")
-                had_error = True
-
-            case EventType.CONFIRM_NEEDED:
-                pass  # Handled by _confirm_callback
-
-            case EventType.QUEUED_MESSAGE:
-                pass  # Headless is single-shot; queuing doesn't apply
-
-            case EventType.RUN_STATS:
-                if event.metrics:
-                    steps = event.metrics.get("steps", "?")
-                    wall = event.metrics.get("total_wall_ms", 0)
-                    _err(f"[stats] {steps} steps in {wall}ms")
+    had_error = await consume_events(
+        agent.handle_user_message(
+            prompt,
+            confirm_callback=make_confirm_callback(auto_approve),
+        ),
+        on_response=lambda data: print(data, flush=True),
+    )
 
     if had_error:
         return 1
@@ -107,13 +131,6 @@ async def run_headless_plan(
     from natshell.agent.plan_executor import _build_plan_prompt, _shallow_tree
     from natshell.tools.registry import PLAN_SAFE_TOOLS
 
-    async def _confirm_callback(tool_call: Any) -> bool:
-        if auto_approve:
-            _err(f"[auto-approved] {tool_call.name}: {tool_call.arguments}")
-            return True
-        _err(f"[declined — use --danger-fast to auto-approve] {tool_call.name}")
-        return False
-
     agent.clear_history()
     tree = _shallow_tree(Path.cwd())
     try:
@@ -124,33 +141,15 @@ async def run_headless_plan(
 
     had_error = False
     try:
-        async for event in agent.handle_user_message(
-            prompt,
-            confirm_callback=_confirm_callback,
-            tool_filter=PLAN_SAFE_TOOLS,
-            skip_intent_detection=True,
-        ):
-            match event.type:
-                case EventType.RESPONSE:
-                    _err(f"[response] {event.data}")
-                case EventType.TOOL_RESULT:
-                    if event.tool_result and event.tool_result.output:
-                        _err(event.tool_result.output)
-                    if event.tool_result and event.tool_result.error:
-                        _err(f"[stderr] {event.tool_result.error}")
-                case EventType.PLANNING:
-                    _err(f"[thinking] {event.data}")
-                case EventType.EXECUTING:
-                    if event.tool_call:
-                        _err(f"[executing] {event.tool_call.name}")
-                case EventType.ERROR:
-                    _err(f"[error] {event.data}")
-                    had_error = True
-                case EventType.RUN_STATS:
-                    if event.metrics:
-                        steps = event.metrics.get("steps", "?")
-                        wall = event.metrics.get("total_wall_ms", 0)
-                        _err(f"[stats] {steps} steps in {wall}ms")
+        had_error = await consume_events(
+            agent.handle_user_message(
+                prompt,
+                confirm_callback=make_confirm_callback(auto_approve),
+                tool_filter=PLAN_SAFE_TOOLS,
+                skip_intent_detection=True,
+            ),
+            on_response=lambda data: _err(f"[response] {data}"),
+        )
     except Exception as e:
         _err(f"[error] Plan generation failed: {e}")
         return 1
@@ -215,12 +214,7 @@ async def run_headless_exeplan(
         _err(f"[error] Parse error: {e}")
         return 1
 
-    async def _confirm_callback(tool_call: Any) -> bool:
-        if auto_approve:
-            _err(f"[auto-approved] {tool_call.name}: {tool_call.arguments}")
-            return True
-        _err(f"[declined — use --danger-fast to auto-approve] {tool_call.name}")
-        return False
+    confirm = make_confirm_callback(auto_approve)
 
     _err(f"Executing plan: {plan.title} ({len(plan.steps)} steps)")
 
@@ -320,61 +314,49 @@ async def run_headless_exeplan(
             _err(msg)
 
         try:
-            async for event in agent.handle_user_message(
-                prompt,
-                confirm_callback=_confirm_callback,
-            ):
-                match event.type:
-                    case EventType.RESPONSE:
-                        _log(f"[response] {event.data}")
-                        if event.data and "maximum number of steps" in event.data:
-                            hit_max_steps = True
-                    case EventType.TOOL_RESULT:
-                        if event.tool_result and event.tool_result.output:
-                            _log(event.tool_result.output)
-                        if event.tool_result and event.tool_result.error:
-                            _log(f"[stderr] {event.tool_result.error}")
-                        # Track file changes
-                        if (
-                            event.tool_call
-                            and event.tool_call.name in ("write_file", "edit_file")
-                            and event.tool_result
-                            and event.tool_result.exit_code == 0
-                        ):
-                            path = event.tool_call.arguments.get("path", "")
-                            if path:
-                                action = (
-                                    "created"
-                                    if event.tool_call.name == "write_file"
-                                    else "modified"
-                                )
-                                step_files.append(
-                                    f"{path} ({action} in step {step.number})"
-                                )
-                    case EventType.PLANNING:
-                        _log(f"[thinking] {event.data}")
-                    case EventType.EXECUTING:
-                        if event.tool_call:
-                            step_tool_count += 1
-                            elapsed = int(time.monotonic() - step_t0)
-                            _log(
-                                f"[executing] {event.tool_call.name} "
-                                f"({step_tool_count}/{effective_max} calls, {elapsed}s)"
-                            )
-                    case EventType.BLOCKED:
-                        if event.tool_call:
-                            _log(
-                                f"[BLOCKED] {event.tool_call.name}: "
-                                f"{event.tool_call.arguments}"
-                            )
-                    case EventType.ERROR:
-                        _log(f"[error] {event.data}")
-                    case EventType.RUN_STATS:
-                        if event.metrics:
-                            step_metrics = event.metrics
-                            steps = event.metrics.get("steps", "?")
-                            wall = event.metrics.get("total_wall_ms", 0)
-                            _log(f"[stats] {steps} steps in {wall}ms")
+            def _on_response(data: str) -> None:
+                nonlocal hit_max_steps
+                _log(f"[response] {data}")
+                if data and "maximum number of steps" in data:
+                    hit_max_steps = True
+
+            def _on_tool_result(event: Any) -> None:
+                if (
+                    event.tool_call
+                    and event.tool_call.name in ("write_file", "edit_file")
+                    and event.tool_result
+                    and event.tool_result.exit_code == 0
+                ):
+                    path = event.tool_call.arguments.get("path", "")
+                    if path:
+                        action = (
+                            "created"
+                            if event.tool_call.name == "write_file"
+                            else "modified"
+                        )
+                        step_files.append(f"{path} ({action} in step {step.number})")
+
+            def _on_executing(event: Any) -> None:
+                nonlocal step_tool_count
+                step_tool_count += 1
+                elapsed = int(time.monotonic() - step_t0)
+                _log(
+                    f"[executing] {event.tool_call.name} "
+                    f"({step_tool_count}/{effective_max} calls, {elapsed}s)"
+                )
+
+            def _on_stats(metrics: dict[str, Any]) -> None:
+                nonlocal step_metrics
+                step_metrics = metrics
+
+            await consume_events(
+                agent.handle_user_message(prompt, confirm_callback=confirm),
+                emit=_log,
+                on_response=_on_response,
+                on_tool_result=_on_tool_result,
+                on_executing=_on_executing,
+                on_stats=_on_stats,
+            )
 
         except Exception as e:
             _log(f"[error] Step {step.number} failed: {e}")
