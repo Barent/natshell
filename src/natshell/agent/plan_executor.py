@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from natshell.agent.plan import Plan, PlanStep
+from natshell.scaling import PLAN_MAX_STEPS_TABLE, scale_for_context
 
 _DEFAULT_PLAN_MAX_STEPS = 35
 VERIFY_FIX_BUDGET = 8
@@ -17,21 +18,7 @@ def _effective_plan_max_steps(n_ctx: int, configured: int = _DEFAULT_PLAN_MAX_ST
     """
     if configured != _DEFAULT_PLAN_MAX_STEPS:
         return configured
-    if n_ctx >= 1048576:
-        return 120
-    elif n_ctx >= 524288:
-        return 90
-    elif n_ctx >= 131072:
-        return 65
-    elif n_ctx >= 65536:
-        return 55
-    elif n_ctx >= 32768:
-        return 45
-    elif n_ctx >= 16384:
-        return 35
-    elif n_ctx >= 8192:
-        return 30
-    return 20
+    return scale_for_context(n_ctx, PLAN_MAX_STEPS_TABLE, 20)
 
 
 def _shallow_tree(directory: Path, max_depth: int = 2) -> str:

@@ -18,6 +18,12 @@ from natshell.agent.context_manager import ContextManager
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
+from natshell.scaling import (
+    MAX_OUTPUT_CHARS_TABLE,
+    MAX_STEPS_TABLE,
+    READ_FILE_LINES_TABLE,
+    scale_for_context,
+)
 from natshell.safety.classifier import Risk, SafetyClassifier
 from natshell.tools import edit_file as _edit_file_mod
 from natshell.tools import execute_shell as _exec_shell_mod
@@ -288,57 +294,15 @@ class AgentLoop:
         """
         if self.config.max_steps != self._DEFAULT_MAX_STEPS:
             return self.config.max_steps
-        if n_ctx >= 1048576:
-            return 200
-        elif n_ctx >= 524288:
-            return 150
-        elif n_ctx >= 262144:
-            return 120
-        elif n_ctx >= 131072:
-            return 60
-        elif n_ctx >= 32768:
-            return 50
-        elif n_ctx >= 16384:
-            return 35
-        elif n_ctx >= 8192:
-            return 25
-        return self._DEFAULT_MAX_STEPS
+        return scale_for_context(n_ctx, MAX_STEPS_TABLE, self._DEFAULT_MAX_STEPS)
 
     def _effective_max_output_chars(self, n_ctx: int) -> int:
         """Scale shell output truncation with context window."""
-        if n_ctx >= 1048576:
-            return 128000
-        elif n_ctx >= 524288:
-            return 96000
-        elif n_ctx >= 262144:
-            return 64000
-        elif n_ctx >= 131072:
-            return 32000
-        elif n_ctx >= 65536:
-            return 16000
-        elif n_ctx >= 32768:
-            return 12000
-        elif n_ctx >= 16384:
-            return 8000
-        return 4000
+        return scale_for_context(n_ctx, MAX_OUTPUT_CHARS_TABLE, 4000)
 
     def _effective_read_file_lines(self, n_ctx: int) -> int:
         """Scale read_file default line count with context window."""
-        if n_ctx >= 1048576:
-            return 8000
-        elif n_ctx >= 524288:
-            return 6000
-        elif n_ctx >= 262144:
-            return 4000
-        elif n_ctx >= 131072:
-            return 3000
-        elif n_ctx >= 65536:
-            return 2000
-        elif n_ctx >= 32768:
-            return 1000
-        elif n_ctx >= 16384:
-            return 500
-        return 200
+        return scale_for_context(n_ctx, READ_FILE_LINES_TABLE, 200)
 
     def enqueue_message(self, text: str) -> None:
         """Queue a user message for injection between agent steps."""

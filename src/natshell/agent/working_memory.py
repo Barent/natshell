@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from natshell.platform import config_dir
+from natshell.scaling import MEMORY_CHARS_TABLE, scale_for_context
 
 logger = logging.getLogger(__name__)
 
@@ -121,17 +122,7 @@ def effective_memory_chars(n_ctx: int, base_chars: int = 4000) -> int:
     *base_chars* is used as-is below the 32K threshold, so the user's
     configured ``max_chars`` still acts as a floor for small models.
     """
-    if n_ctx >= 524288:
-        return 32000
-    elif n_ctx >= 262144:
-        return 24000
-    elif n_ctx >= 131072:
-        return 16000
-    elif n_ctx >= 65536:
-        return 12000
-    elif n_ctx >= 32768:
-        return 8000
-    return base_chars
+    return scale_for_context(n_ctx, MEMORY_CHARS_TABLE, base_chars)
 
 
 def should_inject_memory(n_ctx: int, min_ctx: int = 16384) -> bool:
