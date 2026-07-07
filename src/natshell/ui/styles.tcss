@@ -61,9 +61,9 @@ Footer {
 #quit-btn {
     width: 6;
     min-width: 6;
-    height: auto;
+    height: 3;
     background: #16213e;
-    color: #6a3a3a;
+    color: #b56b6b;
     border: none;
     margin: 0;
     content-align: center middle;
@@ -78,7 +78,7 @@ Footer {
 #paste-btn {
     width: 5;
     min-width: 5;
-    height: auto;
+    height: 3;
     background: #16213e;
     color: #a0a0a0;
     border: none;

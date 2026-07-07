@@ -183,8 +183,9 @@ _LOGO_STATIC = (
     "  [#30304a]██[/] [#00ff88]·[/]"
 )
 
-# Compact single-line logo for small screens (< 30 rows)
-_LOGO_COMPACT = "[bold #00ffff]NatShell[/] [#00ccaa]v[/]"
+# Compact single-line logo for small screens (< 30 rows): gold star + neon name,
+# echoing the star-topped tree of the full logo without the multi-line foliage.
+_LOGO_COMPACT = "[bold #ffcc00]★[/] [bold #00ffff]NatShell[/]"
 
 _LOGO_FRAMES = [
     _LOGO_STATIC,
@@ -260,7 +261,10 @@ class LogoBanner(Horizontal):
 
     def on_resize(self, event: events.Resize) -> None:
         """Switch to compact single-line logo when the terminal is short."""
-        new_compact = event.size.height < 30
+        # Measure the terminal, not this banner: the banner is `height: auto`
+        # (~4 rows), so its own size is always < 30 and would force compact mode
+        # on every screen. The app size is the actual terminal height.
+        new_compact = self.app.size.height < 30
         if self._compact != new_compact:
             self._compact = new_compact
             self._rebuild_logo()
