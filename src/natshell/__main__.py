@@ -298,7 +298,9 @@ def main() -> None:
 
     if not use_remote:
         from natshell.inference.local import LocalEngine
+        from natshell.model_manager import resolve_local_model_path
 
+        config.model.path = resolve_local_model_path(config)
         print(f"Loading model: {config.model.path}...")
         try:
             engine = LocalEngine(
