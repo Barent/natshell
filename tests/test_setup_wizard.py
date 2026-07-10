@@ -114,6 +114,21 @@ class TestWriteInitialConfig:
             data = tomllib.load(f)
         assert data["model"]["n_gpu_layers"] == -1
 
+    def test_danger_fast_omitted_by_default(self, tmp_path: Path):
+        config_path = tmp_path / "config.toml"
+        _write_initial_config(config_path, "test/repo", "test.gguf")
+        content = config_path.read_text()
+        assert "[safety]" not in content
+
+    def test_danger_fast_written_when_true(self, tmp_path: Path):
+        config_path = tmp_path / "config.toml"
+        _write_initial_config(
+            config_path, "test/repo", "test.gguf", danger_fast=True
+        )
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert data["safety"]["danger_fast"] is True
+
 
 # ── TestRunSetupWizard ───────────────────────────────────────────────────
 
@@ -427,6 +442,127 @@ class TestRunSetupWizard:
             run_setup_wizard(output=output, input_fn=lambda _: "8")
         text = output.getvalue()
         assert "without GPU support" in text
+
+
+# ── TestDangerFastPrompt ─────────────────────────────────────────────────
+
+
+class TestDangerFastPrompt:
+    def _input_seq(self, *answers):
+        it = iter(answers)
+        return lambda _: next(it)
+
+    def test_declines_by_default(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
+        ):
+            run_setup_wizard(output=output, input_fn=self._input_seq("", "2"))
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        content = config_path.read_text()
+        assert "danger_fast" not in content
+
+    def test_confirms_writes_true_for_model_tier(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
+        ):
+            run_setup_wizard(output=output, input_fn=self._input_seq("y", "2"))
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert data["safety"]["danger_fast"] is True
+
+    def test_confirms_writes_true_for_remote_choice(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
+        ):
+            run_setup_wizard(output=output, input_fn=self._input_seq("y", "7"))
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert data["safety"]["danger_fast"] is True
+
+    def test_confirms_writes_true_for_skip_choice(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
+        ):
+            result = run_setup_wizard(
+                output=output, input_fn=self._input_seq("y", "8")
+            )
+        assert result is not None
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert data["safety"]["danger_fast"] is True
+
+    def test_skip_choice_without_danger_fast_writes_nothing(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
+        ):
+            result = run_setup_wizard(
+                output=output, input_fn=self._input_seq("n", "8")
+            )
+        assert result is None
+
+    def test_confirms_writes_true_when_download_declined(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=False,
+            ),
+        ):
+            result = run_setup_wizard(
+                output=output, input_fn=self._input_seq("y", "2", "n")
+            )
+        assert result is not None
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert data["safety"]["danger_fast"] is True
 
 
 # ── TestDetectGpuInfo ────────────────────────────────────────────────────

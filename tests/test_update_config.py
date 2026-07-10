@@ -55,6 +55,8 @@ class TestValidConfigKeys:
         keys = VALID_CONFIG_KEYS["safety"]
         assert "mode" in keys
         assert keys["mode"] == "str"
+        assert "danger_fast" in keys
+        assert keys["danger_fast"] == "bool"
 
     def test_engine_keys(self):
         keys = VALID_CONFIG_KEYS["engine"]
@@ -300,6 +302,12 @@ class TestUpdateConfigTool:
         result = await update_config("agent", "max_steps", "abc")
         assert result.exit_code == 1
         assert "integer" in result.error
+
+    @pytest.mark.asyncio
+    async def test_danger_fast_update(self):
+        result = await update_config("safety", "danger_fast", "true")
+        assert result.exit_code == 0
+        assert "danger_fast" in result.output
 
     @pytest.mark.asyncio
     async def test_enum_validation(self):

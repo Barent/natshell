@@ -11,6 +11,7 @@ from natshell.config import (
     EngineConfig,
     NatShellConfig,
     PromptConfig,
+    SafetyConfig,
     load_config,
     save_engine_preference,
 )
@@ -262,6 +263,94 @@ class TestLocalRemoteConflict:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
+
+
+# ─── SafetyConfig.danger_fast ─────────────────────────────────────────────
+
+
+class TestDangerFastConfig:
+    def test_default_false(self):
+        cfg = SafetyConfig()
+        assert cfg.danger_fast is False
+
+    def test_natshell_config_has_safety(self):
+        cfg = NatShellConfig()
+        assert isinstance(cfg.safety, SafetyConfig)
+        assert cfg.safety.danger_fast is False
+
+    def test_loads_danger_fast_true(self, tmp_path: Path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            [safety]
+            danger_fast = true
+        """)
+        )
+
+        cfg = load_config(str(config_file))
+        assert cfg.safety.danger_fast is True
+
+    def test_missing_safety_section_uses_default(self, tmp_path: Path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('[ui]\ntheme = "light"\n')
+
+        cfg = load_config(str(config_file))
+        assert cfg.safety.danger_fast is False
+
+    def test_danger_fast_coexists_with_mode(self, tmp_path: Path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            textwrap.dedent("""\
+            [safety]
+            mode = "confirm"
+            danger_fast = true
+        """)
+        )
+
+        cfg = load_config(str(config_file))
+        assert cfg.safety.mode == "confirm"
+        assert cfg.safety.danger_fast is True
+
+
+# ─── Effective danger-fast logic (CLI flag OR config, minus --no-danger-fast) ──
+
+
+class TestDangerFastEffective:
+    """Mirrors the danger_fast_effective computation in __main__.py."""
+
+    def _effective(
+        self,
+        cli_danger_fast: bool = False,
+        config_danger_fast: bool = False,
+        cli_no_danger_fast: bool = False,
+    ) -> bool:
+        return (
+            cli_danger_fast or config_danger_fast
+        ) and not cli_no_danger_fast
+
+    def test_neither_set_is_false(self):
+        assert self._effective() is False
+
+    def test_cli_flag_alone(self):
+        assert self._effective(cli_danger_fast=True) is True
+
+    def test_config_alone(self):
+        assert self._effective(config_danger_fast=True) is True
+
+    def test_both_set(self):
+        assert self._effective(
+            cli_danger_fast=True, config_danger_fast=True
+        ) is True
+
+    def test_no_danger_fast_overrides_config(self):
+        assert self._effective(
+            config_danger_fast=True, cli_no_danger_fast=True
+        ) is False
+
+    def test_no_danger_fast_overrides_cli_flag(self):
+        assert self._effective(
+            cli_danger_fast=True, cli_no_danger_fast=True
+        ) is False
 
 
 # ─── PromptConfig ────────────────────────────────────────────────────────────

@@ -45,7 +45,7 @@ def _check_llama_available() -> bool:
         return False
 
 
-def _write_ollama_config(config_path: Path) -> None:
+def _write_ollama_config(config_path: Path, *, danger_fast: bool = False) -> None:
     """Write a minimal config that points to a local Ollama server."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -57,6 +57,8 @@ def _write_ollama_config(config_path: Path) -> None:
         'default_model = "qwen3:4b"',
         "",
     ]
+    if danger_fast:
+        lines += ["[safety]", "danger_fast = true", ""]
     config_path.write_text("\n".join(lines) + "\n")
     try:
         os.chmod(config_path, 0o600)
@@ -89,6 +91,7 @@ def _write_initial_config(
     hf_file: str,
     *,
     n_gpu_layers: int = -1,
+    danger_fast: bool = False,
 ) -> None:
     """Write a minimal initial config.toml with chmod 0o600."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,9 +104,22 @@ def _write_initial_config(
         lines.append(f"n_gpu_layers = {n_gpu_layers}")
         lines.append("")
 
+    if danger_fast:
+        lines += ["[safety]", "danger_fast = true", ""]
+
     config_path.write_text("\n".join(lines) + "\n" if lines else "")
 
     # Secure permissions — config may later contain API keys
+    try:
+        os.chmod(config_path, 0o600)
+    except OSError:
+        pass
+
+
+def _write_danger_fast_only(config_path: Path) -> None:
+    """Write a minimal config containing only the danger_fast setting."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("[safety]\ndanger_fast = true\n\n")
     try:
         os.chmod(config_path, 0o600)
     except OSError:
@@ -130,6 +146,19 @@ def run_setup_wizard(
 
     output.write("\n")
     output.write("  ─── NatShell First-Run Setup ───\n")
+    output.write("\n")
+
+    output.write(
+        "  Always run in danger-fast mode (skip all confirmation prompts)?\n"
+        "  Only recommended for disposable VMs, CI, or fully sandboxed"
+        " environments.\n"
+    )
+    try:
+        danger_fast_answer = input_fn("  [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        output.write("\n")
+        return None
+    danger_fast = danger_fast_answer == "y"
     output.write("\n")
 
     # Check if llama-cpp-python is available
@@ -231,7 +260,12 @@ def run_setup_wizard(
                 f" {config_path}\n"
             )
             # Write Ollama config so natshell auto-connects
-            _write_ollama_config(config_path)
+            _write_ollama_config(config_path, danger_fast=danger_fast)
+            output.write(f"  Config written to {config_path}\n")
+            return config_path
+        # Skip — configure later, but still persist danger_fast if requested
+        if danger_fast:
+            _write_danger_fast_only(config_path)
             output.write(f"  Config written to {config_path}\n")
             return config_path
         return None
@@ -254,6 +288,10 @@ def run_setup_wizard(
             return None
         if proceed != "y":
             output.write("  Skipping download.\n")
+            if danger_fast:
+                _write_danger_fast_only(config_path)
+                output.write(f"  Config written to {config_path}\n")
+                return config_path
             return None
 
     # Write config
@@ -261,6 +299,7 @@ def run_setup_wizard(
         config_path,
         tier["hf_repo"],
         tier["hf_file"],
+        danger_fast=danger_fast,
     )
 
     output.write(f"  Config written to {config_path}\n")

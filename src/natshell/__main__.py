@@ -93,6 +93,12 @@ def main() -> None:
         "Only use this on VMs or test environments.",
     )
     parser.add_argument(
+        "--no-danger-fast",
+        action="store_true",
+        help="Force confirmation dialogs back on for this run, overriding a "
+        "persisted [safety] danger_fast = true in config.toml.",
+    )
+    parser.add_argument(
         "--mcp",
         action="store_true",
         help="Run as an MCP (Model Context Protocol) server over stdio. "
@@ -199,6 +205,12 @@ def main() -> None:
         config.remote.url = args.remote
     if args.remote_model:
         config.remote.model = args.remote_model
+
+    # Effective danger-fast: CLI flag or persisted config, unless explicitly
+    # overridden for this run with --no-danger-fast.
+    danger_fast_effective = (
+        args.danger_fast or config.safety.danger_fast
+    ) and not args.no_danger_fast
 
     # TODO: Remove this Windows ARM64 override once llama-cpp-python builds
     # reliably with MSVC on ARM64 (currently requires clang-cl).
@@ -496,7 +508,7 @@ def main() -> None:
             from natshell.headless import run_headless_plan
 
             exit_code = asyncio.run(
-                run_headless_plan(agent, args.plan, auto_approve=args.danger_fast)
+                run_headless_plan(agent, args.plan, auto_approve=danger_fast_effective)
             )
             sys.exit(exit_code)
 
@@ -507,7 +519,7 @@ def main() -> None:
             exit_code = asyncio.run(
                 run_headless_exeplan(
                     agent, args.exeplan,
-                    auto_approve=args.danger_fast,
+                    auto_approve=danger_fast_effective,
                     resume=args.resume,
                 )
             )
@@ -518,18 +530,21 @@ def main() -> None:
             from natshell.headless import run_headless
 
             exit_code = asyncio.run(
-                run_headless(agent, args.headless, auto_approve=args.danger_fast)
+                run_headless(agent, args.headless, auto_approve=danger_fast_effective)
             )
             sys.exit(exit_code)
 
         # Launch the TUI
         from natshell.app import NatShellApp
 
-        if args.danger_fast:
-            print("WARNING: --danger-fast is active. All confirmations will be skipped.")
+        if danger_fast_effective:
+            print(
+                "WARNING: danger-fast mode is active (--danger-fast or config). "
+                "All confirmations will be skipped."
+            )
         app = NatShellApp(
             agent=agent, config=config,
-            skip_permissions=args.danger_fast, skill_registry=skill_registry,
+            skip_permissions=danger_fast_effective, skill_registry=skill_registry,
         )
         # Silence the console handler before the TUI takes the terminal —
         # ANY stderr output during Textual rendering corrupts the display.

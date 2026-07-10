@@ -70,6 +70,12 @@ max_tokens = 2048
 #   "danger"   = execute everything without confirmation (dangerous!)
 mode = "confirm"
 
+# Danger-fast mode: when true, ALL confirmation dialogs are skipped by default
+# (equivalent to always passing --danger-fast). BLOCKED commands are still blocked.
+# Only enable this on disposable VMs, CI runners, or fully sandboxed environments.
+# Override for a single run with --no-danger-fast.
+danger_fast = false
+
 # Commands that always require user confirmation (regex patterns matched against full command)
 always_confirm = [
     "^rm\\s",

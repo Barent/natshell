@@ -61,6 +61,7 @@ class SafetyConfig:
     mode: str = "confirm"
     always_confirm: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
+    danger_fast: bool = False
 
 
 @dataclass
@@ -179,6 +180,7 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
     },
     "safety": {
         "mode": "str",
+        "danger_fast": "bool",
     },
     "ui": {
         "theme": "str",

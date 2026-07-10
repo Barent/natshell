@@ -4,7 +4,14 @@ Usage:
   natshell --headless "your prompt here"
 
 Options:
-  --danger-fast    Auto-approve all confirmations (use with caution)
+  --danger-fast     Auto-approve all confirmations (use with caution)
+  --no-danger-fast  Force confirmations back on, overriding a persisted
+                     [safety] danger_fast = true in config.toml
+
+Persisting danger-fast mode:
+  Set [safety] danger_fast = true in config.toml to always run as if
+  --danger-fast were passed (e.g. on a disposable VM or CI runner).
+  BLOCKED commands are still blocked either way.
 
 Output:
   Response text → stdout

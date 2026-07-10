@@ -138,7 +138,7 @@ Every file edit creates a timestamped backup in `~/.local/share/natshell/backups
 Save and restore conversations with `/save`, `/load`, and `/sessions`. Sessions are stored as JSON in `~/.local/share/natshell/sessions/`.
 
 ### Headless Mode
-Run NatShell non-interactively with `--headless "prompt"`. Response text goes to stdout (pipeable), everything else to stderr. Use `--danger-fast` to auto-approve confirmations.
+Run NatShell non-interactively with `--headless "prompt"`. Response text goes to stdout (pipeable), everything else to stderr. Use `--danger-fast` to auto-approve confirmations, or `--no-danger-fast` to force confirmations back on for one run. Set `[safety] danger_fast = true` in `config.toml` (or answer "yes" to the setup wizard/installer prompt) to always run in danger-fast mode on a given machine, without passing the flag every time.
 
 ### MCP Server
 Run NatShell as an MCP (Model Context Protocol) server with `--mcp`. Exposes all tools via JSON-RPC over stdin/stdout for integration with other AI tools.

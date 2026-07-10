@@ -678,6 +678,7 @@ SETUP_REMOTE=false
 WRITE_MODEL_CONFIG=false
 HF_REPO=""
 HF_FILE=""
+DANGER_FAST=false
 
 echo ""
 echo "  ─── NatShell Setup ───"
@@ -929,10 +930,24 @@ except Exception:
     fi
 fi
 
+# ─── Safety ───────────────────────────────────────────────────────────────────
+
+echo ""
+echo "  ─── Safety ───"
+echo ""
+echo "  Danger-fast mode skips ALL confirmation prompts (BLOCKED commands are still blocked)."
+echo "  Only enable this for automated pipelines or fully sandboxed/disposable environments."
+echo ""
+read -rp "  Always run in danger-fast mode? [y/N]: " danger_fast_answer
+if [[ "$danger_fast_answer" =~ ^[Yy]$ ]]; then
+    DANGER_FAST=true
+    warn "danger-fast mode will be enabled by default — all confirmations will be skipped."
+fi
+
 # ─── Write Config ────────────────────────────────────────────────────────────
 
 # Write config if any section needs non-default values
-if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true || -n "$OLLAMA_URL" || -n "$REMOTE_URL" || "$LITE_MODE" == true ]]; then
+if [[ "$WRITE_MODEL_CONFIG" == true || "$GPU_DETECTED" == true || -n "$OLLAMA_URL" || -n "$REMOTE_URL" || "$LITE_MODE" == true || "$DANGER_FAST" == true ]]; then
     # Back up existing config if present
     if [[ -f "$CONFIG_FILE" ]]; then
         cp "$CONFIG_FILE" "$CONFIG_FILE.bak"
@@ -980,6 +995,14 @@ model = \"${REMOTE_MODEL}\"
     if [[ "$LITE_MODE" == true ]]; then
         config_content+="[engine]
 preferred = \"remote\"
+"
+        config_content+=$'\n'
+    fi
+
+    # [safety] section — persist danger-fast mode if requested
+    if [[ "$DANGER_FAST" == true ]]; then
+        config_content+="[safety]
+danger_fast = true
 "
     fi
 

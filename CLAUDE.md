@@ -28,7 +28,7 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 12. Plan generation/execution — `/plan` generates structured markdown plans; `/exeplan run` executes step-by-step with per-step agent budgets
 13. `read_file` truncation emits `⚠ FILE TRUNCATED` with offset hint. `FileReadTracker` blocks `edit_file` on partially-read files.
 14. Edit failure tracking — escalating warnings after 2+ failures; completion guard prevents declaring success when all edits failed
-15. Headless mode — `--headless "prompt"` for single-shot invocations. `--danger-fast` auto-approves. Exit 1 on error.
+15. Headless mode — `--headless "prompt"` for single-shot invocations. `--danger-fast` auto-approves; `--no-danger-fast` overrides a persisted setting. `[safety] danger_fast` in config.toml (settable via `install.sh` or the setup wizard) makes danger-fast the machine default. Exit 1 on error.
 16. Session persistence — JSON in `~/.local/share/natshell/sessions/`. IDs validated as 32-char hex. 10 MB size limit. 0o700 perms.
 17. Skill system — `src/natshell/skills/` ships 11 built-ins; user skills in `~/.config/natshell/skills/<name>/SKILL.md`. Model auto-loads via `skill` tool. `/skills` commands for list/show/enable/disable
 18. MCP server mode — `--mcp` exposes all tools via JSON-RPC over stdin/stdout
