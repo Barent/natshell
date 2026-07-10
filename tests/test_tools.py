@@ -247,6 +247,42 @@ class TestSudoNeedsPassword:
         result = ToolResult(exit_code=1, error="command not found")
         assert not needs_sudo_password(result)
 
+    def test_signature_in_stdout_via_redirect(self):
+        """`... 2>&1` sends sudo's error to stdout; it must still be detected."""
+        result = ToolResult(
+            exit_code=1,
+            output="sudo: a terminal is required to read the password",
+            error="",
+        )
+        assert needs_sudo_password(result)
+
+    def test_zero_exit_from_trailing_command(self):
+        """`sudo foo; echo` yields exit 0 but sudo still failed — must detect."""
+        result = ToolResult(
+            exit_code=0,
+            output="sudo: a terminal is required to read the password\nExit: 1",
+            error="",
+        )
+        assert needs_sudo_password(result)
+
+    def test_redirect_and_trailing_echo_combined(self):
+        """The exact pattern seen in the wild: `sudo ... 2>&1; echo "Exit: $?"`."""
+        result = ToolResult(
+            exit_code=0,
+            output=(
+                "sudo: a terminal is required to read the password; either use "
+                "the -S option to read from standard input or configure an "
+                "askpass helper\nExit: 1"
+            ),
+            error="",
+        )
+        assert needs_sudo_password(result)
+
+    def test_clean_output_returns_false(self):
+        """No sudo signature anywhere → no prompt, even on non-zero exit."""
+        result = ToolResult(exit_code=1, output="permission denied", error="")
+        assert not needs_sudo_password(result)
+
     def test_all_patterns_in_list(self):
         """Sanity check that we have at least 4 patterns."""
         assert len(_SUDO_NEEDS_PW) >= 4

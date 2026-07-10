@@ -154,10 +154,24 @@ def clear_sudo_password() -> None:
 
 
 def needs_sudo_password(result: ToolResult) -> bool:
-    """Return True if the result indicates sudo needed a password it didn't get."""
-    if result.exit_code == 0:
-        return False
-    return any(msg in result.error for msg in _SUDO_NEEDS_PW)
+    """Return True if the result indicates sudo needed a password it didn't get.
+
+    Scans both stderr and stdout, and does not gate on the exit code. Models
+    frequently rewrite commands in ways that hide the sudo failure from a
+    stderr-and-exit-code-only check:
+
+    * ``... 2>&1`` redirects sudo's error message into stdout, leaving
+      ``result.error`` empty.
+    * ``...; echo "Exit: $?"`` (or any trailing command) makes the overall
+      exit code ``0`` even though sudo itself failed.
+
+    Either rewrite alone would suppress the password prompt. Because the sudo
+    signatures in ``_SUDO_NEEDS_PW`` are highly specific, matching them
+    anywhere in the combined output is a reliable signal regardless of how the
+    command was wrapped.
+    """
+    haystack = f"{result.error}\n{result.output}"
+    return any(msg in haystack for msg in _SUDO_NEEDS_PW)
 
 
 # ── Tool definition ─────────────────────────────────────────────────────────
