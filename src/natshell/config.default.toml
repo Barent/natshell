@@ -76,7 +76,11 @@ mode = "confirm"
 # Override for a single run with --no-danger-fast.
 danger_fast = false
 
-# Commands that always require user confirmation (regex patterns matched against full command)
+# Commands that always require user confirmation (regex patterns matched against
+# full command).  NatShell also applies a built-in set of confirmation patterns
+# that this list cannot remove — a download piped into a shell, an interpreter
+# one-liner, a write into ~/.ssh or a shell rc file. Entries here are added to
+# those; see BASELINE_CONFIRM_PATTERNS in natshell/safety/classifier.py.
 always_confirm = [
     "^rm\\s",
     "^sudo\\s",
@@ -119,21 +123,14 @@ always_confirm = [
     "^wmic\\s+.*(delete|call)",
 ]
 
-# Commands that are blocked entirely — never executed
-blocked = [
-    ":(){ :|:& };:",
-    "^rm\\s+-[rR]f\\s+/\\s*$",
-    "^rm\\s+-[rR]f\\s+/\\*",
-    "^mv\\s+/\\s",
-    "^dd\\s+.*of=/dev/[sh]d[a-z]\\s*$",
-    "^mkfs.*\\s/dev/[sh]d[a-z][0-9]?\\s*$",
-    "> /dev/[sh]d[a-z]",
-    "^diskutil\\s+eraseDisk",
-    # Windows
-    "^format\\s+C:",
-    "^rd\\s+/[sS]\\s+/[qQ]\\s+C:\\\\",
-    "Remove-Item\\s+-Recurse\\s+-Force\\s+C:\\\\",
-]
+# Commands that are blocked entirely — never executed.
+#
+# The canonical blocked list lives in natshell/safety/classifier.py as
+# BASELINE_BLOCKED_PATTERNS (fork bombs, rm against the filesystem root, writing
+# over a block device, format C:). It is not repeated here, because BLOCKED is
+# the one risk tier that survives danger mode and it should not be removable by
+# editing a file. Anything listed here is added to the built-in set.
+blocked = []
 
 [backup]
 # Pre-edit file backup (supports /undo)

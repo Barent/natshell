@@ -75,6 +75,45 @@ BASELINE_CONFIRM_PATTERNS: tuple[str, ...] = (
 )
 
 
+# Block devices, spelled to include the ones a machine built after ~2012 has.
+# The original class, [sh]d[a-z], covered neither NVMe nor SD cards nor virtio.
+_BLOCK_DEVICES = r"(?:sd|hd|nvme|mmcblk|vd|xvd)[a-z0-9]*"
+
+# Commands that are never executed, whatever the mode.
+#
+# These are in Python for the same reason as the confirm baseline, and one more:
+# BLOCKED is the only tier that survives mode = "danger", danger_fast, and
+# --danger-fast, so it is the tier that most needs to not be editable by a tool
+# call.  User config extends this list.
+#
+# Kept deliberately narrow.  Because config can no longer remove an entry, a
+# pattern here is unoverridable, so this covers only what is unrecoverable and
+# never intentional -- the filesystem root, a raw block device.  Destructive but
+# legitimate administration ("rm -rf /home/old-user") stays at CONFIRM.
+BASELINE_BLOCKED_PATTERNS: tuple[str, ...] = (
+    # Fork bomb by shape: NAME() { NAME | NAME & }; NAME, whatever NAME is.
+    # The shipped literal was compiled as a regex, so its unescaped '|' became
+    # an alternation and only the canonical spelling ever matched.
+    r"([\w:]+)\s*\(\s*\)\s*\{[^}]*\|[^}]*&[^}]*\}\s*;\s*\1",
+    re.escape(":(){ :|:& };:"),
+    # rm targeting the filesystem root, with the recursive flag written any of
+    # the ways it can be written, and --no-preserve-root on either side of it.
+    r"^rm\s+(?:-\S+\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-\S+\s+)*/\s*$",
+    r"^rm\s+(?:-\S+\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:-\S+\s+)*/\*",
+    r"^mv\s+/\s",
+    # Writing over a block device.  No '$' anchor: trailing arguments such as
+    # "bs=1M" put the device in the middle of the string, not at the end.
+    rf"^dd\s+.*\bof=/dev/{_BLOCK_DEVICES}",
+    rf"^mkfs(?:\.\w+)?\s+(?:\S+\s+)*/dev/{_BLOCK_DEVICES}",
+    rf">\s*/dev/{_BLOCK_DEVICES}",
+    r"^diskutil\s+eraseDisk",
+    # Windows
+    r"^format\s+[Cc]:",
+    r"^rd\s+/[sS]\s+/[qQ]\s+[Cc]:\\",
+    r"Remove-Item\s+-Recurse\s+-Force\s+[Cc]:\\",
+)
+
+
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _NUMERIC_ARG_RE = re.compile(r"^-?\d+(?:\.\d+)?[smhd]?$")
 
@@ -168,7 +207,10 @@ class SafetyClassifier:
             re.compile(p, re.MULTILINE)
             for p in (*BASELINE_CONFIRM_PATTERNS, *config.always_confirm)
         ]
-        self._blocked_patterns = [re.compile(p, re.MULTILINE) for p in config.blocked]
+        self._blocked_patterns = [
+            re.compile(p, re.MULTILINE)
+            for p in (*BASELINE_BLOCKED_PATTERNS, *config.blocked)
+        ]
 
     def classify_command(self, command: str) -> Risk:
         """Classify a shell command string by risk level.
