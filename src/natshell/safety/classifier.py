@@ -33,6 +33,15 @@ _SENSITIVE_PATH_PATTERNS = [
 ]
 
 
+# PowerShell binds any unambiguous *prefix* of a parameter name, so -Recurse,
+# -Recurs, -Rec and -R are all the same switch, and it is case-insensitive. The
+# shipped patterns were written as if it were bash — `Remove-Item\s+.*-Recurse`
+# requires the word in full — so `Remove-Item -Rec -For C:\` matched nothing.
+# Cmdlet *names* are not abbreviatable, but they do have aliases.
+_PS_RECURSE = r"-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?"
+_PS_DELETE_CMDLETS = r"(?:remove-item|ri|rd|rmdir|del|erase|rm)"
+_WINDOWS_DRIVE_ROOT = r"[A-Za-z]:\\?(?:\s|$)"
+
 # Interpreters a fetched script can be piped into, and credential paths worth
 # confirming before they reach the network.  Shared by the patterns below.
 _INTERPRETERS = r"sh|bash|zsh|ksh|dash|fish|python3?|perl|ruby|node|php"
@@ -78,6 +87,8 @@ BASELINE_CONFIRM_PATTERNS: tuple[str, ...] = (
     # that "sudo rm -rf x" is matched as "rm -rf x", which means the raw string
     # is the only place sudo itself is still visible.
     r"^(?:\S*/)?(?:sudo|doas)\s",
+    # PowerShell recursive delete, in any of its spellings.
+    rf"(?i)\b{_PS_DELETE_CMDLETS}\b.*\s{_PS_RECURSE}\b",
 )
 
 
@@ -116,7 +127,11 @@ BASELINE_BLOCKED_PATTERNS: tuple[str, ...] = (
     # Windows
     r"^format\s+[Cc]:",
     r"^rd\s+/[sS]\s+/[qQ]\s+[Cc]:\\",
-    r"Remove-Item\s+-Recurse\s+-Force\s+[Cc]:\\",
+    # A recursive delete whose target is a drive root.  Lookaheads rather than a
+    # sequence, because PowerShell accepts the switches on either side of the
+    # path and the original pattern only matched one fixed order.
+    rf"(?i)^(?=.*\b{_PS_DELETE_CMDLETS}\b)(?=.*\s{_PS_RECURSE}\b)"
+    rf"(?=.*\s{_WINDOWS_DRIVE_ROOT}).*$",
 )
 
 
