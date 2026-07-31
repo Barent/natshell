@@ -54,34 +54,45 @@ class SafetyClassifier:
     def classify_command(self, command: str) -> Risk:
         """Classify a shell command string by risk level.
 
-        Checks the full command against blocked patterns first (to catch
-        multi-token patterns like fork bombs), then splits on shell operators
-        (&&, ||, ;, &, |, (, ) and newlines) and classifies each sub-command
-        independently, returning the highest risk found.
+        Splits on shell operators (&&, ||, ;, &, |, (, ) and newlines) and
+        returns the highest risk found across the whole command and each
+        sub-command independently.
         Also flags subshells and backtick expansions as CONFIRM.
+
+        Every blocked check runs before any CONFIRM can be returned.  Returning
+        the first CONFIRM match instead meant a blocked sub-command later in the
+        string was never examined -- ``sudo apt update && <blocked>`` reported
+        CONFIRM, and CONFIRM is downgraded to SAFE in danger mode while BLOCKED
+        is not.
         """
-        # Check patterns against the full command first
-        # (some patterns like fork bombs or pipe-based patterns span operators)
-        for pattern in self._blocked_patterns:
-            if pattern.search(command):
+        sub_commands = split_commands(command)
+
+        # The full command is checked as well as its parts, because some
+        # patterns (fork bombs, pipe-based patterns) span operators.
+        if self._matches(self._blocked_patterns, command):
+            logger.warning(f"BLOCKED command: {command}")
+            return Risk.BLOCKED
+        for sub in sub_commands:
+            if self._matches(self._blocked_patterns, sub):
                 logger.warning(f"BLOCKED command: {command}")
                 return Risk.BLOCKED
-        for pattern in self._confirm_patterns:
-            if pattern.search(command):
-                return Risk.CONFIRM
+
+        if self._matches(self._confirm_patterns, command):
+            return Risk.CONFIRM
 
         # Flag commands using subshells or backtick expansion
         if re.search(r"`[^`]+`|\$\([^)]+\)", command):
             return Risk.CONFIRM
 
-        worst_risk = Risk.SAFE
-        for sub in split_commands(command):
+        for sub in sub_commands:
             risk = self._classify_single(sub)
-            if risk == Risk.BLOCKED:
-                return Risk.BLOCKED
-            if risk == Risk.CONFIRM:
-                worst_risk = Risk.CONFIRM
-        return worst_risk
+            if risk is not Risk.SAFE:
+                return risk
+        return Risk.SAFE
+
+    @staticmethod
+    def _matches(patterns: list[re.Pattern[str]], text: str) -> bool:
+        return any(pattern.search(text) for pattern in patterns)
 
     def _classify_single(self, command: str) -> Risk:
         """Classify a single command (no chaining operators)."""

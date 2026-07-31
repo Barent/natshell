@@ -101,3 +101,37 @@ class TestSubshellParens:
 
     def test_quoted_paren_is_not_a_separator(self):
         assert _shipped_classifier().classify_command('echo "(hi)"') == Risk.SAFE
+
+
+# ─── H1: a confirm match must not mask a blocked sub-command ────────────────
+
+
+class TestBlockedIsNeverDowngraded:
+    """The whole-command confirm pass ran before sub-commands were examined, so
+    the first confirm match returned and the blocked sub-command after it was
+    never reached.  BLOCKED is the one tier that survives danger mode, so
+    losing it there loses it everywhere.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "sudo apt update && rm -rf /",
+            "rm notes.txt; rm -rf /",
+            "echo x | tee /tmp/out && rm -rf /",
+            "chown user file && rm -rf /",
+            "kill -9 123 || rm -rf /",
+        ],
+    )
+    def test_confirm_match_first_still_reports_blocked(self, command):
+        assert _shipped_classifier().classify_command(command) == Risk.BLOCKED
+
+    def test_subshell_expansion_does_not_mask_blocked(self):
+        """`...` and $(...) returned CONFIRM before sub-commands were checked."""
+        assert _shipped_classifier().classify_command("echo `date` && rm -rf /") == Risk.BLOCKED
+        assert _shipped_classifier().classify_command("echo $(date) && rm -rf /") == Risk.BLOCKED
+
+    def test_blocked_survives_danger_mode_behind_a_confirm_match(self):
+        c = _shipped_classifier(mode="danger")
+        risk = c.classify_tool_call("execute_shell", {"command": "sudo apt update && rm -rf /"})
+        assert risk == Risk.BLOCKED
