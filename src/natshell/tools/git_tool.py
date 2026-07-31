@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import subprocess
 
 from natshell.tools.registry import ToolDefinition, ToolResult
@@ -53,9 +54,105 @@ _SAFE_OPERATIONS = {"status", "diff", "log", "branch"}
 # Operations that mutate repository state
 _CONFIRM_OPERATIONS = {"commit", "stash"}
 
+# Flags permitted for the read-only operations.
+#
+# These four are classified SAFE and run with no confirmation dialog, so the
+# question is not "which flags are known to be dangerous" but "which flags are
+# known to be harmless".  `git diff --output=<path>` writes an arbitrary file;
+# --ext-diff and --textconv run a configured external program.  A denylist has
+# to be updated every time git grows another one.
+#
+# Only flags are checked.  A bare argument is a path, a revision or a branch
+# name — none of which can write a file or start a process — so revision ranges
+# and pathspecs continue to work untouched.
+_ALLOWED_READ_FLAGS: dict[str, frozenset[str]] = {
+    "status": frozenset(
+        {
+            "--short", "-s", "--branch", "-b", "--porcelain", "--long", "--verbose",
+            "-v", "--ignored", "--untracked-files", "-u", "--no-renames",
+            "--find-renames", "--column", "--no-column", "--ahead-behind",
+        }
+    ),
+    "diff": frozenset(
+        {
+            "--staged", "--cached", "--stat", "--numstat", "--shortstat",
+            "--dirstat", "--summary", "--name-only", "--name-status", "--patch",
+            "-p", "-u", "--no-patch", "-s", "--raw", "--unified", "-U",
+            "--ignore-all-space", "-w", "--ignore-space-change", "-b",
+            "--ignore-space-at-eol", "--ignore-blank-lines", "--ignore-cr-at-eol",
+            "--word-diff", "--word-diff-regex", "--color-words", "--find-renames",
+            "-M", "--find-copies", "-C", "--no-renames", "--diff-filter",
+            "--find-object", "-S", "-G", "--pickaxe-regex", "--pickaxe-all",
+            "-R", "--no-prefix", "--src-prefix", "--dst-prefix", "--check",
+            "--exit-code", "--quiet", "--minimal", "--patience", "--histogram",
+            "--anchored", "--diff-algorithm", "--full-index", "--binary",
+            "--abbrev", "--relative", "--text", "-a", "--function-context", "-W",
+            "-l", "--merge-base", "--compact-summary",
+        }
+    ),
+    "log": frozenset(
+        {
+            "--oneline", "--decorate", "--no-decorate", "--graph", "--stat",
+            "--shortstat", "--numstat", "--name-only", "--name-status",
+            "--abbrev-commit", "--no-abbrev-commit", "--author", "--committer",
+            "--grep", "--all-match", "--invert-grep", "-i", "--regexp-ignore-case",
+            "--since", "--after", "--until", "--before", "--max-count", "-n",
+            "--skip", "--reverse", "--all", "--branches", "--tags", "--remotes",
+            "--merges", "--no-merges", "--first-parent", "--follow", "--format",
+            "--pretty", "--date", "--patch", "-p", "--no-patch", "--topo-order",
+            "--date-order", "--relative-date", "--simplify-by-decoration",
+        }
+    ),
+    "branch": frozenset(
+        {
+            "--list", "-l", "--all", "-a", "--remotes", "-r", "--verbose", "-v",
+            "-vv", "--show-current", "--contains", "--no-contains", "--merged",
+            "--no-merged", "--sort", "--format", "--points-at", "--column",
+            "--no-column", "--track", "--no-track",
+            # Safe (refuses when it would lose work) variants only.  Their force
+            # counterparts -D, -M and -C are absent, so they are rejected here as
+            # well as by _BLOCKED_BRANCH_FLAGS below.
+            "-d", "-m", "-c",
+        }
+    ),
+}
+
+# `git log -5` and friends: a bare count is not a flag anyone needs listed.
+_NUMERIC_SHORTHAND_RE = re.compile(r"^-\d+$")
+
+
+def _reject_disallowed_flags(operation: str, extra_args: list[str]) -> str | None:
+    """Return an error message if *extra_args* holds a flag this operation
+    may not use, else None."""
+    allowed = _ALLOWED_READ_FLAGS.get(operation)
+    if allowed is None:
+        return None
+    for arg in extra_args:
+        if arg == "--":
+            break  # everything after this is a pathspec
+        if not arg.startswith("-"):
+            continue
+        if _NUMERIC_SHORTHAND_RE.match(arg):
+            continue
+        # --unified=3 and -U3 both carry their value inline.
+        name = arg.split("=", 1)[0]
+        if name in allowed:
+            continue
+        if any(name.startswith(f) and f.startswith("-") and len(f) == 2 for f in allowed):
+            continue  # short flag with an attached value, e.g. -U3, -M50
+        return (
+            f"Flag {arg!r} is not allowed for git {operation} via git_tool, which runs "
+            "without confirmation. Use execute_shell if you need it — that goes through "
+            "the safety classifier."
+        )
+    return None
+
+
 # Flags blocked in git commit — use execute_shell for these (goes through safety classifier)
 _BLOCKED_COMMIT_FLAGS = {"--amend", "--reset-author", "--allow-empty-message"}
-_BLOCKED_COMMIT_PREFIXES = ("--author=", "--date=")
+# Compared against the flag name with any "=value" stripped, so that the space
+# form (--author "X") is caught as well as --author=X.
+_BLOCKED_COMMIT_NAMES = {"--author", "--date"}
 
 # Flags blocked in git branch — use execute_shell for destructive branch ops
 _BLOCKED_BRANCH_FLAGS = {"-D", "-M", "--force", "--delete"}
@@ -196,6 +293,12 @@ async def git_tool(operation: str, args: str = "") -> ToolResult:
     except ValueError as e:
         return ToolResult(error=f"Invalid arguments: {e}", exit_code=1)
 
+    # The read-only operations are classified SAFE and run with no dialog, so
+    # their flags are allowlisted rather than denylisted.
+    flag_error = _reject_disallowed_flags(operation, extra_args)
+    if flag_error is not None:
+        return ToolResult(error=flag_error, exit_code=1)
+
     try:
         if operation == "status":
             result = await asyncio.to_thread(
@@ -247,9 +350,7 @@ async def git_tool(operation: str, args: str = "") -> ToolResult:
                 )
             # Block dangerous flags — use execute_shell for these
             for arg in extra_args:
-                if arg in _BLOCKED_COMMIT_FLAGS or any(
-                    arg.startswith(p) for p in _BLOCKED_COMMIT_PREFIXES
-                ):
+                if arg in _BLOCKED_COMMIT_FLAGS or arg.split("=", 1)[0] in _BLOCKED_COMMIT_NAMES:
                     return ToolResult(
                         error=f"Flag {arg!r} is not allowed via git_tool. "
                         "Use execute_shell for advanced git commit options.",
