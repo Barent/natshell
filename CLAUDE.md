@@ -34,11 +34,11 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 18. MCP server mode — `--mcp` exposes all tools via JSON-RPC over stdin/stdout
 19. Backup & undo — `BackupManager` snapshots files before edits; `/undo` restores. Symlinks refused. 0o700 perms.
 20. Small context tool filtering — n_ctx ≤ 8192 auto-filters to 5 core tools (`SMALL_CONTEXT_TOOLS`: execute_shell, read_file, write_file, edit_file, list_directory)
-21. Sudo passthrough — `_inject_sudo_dash_s()` replaces `sudo` with `sudo -S` only at command positions (not inside strings). Password piped once. `y\n` auto-confirm only for package managers. On sudo failure, agent auto-prepends `sudo` and re-classifies before retry.
+21. Sudo passthrough — `_inject_sudo_dash_s()` replaces `sudo` with `sudo -S` only at command positions (not inside strings), splitting via `safety/command_split.py`. Password piped once. `y\n` auto-confirm only for package managers. On sudo failure, agent auto-prepends `sudo`, re-classifies, and confirms **the retried command** before running it. `needs_sudo_password()` requires the command to have invoked sudo: for a command that did not, only stderr on a non-zero exit counts, so a file or web page containing sudo's error text cannot raise the password modal.
 
 ## Security Features (summary)
 
-Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`/`&`/`|` before classification; sudo password cached 5 min; sensitive env vars filtered from subprocess; HTTPS warning for plaintext API keys; SSH key/shadow/`.env` path gating; session/backup dir 0o700; session path traversal validation; git commit flag blocklist (`--amend`, `--author=`, `--date=`); SSRF blocking in fetch_url.
+Rich markup escaping on all LLM output (`rich.markup.escape`); command chaining splits on `&&`/`||`/`;`/`&`/`|`/`(`/`)`/newline before classification, quote-aware, via the shared `safety/command_split.py` — the classifier and `execute_shell` must not disagree about sub-command boundaries; tool arguments are bound to parameter names *before* classification (`ToolRegistry.normalize_arguments`), so classify and execute see the same call; `classify_tool_call` falls through to CONFIRM, with an explicit read-only allowlist; baseline confirm/blocked patterns live in `classifier.py` and config can only extend them; sudo password cached 5 min; sudo prompt requires the command to have invoked sudo, so output alone cannot raise the modal; sensitive env vars filtered from subprocess; HTTPS warning for plaintext API keys; SSH key/shadow/`.env` path gating; write/edit refuse to follow symlinks (`tools/safe_path.py`); config values written as escaped TOML and validated before replacing the file; `update_config` restricted to `LLM_WRITABLE_KEYS`; project-local skills are never executed and cannot shadow a builtin; session/backup dir 0o700; session path traversal validation; `git_tool` read-only flag allowlist plus commit flag blocklist (`--amend`, `--author`, `--date`); MCP evaluates `safety_mode` before the danger-mode downgrade; SSRF blocking in fetch_url.
 
 ## Modules
 
@@ -123,7 +123,7 @@ Default: Qwen3-4B, auto-downloaded to `~/.local/share/natshell/models/`. Context
 
 ## Key Files
 
-- `src/natshell/config.default.toml` — Default config with all safety patterns (23 confirm + 8 blocked, incl. macOS-specific)
+- `src/natshell/config.default.toml` — Default config; the user-facing `always_confirm` denylist (incl. macOS- and Windows-specific entries). `blocked` is empty here — the canonical blocked patterns and a baseline of confirm patterns are in `safety/classifier.py` (`BASELINE_BLOCKED_PATTERNS`, `BASELINE_CONFIRM_PATTERNS`), which config extends rather than replaces
 - `pyproject.toml` — Dependencies and entry point
 - `install.sh` — Cross-platform installer with GPU detection
 

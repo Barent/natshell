@@ -170,15 +170,19 @@ Commands are classified into three risk levels by a fast, deterministic regex-ba
 - **Blocked** — never executed (fork bombs, rm -rf /, destructive dd/mkfs to disks, etc.)
 
 Additional safety features:
-- Commands chained with `&&`, `||`, `;`, `&`, or `|` are split and each sub-command is classified independently
+- Commands chained with `&&`, `||`, `;`, `&`, `|`, `(`, `)` or a newline are split — quote-aware, so an operator inside `"..."` is data — and each sub-command is classified independently
+- A command is matched both as written and with wrapper commands, environment assignments and the path to the executable stripped, so `/bin/rm`, `LC_ALL=C rm` and `command rm` are all recognised as `rm`
 - Subshell expressions (`$(...)`) and backtick expansions are flagged for confirmation
 - Sensitive file paths (SSH keys, `/etc/shadow`, `.env`) require confirmation for read_file
 - Sensitive environment variables (API keys, tokens, credentials) are filtered from subprocesses
 - Sudo passwords are cached for 5 minutes with automatic expiry
 - LLM output is escaped to prevent Rich markup injection in the TUI
 - API keys sent over plaintext HTTP trigger a warning
+- Tools with no explicit classification require confirmation rather than running
 
-Safety modes are configurable: `confirm` (default), `warn`, or `danger`. All patterns are customizable in config.
+Safety modes are configurable: `confirm` (default), `warn`, or `danger`.
+
+Patterns in `[safety]` are **added to** a built-in set, not substituted for it. The built-in blocked patterns (fork bombs, `rm` against the filesystem root, writing over a block device, `format C:`) and a baseline set of confirmation patterns live in `safety/classifier.py` and cannot be removed by editing config — `blocked` is the one tier that survives `danger` mode, so it should not be removable by a file edit or a tool call. Add your own entries to extend either list.
 
 ## Configuration
 
