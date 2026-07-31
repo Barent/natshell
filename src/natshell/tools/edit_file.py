@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import difflib
-from pathlib import Path
 
 from natshell.backup import get_backup_manager
 from natshell.tools.file_tracker import get_tracker
 from natshell.tools.limits import ToolLimits
 from natshell.tools.registry import ToolDefinition, ToolResult
+from natshell.tools.safe_path import resolve_write_target
 
 # ── Shared limits (overwritten by agent loop once n_ctx is known) ─────────
 
@@ -164,7 +164,9 @@ async def edit_file(
     end_line: int | None = None,
 ) -> ToolResult:
     """Replace a unique occurrence of old_text with new_text in a file."""
-    target = Path(path).expanduser().resolve()
+    target, resolve_error = resolve_write_target(path)
+    if target is None:
+        return ToolResult(error=resolve_error, exit_code=1)
 
     if not target.exists():
         return ToolResult(error=f"File not found: {target}", exit_code=1)
@@ -265,7 +267,11 @@ async def edit_file(
         new_content = content.replace(old_text, new_text, 1)
 
     try:
-        get_backup_manager().backup(target)
+        if get_backup_manager().backup(target) is None:
+            return ToolResult(
+                error=f"Refusing to edit {target}: it could not be backed up.",
+                exit_code=1,
+            )
         target.write_text(new_content)
     except Exception as e:
         return ToolResult(error=f"Error writing file: {e}", exit_code=1)

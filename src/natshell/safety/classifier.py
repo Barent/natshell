@@ -202,12 +202,18 @@ _READ_ONLY_TOOLS = frozenset(
 )
 
 
-def _is_agents_md(path: str) -> bool:
-    """Return True if *path* is a working memory agents.md file."""
-    return (
-        path.endswith(".natshell/agents.md")
-        or path.endswith(".config/natshell/agents.md")
-    )
+# NOTE: writes to the working-memory file (agents.md) used to return SAFE via an
+# endswith() test on the model-supplied path.  That test ran before the
+# sensitive-path loop and before the mode checks, so it was SAFE in every mode,
+# for any path ending in those characters — including a symlink pointing
+# somewhere else entirely, and including a .natshell/agents.md in a directory
+# chosen by the caller.
+#
+# The file is read from cwd on every run and spliced verbatim into the system
+# prompt, so an unconfirmed write to it is a persistent instruction change that
+# survives /clear and outlives the session.  There is no path test that makes
+# that safe, because the risk is in the content rather than the location, so the
+# special case is gone: working-memory writes confirm like any other write.
 
 
 class SafetyClassifier:
@@ -358,8 +364,6 @@ class SafetyClassifier:
 
         if tool_name == "write_file":
             path = arguments.get("path", "")
-            if _is_agents_md(path):
-                return Risk.SAFE
             for pattern in _SENSITIVE_PATH_PATTERNS:
                 if pattern in path:
                     return Risk.CONFIRM
@@ -370,8 +374,6 @@ class SafetyClassifier:
         if tool_name == "edit_file":
             # Always confirm edits; also check sensitive paths
             path = arguments.get("path", "")
-            if _is_agents_md(path):
-                return Risk.SAFE
             for pattern in _SENSITIVE_PATH_PATTERNS:
                 if pattern in path:
                     return Risk.CONFIRM

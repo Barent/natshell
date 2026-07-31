@@ -270,10 +270,16 @@ def test_memory_config_in_natshell_config() -> None:
     assert cfg.memory.enabled is True
 
 
-# ── Safety exemption ─────────────────────────────────────────────────
+# ── Working-memory writes are not exempt from confirmation ───────────
+#
+# agents.md was exempted by an endswith() test on the model-supplied path,
+# which returned SAFE in every mode.  The file is re-read from cwd on every run
+# and spliced verbatim into the system prompt, so an unconfirmed write to it is
+# a persistent instruction change that survives /clear.  No path test fixes
+# that, because the risk is in the content rather than the location.
 
 
-def test_safety_exempts_agents_md_write() -> None:
+def test_agents_md_write_confirms() -> None:
     from natshell.config import SafetyConfig
     from natshell.safety.classifier import Risk, SafetyClassifier
 
@@ -281,10 +287,10 @@ def test_safety_exempts_agents_md_write() -> None:
     risk = sc.classify_tool_call(
         "write_file", {"path": "/home/user/project/.natshell/agents.md"}
     )
-    assert risk == Risk.SAFE
+    assert risk == Risk.CONFIRM
 
 
-def test_safety_exempts_agents_md_edit() -> None:
+def test_agents_md_edit_confirms() -> None:
     from natshell.config import SafetyConfig
     from natshell.safety.classifier import Risk, SafetyClassifier
 
@@ -292,7 +298,17 @@ def test_safety_exempts_agents_md_edit() -> None:
     risk = sc.classify_tool_call(
         "edit_file", {"path": "/home/user/.config/natshell/agents.md"}
     )
-    assert risk == Risk.SAFE
+    assert risk == Risk.CONFIRM
+
+
+def test_agents_md_in_an_arbitrary_directory_confirms() -> None:
+    """The old test was a suffix match, so any directory could host one."""
+    from natshell.config import SafetyConfig
+    from natshell.safety.classifier import Risk, SafetyClassifier
+
+    sc = SafetyClassifier(SafetyConfig())
+    risk = sc.classify_tool_call("write_file", {"path": "/tmp/evil/.natshell/agents.md"})
+    assert risk == Risk.CONFIRM
 
 
 def test_safety_still_confirms_other_writes() -> None:
