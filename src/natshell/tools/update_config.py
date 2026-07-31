@@ -7,8 +7,10 @@ import logging
 
 from natshell.config import (
     CONFIG_ENUMS,
+    LLM_WRITABLE_KEYS,
     VALID_CONFIG_KEYS,
     NatShellConfig,
+    is_llm_writable,
     save_config_value,
 )
 from natshell.tools.registry import ToolDefinition, ToolResult
@@ -34,7 +36,10 @@ DEFINITION = ToolDefinition(
         "Update a NatShell configuration value. Changes are saved to "
         "~/.config/natshell/config.toml and take effect immediately. "
         "Use this when the user asks to change settings like temperature, "
-        "max_steps, safety mode, GPU layers, etc."
+        "max_steps, GPU layers, or the theme. "
+        "Settings that govern safety, inference endpoints, model provenance, "
+        "or the system prompt cannot be changed with this tool — the user "
+        "edits those directly in the config file."
     ),
     parameters={
         "type": "object",
@@ -42,8 +47,8 @@ DEFINITION = ToolDefinition(
             "section": {
                 "type": "string",
                 "description": (
-                    "The config section (e.g. 'agent', 'model', 'safety', 'engine', "
-                    "'ui', 'backup', 'remote', 'ollama', 'mcp')"
+                    "The config section: 'agent', 'model', 'ollama', 'ui', "
+                    "'backup', 'kiwix', 'memory', or 'skills'"
                 ),
             },
             "key": {
@@ -124,7 +129,7 @@ async def update_config(section: str, key: str, value: str) -> ToolResult:
     """Validate, coerce, persist, and apply a config change."""
     # Validate section
     if section not in VALID_CONFIG_KEYS:
-        valid_sections = ", ".join(sorted(VALID_CONFIG_KEYS.keys()))
+        valid_sections = ", ".join(sorted(LLM_WRITABLE_KEYS.keys()))
         return ToolResult(
             error=f"Unknown config section: {section!r}. Valid sections: {valid_sections}",
             exit_code=1,
@@ -133,9 +138,22 @@ async def update_config(section: str, key: str, value: str) -> ToolResult:
     # Validate key
     section_keys = VALID_CONFIG_KEYS[section]
     if key not in section_keys:
-        valid_keys = ", ".join(sorted(section_keys.keys()))
+        valid_keys = ", ".join(sorted(LLM_WRITABLE_KEYS.get(section, ())))
         return ToolResult(
             error=f"Unknown key {key!r} in [{section}]. Valid keys: {valid_keys}",
+            exit_code=1,
+        )
+
+    # A real key, but not one this tool may set.  Refuse with the reason and
+    # the manual route, so the model reports it rather than retrying variants.
+    if not is_llm_writable(section, key):
+        return ToolResult(
+            error=(
+                f"[{section}].{key} cannot be changed by a tool call. Settings that "
+                "govern safety, inference endpoints, model provenance, or the system "
+                "prompt are editable only by the user, directly in "
+                "~/.config/natshell/config.toml. Tell the user this, and do not retry."
+            ),
             exit_code=1,
         )
 

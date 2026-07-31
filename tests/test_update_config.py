@@ -304,20 +304,27 @@ class TestUpdateConfigTool:
         assert "integer" in result.error
 
     @pytest.mark.asyncio
-    async def test_danger_fast_update(self):
+    async def test_danger_fast_is_refused(self):
+        """Was: asserted the model could turn every confirmation dialog off."""
         result = await update_config("safety", "danger_fast", "true")
-        assert result.exit_code == 0
-        assert "danger_fast" in result.output
+        assert result.exit_code == 1
+        assert "cannot be changed by a tool call" in result.error
+
+    @pytest.mark.asyncio
+    async def test_safety_mode_is_refused(self):
+        result = await update_config("safety", "mode", "danger")
+        assert result.exit_code == 1
+        assert "cannot be changed by a tool call" in result.error
 
     @pytest.mark.asyncio
     async def test_enum_validation(self):
-        result = await update_config("safety", "mode", "invalid")
+        result = await update_config("ui", "theme", "invalid")
         assert result.exit_code == 1
         assert "Allowed values" in result.error
 
     @pytest.mark.asyncio
     async def test_enum_valid(self):
-        result = await update_config("safety", "mode", "warn")
+        result = await update_config("ui", "theme", "light")
         assert result.exit_code == 0
 
     @pytest.mark.asyncio
@@ -334,9 +341,16 @@ class TestUpdateConfigTool:
 
     @pytest.mark.asyncio
     async def test_bool_update(self):
-        result = await update_config("backup", "enabled", "false")
+        result = await update_config("memory", "enabled", "false")
         assert result.exit_code == 0
         assert "False" in result.output
+
+    @pytest.mark.asyncio
+    async def test_disabling_backups_is_refused(self):
+        """Turning off backups before a destructive edit removes /undo."""
+        result = await update_config("backup", "enabled", "false")
+        assert result.exit_code == 1
+        assert "cannot be changed by a tool call" in result.error
 
 
 # ── TestApplyToLiveConfig ────────────────────────────────────────────────
@@ -368,6 +382,12 @@ class TestRegistration:
 
         registry = create_default_registry()
         assert "update_config" in registry.tool_names
+
+    def test_description_does_not_advertise_safety_mode(self):
+        """The model should not be told it can turn confirmation off."""
+        from natshell.tools.update_config import DEFINITION
+
+        assert "safety mode" not in DEFINITION.description
 
     def test_not_in_plan_safe_tools(self):
         """Plan generation reads untrusted material; it must not be offered a

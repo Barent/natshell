@@ -214,6 +214,52 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
     },
 }
 
+# The subset of VALID_CONFIG_KEYS that the model may write through the
+# update_config tool.  VALID_CONFIG_KEYS remains the full schema of what the
+# config file accepts; this is the smaller question of what a tool call is
+# allowed to change on the user's behalf.
+#
+# What is missing, and why:
+#
+#   [safety]  mode, danger_fast    turn off confirmation permanently
+#   [mcp]     safety_mode          turn off the MCP transport's only gate
+#   [remote]  url, api_key         point inference at another endpoint, which
+#                                  sends the whole conversation there
+#   [prompt]  persona,             spliced verbatim into every future system
+#             extra_instructions   prompt, so it persists across sessions
+#   [model]   path, hf_repo,       choose which weights get downloaded and run
+#             hf_file
+#   [backup]  enabled              disable undo ahead of a destructive edit
+#   [skills]  enabled              re-enable skill loading after a user
+#                                  switched it off
+#   [engine]  preferred            switch inference to a different backend
+#   [ollama]  url                  as [remote] url
+#
+# None of these are things a user asks for mid-conversation often enough to be
+# worth the tool call; all of them are things injected text would ask for.
+# They remain editable in ~/.config/natshell/config.toml, by the user, on
+# purpose.
+LLM_WRITABLE_KEYS: dict[str, frozenset[str]] = {
+    "agent": frozenset(
+        {"max_steps", "plan_max_steps", "temperature", "max_tokens", "context_reserve"}
+    ),
+    "model": frozenset(
+        {"n_ctx", "n_threads", "n_gpu_layers", "main_gpu", "prompt_cache", "prompt_cache_mb"}
+    ),
+    "ollama": frozenset({"default_model", "n_ctx"}),
+    "ui": frozenset({"theme"}),
+    "backup": frozenset({"max_per_file"}),
+    "kiwix": frozenset({"url"}),
+    "memory": frozenset({"enabled", "max_chars", "min_ctx"}),
+    "skills": frozenset({"disabled", "inject_in_compact"}),
+}
+
+
+def is_llm_writable(section: str, key: str) -> bool:
+    """True if the update_config tool may change [section].key."""
+    return key in LLM_WRITABLE_KEYS.get(section, frozenset())
+
+
 CONFIG_ENUMS: dict[str, dict[str, list[str]]] = {
     "safety": {
         "mode": ["confirm", "warn", "danger"],
