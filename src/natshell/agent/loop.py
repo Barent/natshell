@@ -790,6 +790,20 @@ class AgentLoop:
                     yield AgentEvent(type=EventType.PLANNING, data=result.content)
 
                 for tool_call in result.tool_calls:
+                    # Bind the model's argument names to the handler's real
+                    # parameters *before* classifying.  The registry repairs a
+                    # mis-named call on its way to execution, so classifying the
+                    # unrepaired names judges a different call than the one that
+                    # runs — and a missing "command" key reads as an empty
+                    # string, which matches no pattern and returns SAFE.
+                    # Mutating the call also means the confirmation dialog shows
+                    # the arguments that will actually be used.
+                    normalized = self.tools.normalize_arguments(
+                        tool_call.name, tool_call.arguments
+                    )
+                    if normalized is not None:
+                        tool_call.arguments = normalized
+
                     # Safety classification
                     risk = self.safety.classify_tool_call(tool_call.name, tool_call.arguments)
                     logger.debug(

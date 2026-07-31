@@ -59,6 +59,13 @@ async def _execute_tool(
     """Execute a NatShell tool with safety classification, returning MCP content."""
     from mcp.types import TextContent
 
+    # Bind the caller's argument names to the handler's real parameters before
+    # classifying, so the call that is judged is the call that runs.  A remote
+    # MCP client reaches the same repair path an LLM does.
+    normalized = registry.normalize_arguments(name, arguments)
+    if normalized is not None:
+        arguments = normalized
+
     # Safety check
     risk = safety.classify_tool_call(name, arguments)
 

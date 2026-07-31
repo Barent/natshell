@@ -128,6 +128,34 @@ class ToolRegistry:
         skill = _SKILL_REGISTRY.get(name)
         return skill is not None and skill.name not in _SKILL_REGISTRY._disabled
 
+    def normalize_arguments(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return *arguments* keyed by the handler's real parameter names.
+
+        Returns the dict unchanged when it already binds, a repaired dict when
+        the model used the wrong names but the right shape, and ``None`` when
+        neither applies.
+
+        **Callers must run this before classifying the call.**  The classifier
+        reads arguments by name — ``arguments.get("command", "")`` — so a call
+        whose key is wrong classifies against an empty string and matches no
+        pattern, while ``execute`` goes on to repair the very same call and run
+        it.  Classification and execution have to see one dict, not two.
+        """
+        handler = self._tools.get(name)
+        if handler is None:
+            # Unknown tool: nothing to bind against.  execute() reports it,
+            # and an unknown tool never reaches a handler regardless.
+            return arguments
+        try:
+            inspect.signature(handler).bind(**arguments)
+        except TypeError:
+            return self._remap_arguments(name, arguments)
+        return arguments
+
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """Execute a tool by name with the given arguments.
 
@@ -141,6 +169,12 @@ class ToolRegistry:
         2. The handler raises an exception during execution.  We report
            it directly — we do **not** retry with a remap, because that
            masks real runtime bugs as kwarg-mismatch errors.
+
+        Callers that classify a call for safety must call
+        :meth:`normalize_arguments` first and pass the result here, so that the
+        arguments which were judged are the arguments which run.  Repeating the
+        normalization here is harmless — it is idempotent — and keeps direct
+        callers working.
         """
         handler = self._tools.get(name)
         if handler is None:
@@ -165,7 +199,7 @@ class ToolRegistry:
         try:
             inspect.signature(handler).bind(**arguments)
         except TypeError:
-            remapped = self._remap_arguments(name, arguments)
+            remapped = self.normalize_arguments(name, arguments)
             if remapped is None:
                 defn = self._definitions.get(name)
                 expected = (
