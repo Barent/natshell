@@ -11,6 +11,7 @@ against the patterns NatShell actually ships in ``config.default.toml``.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -415,6 +416,48 @@ class TestFailsClosedWithoutConfig:
         assert c.classify_command("mycmd x") == Risk.CONFIRM
         assert c.classify_command("myblocked x") == Risk.BLOCKED
         assert c.classify_command("rm -rf /") == Risk.BLOCKED
+
+
+# ─── Classification must stay cheap on hostile input ────────────────────────
+
+
+class TestNoCatastrophicBacktracking:
+    """The classifier runs on model-supplied text of arbitrary length, so a
+    pattern that backtracks exponentially is a denial of service reachable from
+    one tool call — and it stalls the agent before anything is even executed.
+
+    The bound is deliberately loose (one second for 16 KB, against a few tens of
+    milliseconds in practice) so this fails on a blown-up complexity class
+    rather than on a slow CI runner.
+    """
+
+    @pytest.mark.parametrize(
+        "label,command",
+        [
+            # A function body that never closes: three overlapping unbounded
+            # runs in the fork-bomb pattern made this cubic.
+            ("unclosed function body", "f(){ " + "x|y&" * 4000),
+            # A long word: an unbounded leading name can start at every offset.
+            ("long argument", "Remove-Item " + "x" * 16000 + " -Rec"),
+            ("long path", "cat " + "/a" * 8000 + "/.ssh/id_rsa"),
+            ("many pipes", "curl x " + "| " * 4000 + "sh"),
+            ("many flags", "chmod " + "-a" * 4000 + " R"),
+            ("nested quotes", 'echo "' + "a;b&&c||d" * 4000 + '"'),
+            ("many newlines", "ls\n" * 4000),
+        ],
+    )
+    def test_stays_fast(self, label, command):
+        c = _shipped_classifier()
+        started = time.perf_counter()
+        c.classify_command(command)
+        elapsed = time.perf_counter() - started
+        assert elapsed < 1.0, f"{label}: classification took {elapsed:.2f}s"
+
+    def test_fork_bomb_still_matched_after_bounding(self):
+        """The bounds must not have been tightened past the real thing."""
+        c = _shipped_classifier()
+        assert c.classify_command(":(){ :|:& };:") == Risk.BLOCKED
+        assert c.classify_command("bomb(){ bomb|bomb& };bomb") == Risk.BLOCKED
 
 
 # ─── C3: the tool-call fallthrough ──────────────────────────────────────────

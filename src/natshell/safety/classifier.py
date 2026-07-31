@@ -87,8 +87,10 @@ BASELINE_CONFIRM_PATTERNS: tuple[str, ...] = (
     # that "sudo rm -rf x" is matched as "rm -rf x", which means the raw string
     # is the only place sudo itself is still visible.
     r"^(?:\S*/)?(?:sudo|doas)\s",
-    # PowerShell recursive delete, in any of its spellings.
-    rf"(?i)\b{_PS_DELETE_CMDLETS}\b.*\s{_PS_RECURSE}\b",
+    # PowerShell recursive delete, in any of its spellings.  Two independent
+    # lookaheads rather than `cmdlet .* -rec`, whose trailing .* backtracks
+    # across a long argument once per candidate cmdlet position.
+    rf"(?i)^(?=[^\n]*\b{_PS_DELETE_CMDLETS}\b)(?=[^\n]*\s{_PS_RECURSE}\b)",
 )
 
 
@@ -111,7 +113,20 @@ BASELINE_BLOCKED_PATTERNS: tuple[str, ...] = (
     # Fork bomb by shape: NAME() { NAME | NAME & }; NAME, whatever NAME is.
     # The shipped literal was compiled as a regex, so its unescaped '|' became
     # an alternation and only the canonical spelling ever matched.
-    r"([\w:]+)\s*\(\s*\)\s*\{[^}]*\|[^}]*&[^}]*\}\s*;\s*\1",
+    #
+    # Every quantifier here is bounded, and the three body segments use
+    # disjoint character classes, because this pattern is run against
+    # model-supplied text of arbitrary length:
+    #
+    #   [^}]*\|[^}]*&[^}]*\}  three overlapping unbounded runs; a body with no
+    #                         closing brace makes the engine try every way of
+    #                         splitting it — 16 KB took three seconds
+    #   ([\w:]+)              can begin at every offset of a long word and
+    #                         backtracks within each one, which is quadratic
+    #
+    # A function name over 64 characters is not a realistic way to hide a fork
+    # bomb, and the canonical literal is matched by the next entry regardless.
+    r"([\w:]{1,64})\s*\(\s*\)\s*\{[^}|]{0,200}\|[^}&]{0,200}&[^}]{0,200}\}\s*;\s*\1",
     re.escape(":(){ :|:& };:"),
     # rm targeting the filesystem root, with the recursive flag written any of
     # the ways it can be written, and --no-preserve-root on either side of it.
