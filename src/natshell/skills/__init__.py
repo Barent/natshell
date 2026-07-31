@@ -196,25 +196,61 @@ def load_skills(tool_registry: ToolRegistry, config: NatShellConfig) -> SkillReg
             continue
 
         if name in seen:
+            # A project skill comes from whatever directory NatShell happened to
+            # be started in.  Letting it take a name that is already taken means
+            # cloning a repository can silently replace a built-in skill's
+            # instructions with its own.
+            if source == "project":
+                logger.warning(
+                    "skill %s at %s ignored: a %s skill of that name already exists. "
+                    "Project skills may not replace built-in or user skills.",
+                    name,
+                    skill_dir,
+                    seen[name].source,
+                )
+                continue
             logger.info("skill %s: %s overrides %s", name, source, seen[name].source)
         seen[name] = Skill(name=name, description=desc, path=skill_dir, source=source)
 
         tools_py = skill_dir / "tools.py"
-        if tools_py.is_file():
-            try:
-                spec = importlib.util.spec_from_file_location(
-                    f"natshell_skill_tools_{name.replace('-', '_')}", tools_py
-                )
-                if spec is None or spec.loader is None:
-                    logger.warning("skill %s tools.py: invalid module spec", name)
+        if not tools_py.is_file():
+            continue
+
+        # Executing tools.py is executing arbitrary Python as the user, at
+        # startup, before any prompt.  That is the user's decision to make about
+        # their own machine, so it is limited to skills they installed: builtin
+        # ships with NatShell, user lives under ~/.config/natshell/skills.  A
+        # project skill is code that arrived with a repository.
+        if source == "project":
+            logger.warning(
+                "skill %s: not executing %s — project-local skills may not run code. "
+                "Move the skill to %s to load its tools.",
+                name,
+                tools_py,
+                USER_SKILLS_DIR,
+            )
+            continue
+
+        # A disabled skill is hidden from the model but its tools.py used to run
+        # anyway, so `/skills disable` was not the off switch it appeared to be.
+        if name in disabled:
+            logger.info("skill %s is disabled; not executing %s", name, tools_py)
+            continue
+
+        try:
+            spec = importlib.util.spec_from_file_location(
+                f"natshell_skill_tools_{name.replace('-', '_')}", tools_py
+            )
+            if spec is None or spec.loader is None:
+                logger.warning("skill %s tools.py: invalid module spec", name)
+            else:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)  # type: ignore[union-attr]
+                if hasattr(module, "register") and callable(module.register):
+                    module.register(tool_registry)
                 else:
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)  # type: ignore[union-attr]
-                    if hasattr(module, "register") and callable(module.register):
-                        module.register(tool_registry)
-                    else:
-                        logger.warning("skill %s tools.py has no register() callable", name)
-            except Exception as e:
-                logger.warning("skill %s tools.py load failed: %s", name, e)
+                    logger.warning("skill %s tools.py has no register() callable", name)
+        except Exception as e:
+            logger.warning("skill %s tools.py load failed: %s", name, e)
 
     return SkillRegistry(list(seen.values()), disabled)

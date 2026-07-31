@@ -51,7 +51,14 @@ The body is only loaded when the model explicitly calls `skill(name="…")`. Kee
 | `~/.config/natshell/skills/<name>/` | Personal skills, available in all projects |
 | `.natshell/skills/<name>/` | Project-local skills, committed alongside the code |
 
-Built-in skills ship inside the Python package (`src/natshell/skills/`). User and project skills override built-ins with the same name.
+Built-in skills ship inside the Python package (`src/natshell/skills/`). User skills override built-ins with the same name.
+
+**Project skills are treated as untrusted.** They come from whichever directory NatShell was started in, which may be a repository you have only just cloned, so two limits apply to them and not to user skills:
+
+- A project skill's `tools.py` is **not executed**. Move the skill to `~/.config/natshell/skills/<name>/` if you want its tools loaded — that is an explicit decision to run that code on your machine.
+- A project skill may **not** take a name already used by a built-in or user skill. Otherwise a repository could silently replace a skill's instructions with its own.
+
+Project skills are still discovered, listed, and loadable by the model; only code execution and name shadowing are refused.
 
 ## Adding custom tools via tools.py
 
@@ -79,6 +86,8 @@ def register(registry):
 ```
 
 Errors in `tools.py` are logged as warnings and never crash startup.
+
+`tools.py` runs at startup, before any prompt, so it is only loaded for built-in and user skills — not project skills (see above) — and not for a skill listed in `[skills] disabled`.
 
 ## Managing skills
 

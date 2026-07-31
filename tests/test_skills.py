@@ -412,6 +412,26 @@ class TestLoadSkills:
         # Skill is still loaded (body ok), but tools.py failed silently
         assert skill_reg.get("broken") is not None
 
+    def test_user_tools_py_registers_tool(self, tmp_path):
+        """A skill under ~/.config/natshell/skills is the user's own code."""
+        d = _make_skill_dir(tmp_path, "usertool", "A user skill", "Body here.")
+        (d / "tools.py").write_text(
+            "from natshell.tools.registry import ToolDefinition\n"
+            "async def _handler(**kwargs): return 'ok'\n"
+            "def register(registry):\n"
+            "    registry.register(ToolDefinition(name='user_tool', description='c', "
+            "parameters={'type': 'object', 'properties': {}}), _handler)\n"
+        )
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "user")]):
+            from natshell.skills import load_skills
+
+            load_skills(registry, cfg)
+
+        assert "user_tool" in registry.tool_names
+
     def test_no_register_callable_in_tools_py(self, tmp_path, caplog):
         d = _make_skill_dir(tmp_path, "noop", "A skill", "Body here.")
         (d / "tools.py").write_text("# no register function\nfoo = 42\n")
@@ -642,6 +662,122 @@ def test_all_10_skills_discoverable():
 # ---------------------------------------------------------------------------
 # Registry — "skill" tool in PLAN_SAFE and SMALL_CONTEXT sets
 # ---------------------------------------------------------------------------
+
+class TestProjectSkillIsolation:
+    """A project skill comes from whatever directory NatShell was started in.
+
+    Cloning a repository and running natshell inside it used to execute that
+    repository's .natshell/skills/*/tools.py before the user typed anything.
+    """
+
+    def _project_skill_with_tools(self, tmp_path, marker: Path) -> Path:
+        d = _make_skill_dir(tmp_path, "hostile", "A project skill", "Body here.")
+        (d / "tools.py").write_text(
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('executed')\n"
+            "def register(registry):\n"
+            "    pass\n"
+        )
+        return d
+
+    def test_project_tools_py_is_not_executed(self, tmp_path, caplog):
+        marker = tmp_path / "marker.txt"
+        d = self._project_skill_with_tools(tmp_path, marker)
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "project")]):
+            from natshell.skills import load_skills
+
+            with caplog.at_level(logging.WARNING):
+                skill_reg = load_skills(registry, cfg)
+
+        assert not marker.exists(), "project-local tools.py executed at startup"
+        # The skill itself still loads; only its code is refused.
+        assert skill_reg.get("hostile") is not None
+
+    def test_project_tools_py_refusal_is_reported(self, tmp_path, caplog):
+        marker = tmp_path / "marker.txt"
+        d = self._project_skill_with_tools(tmp_path, marker)
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "project")]):
+            from natshell.skills import load_skills
+
+            with caplog.at_level(logging.WARNING):
+                load_skills(registry, cfg)
+
+        assert any("not executing" in r.getMessage() for r in caplog.records)
+
+    def test_disabled_skill_tools_py_is_not_executed(self, tmp_path):
+        """/skills disable hid a skill from the model but still ran its code."""
+        marker = tmp_path / "marker.txt"
+        d = _make_skill_dir(tmp_path, "offskill", "A skill", "Body here.")
+        (d / "tools.py").write_text(
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('executed')\n"
+            "def register(registry):\n"
+            "    pass\n"
+        )
+        cfg = _make_config(disabled=["offskill"])
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "user")]):
+            from natshell.skills import load_skills
+
+            load_skills(registry, cfg)
+
+        assert not marker.exists(), "disabled skill's tools.py executed"
+
+    def test_project_skill_cannot_override_a_builtin(self, tmp_path, caplog):
+        """Otherwise a hostile repo silently replaces a built-in skill's
+        instructions with its own."""
+        builtin = _make_skill_dir(tmp_path / "b", "shared", "Builtin version", "Builtin body")
+        project = _make_skill_dir(tmp_path / "p", "shared", "Project version", "Project body")
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        dirs = [(builtin, "builtin"), (project, "project")]
+        with patch("natshell.skills._iter_skill_dirs", return_value=dirs):
+            from natshell.skills import load_skills
+
+            with caplog.at_level(logging.WARNING):
+                skill_reg = load_skills(registry, cfg)
+
+        s = skill_reg.get("shared")
+        assert s is not None
+        assert s.source == "builtin"
+        assert s.description == "Builtin version"
+
+    def test_project_skill_cannot_override_a_user_skill(self, tmp_path):
+        user = _make_skill_dir(tmp_path / "u", "shared", "User version", "User body")
+        project = _make_skill_dir(tmp_path / "p", "shared", "Project version", "Project body")
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        dirs = [(user, "user"), (project, "project")]
+        with patch("natshell.skills._iter_skill_dirs", return_value=dirs):
+            from natshell.skills import load_skills
+
+            skill_reg = load_skills(registry, cfg)
+
+        assert skill_reg.get("shared").source == "user"
+
+    def test_project_skill_with_a_new_name_still_loads(self, tmp_path):
+        """Project skills remain a feature; only overriding and code are refused."""
+        d = _make_skill_dir(tmp_path, "projonly", "Project only", "Body here.")
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "project")]):
+            from natshell.skills import load_skills
+
+            skill_reg = load_skills(registry, cfg)
+
+        assert skill_reg.get("projonly") is not None
+        assert skill_reg.get("projonly").source == "project"
+
 
 class TestSkillToolRegistration:
     def test_skill_in_plan_safe_tools(self):
