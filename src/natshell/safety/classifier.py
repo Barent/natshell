@@ -73,6 +73,11 @@ BASELINE_CONFIRM_PATTERNS: tuple[str, ...] = (
     r"^shred\b",
     r"^truncate\b",
     r"\bgit\s+clean\b",
+    # Privilege escalation.  Also present in the shipped always_confirm list,
+    # but it belongs here too: _normalize_invocation strips sudo as a wrapper so
+    # that "sudo rm -rf x" is matched as "rm -rf x", which means the raw string
+    # is the only place sudo itself is still visible.
+    r"^(?:\S*/)?(?:sudo|doas)\s",
 )
 
 
@@ -303,9 +308,11 @@ class SafetyClassifier:
         if self._matches(self._confirm_patterns, command):
             return Risk.CONFIRM
 
-        # Heuristic: sudo always requires confirmation.  Checked on the
-        # normalized form too, so /usr/bin/sudo and `env sudo` are caught.
-        if _normalize_invocation(command).strip().startswith("sudo "):
+        # Heuristic: sudo always requires confirmation.  Checked on the command
+        # as written, not the normalized form — normalization strips sudo as a
+        # wrapper so that what it guards is matched, which leaves nothing for a
+        # startswith("sudo ") test to see.
+        if _basename(command.strip().split(" ", 1)[0]) in ("sudo", "doas"):
             return Risk.CONFIRM
 
         # Heuristic: redirecting to system paths

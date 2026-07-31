@@ -154,8 +154,8 @@ def clear_sudo_password() -> None:
     _sudo_password = None
 
 
-def needs_sudo_password(result: ToolResult) -> bool:
-    """Return True if the result indicates sudo needed a password it didn't get.
+def needs_sudo_password(result: ToolResult, command: str) -> bool:
+    """Return True if *command* invoked sudo and sudo wanted a password.
 
     Scans both stderr and stdout, and does not gate on the exit code. Models
     frequently rewrite commands in ways that hide the sudo failure from a
@@ -170,8 +170,30 @@ def needs_sudo_password(result: ToolResult) -> bool:
     signatures in ``_SUDO_NEEDS_PW`` are highly specific, matching them
     anywhere in the combined output is a reliable signal regardless of how the
     command was wrapped.
+
+    Specific, however, is not the same as unforgeable. Output is frequently
+    attacker-influenced — a fetched page, a file being read, a log being
+    grepped — and a signature appearing anywhere in it was enough to raise the
+    "Sudo Password Required" modal. A user shown that dialog after asking to
+    read a file cannot tell that the file's contents asked for it.
+
+    So how much of the output is trusted depends on whether *command* named
+    sudo itself:
+
+    * It did: scan both streams and ignore the exit code, because the two
+      rewrites above are things a model does to a command it wrote with sudo
+      in it.
+    * It did not (``apt install`` and friends, which invoke sudo internally):
+      scan stderr only, and only on a non-zero exit. That is the shape a real
+      sudo failure takes here, and it is not the shape of a command that merely
+      printed the words — those land on stdout, and they succeed.
     """
-    haystack = f"{result.error}\n{result.output}"
+    if _has_sudo_invocation(command):
+        haystack = f"{result.error}\n{result.output}"
+    elif result.exit_code == 0:
+        return False
+    else:
+        haystack = result.error
     return any(msg in haystack for msg in _SUDO_NEEDS_PW)
 
 

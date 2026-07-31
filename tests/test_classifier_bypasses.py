@@ -387,6 +387,26 @@ class TestFailsClosedWithoutConfig:
         c = SafetyClassifier(SafetyConfig(mode="confirm", always_confirm=[], blocked=[]))
         assert c.classify_command("shred -uz notes.txt") == Risk.CONFIRM
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "sudo ls",
+            "sudo apt install nginx",
+            "/usr/bin/sudo ls",
+            "doas ls",
+            "ls && sudo reboot",
+        ],
+    )
+    def test_sudo_confirms_without_any_config(self, command):
+        """Privilege escalation must not depend on a config file listing it.
+
+        _normalize_invocation strips sudo as a wrapper so that the command it
+        guards gets matched, which means the raw string is the only place sudo
+        is still visible — easy to lose sight of.
+        """
+        c = SafetyClassifier(SafetyConfig(mode="confirm", always_confirm=[], blocked=[]))
+        assert c.classify_command(command) == Risk.CONFIRM
+
     def test_user_config_extends_rather_than_replaces(self):
         """A config that lists one pattern must not drop the built-in ones."""
         c = SafetyClassifier(

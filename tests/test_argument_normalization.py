@@ -140,6 +140,43 @@ class TestAgentLoopNormalizesBeforeClassifying:
         # The dialog must show the call as it will run, not as the model wrote it.
         assert seen and seen[0].arguments == {"command": "rm notes.txt"}
 
+    async def test_sudo_retry_dialog_shows_the_command_that_will_run(self):
+        """The retry prepends sudo, then asked about the original command.
+
+        The user approved "apt install x" and "sudo apt install x" ran.
+        """
+        from natshell.tools.execute_shell import clear_sudo_password
+
+        agent = _agent_emitting(
+            ToolCall(id="1", name="execute_shell", arguments={"command": "apt install nginx"})
+        )
+        seen: list[ToolCall] = []
+
+        async def confirm(tool_call):
+            seen.append(tool_call)
+            return False
+
+        async def password(tool_call):
+            return "hunter2"
+
+        # Force the sudo-retry branch: report that sudo wanted a password.
+        async def fake_execute(name, arguments):
+            from natshell.tools.registry import ToolResult
+
+            return ToolResult(exit_code=1, error="sudo: a password is required")
+
+        agent.tools.execute = fake_execute
+        try:
+            async for _ in agent.handle_user_message(
+                "go", confirm_callback=confirm, password_callback=password
+            ):
+                pass
+        finally:
+            clear_sudo_password()
+
+        assert seen, "no confirmation was requested"
+        assert seen[-1].arguments["command"] == "sudo apt install nginx"
+
     async def test_safe_command_under_a_wrong_name_still_runs(self):
         agent = _agent_emitting(
             ToolCall(id="1", name="execute_shell", arguments={"cmd": "echo hi"})

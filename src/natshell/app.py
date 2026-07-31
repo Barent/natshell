@@ -564,7 +564,7 @@ class NatShellApp(App):
             result = await execute_shell(command)
 
             # If sudo needs a password, prompt and retry
-            if needs_sudo_password(result):
+            if needs_sudo_password(result, command):
                 password = await self.push_screen_wait(SudoPasswordScreen(command))
                 if password:
                     set_sudo_password(password)

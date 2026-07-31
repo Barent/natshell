@@ -845,7 +845,9 @@ class AgentLoop:
                     if (
                         tool_call.name == "execute_shell"
                         and password_callback
-                        and _needs_sudo_password(tool_result)
+                        and _needs_sudo_password(
+                            tool_result, tool_call.arguments.get("command", "")
+                        )
                     ):
                         password = await password_callback(tool_call)
                         if password:
@@ -863,6 +865,15 @@ class AgentLoop:
                             cmd = retry_args.get("command", "")
                             if cmd and not _has_sudo_invocation(cmd):
                                 retry_args["command"] = f"sudo {cmd}"
+                            # The dialog has to describe the command that will
+                            # actually run.  Passing the original tool_call
+                            # showed "apt install x" while "sudo apt install x"
+                            # was what got executed on approval.
+                            retry_call = ToolCall(
+                                id=tool_call.id,
+                                name=tool_call.name,
+                                arguments=retry_args,
+                            )
                             # Re-classify the modified command — prepending
                             # sudo may change the risk level.
                             retry_risk = self.safety.classify_tool_call(
@@ -870,7 +881,7 @@ class AgentLoop:
                             )
                             if retry_risk == Risk.BLOCKED:
                                 yield AgentEvent(
-                                    type=EventType.BLOCKED, tool_call=tool_call
+                                    type=EventType.BLOCKED, tool_call=retry_call
                                 )
                                 self._append_tool_exchange(
                                     tool_call,
@@ -881,9 +892,9 @@ class AgentLoop:
                             if retry_risk == Risk.CONFIRM and confirm_callback:
                                 yield AgentEvent(
                                     type=EventType.CONFIRM_NEEDED,
-                                    tool_call=tool_call,
+                                    tool_call=retry_call,
                                 )
-                                confirmed = await confirm_callback(tool_call)
+                                confirmed = await confirm_callback(retry_call)
                                 if not confirmed:
                                     self._append_tool_exchange(
                                         tool_call,
