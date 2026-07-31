@@ -135,3 +135,59 @@ class TestBlockedIsNeverDowngraded:
         c = _shipped_classifier(mode="danger")
         risk = c.classify_tool_call("execute_shell", {"command": "sudo apt update && rm -rf /"})
         assert risk == Risk.BLOCKED
+
+
+# ─── C6a: the patterns anchor on the first token, so anything that shifts ────
+#          the binary off the front of the string evades every one of them
+
+
+class TestInvocationNormalization:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "/bin/rm -rf /home/user/Documents",  # absolute path
+            "/usr/bin/rm -rf /home/user",
+            "LC_ALL=C rm -rf /home/user/Documents",  # env assignment prefix
+            "FOO=bar BAZ=qux rm -rf /home/user",
+            "command rm -rf /home/user",  # shell builtin wrapper
+            "env rm -rf /home/user",
+            "nohup rm -rf /home/user",
+            "timeout 5 rm -rf /home/user",
+            "nice -n 10 rm -rf /home/user",
+            "xargs -I{} rm -rf /home/user",
+            "/usr/bin/sudo apt install nginx",
+            "setsid chown -R root /srv",
+        ],
+    )
+    def test_wrapped_invocation_is_not_safe(self, command):
+        assert _shipped_classifier().classify_command(command) != Risk.SAFE
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "/bin/rm -rf /",
+            "LC_ALL=C rm -rf /",
+            "command rm -rf /",
+            "sudo apt update && /bin/rm -rf /",
+            "echo hi\n/bin/rm -rf /",
+        ],
+    )
+    def test_wrapped_blocked_command_is_still_blocked(self, command):
+        assert _shipped_classifier().classify_command(command) == Risk.BLOCKED
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls -la",
+            "/usr/bin/ls -la",
+            "apt list --installed",
+            "env python3 script.py",
+            "docker ps",
+            "systemctl status nginx",
+            "grep -r TODO .",
+            "timeout 5 curl https://example.com",
+        ],
+    )
+    def test_benign_commands_stay_safe(self, command):
+        """Normalization must not manufacture confirmations for ordinary work."""
+        assert _shipped_classifier().classify_command(command) == Risk.SAFE

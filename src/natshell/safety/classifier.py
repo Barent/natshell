@@ -32,6 +32,78 @@ _SENSITIVE_PATH_PATTERNS = [
 ]
 
 
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_NUMERIC_ARG_RE = re.compile(r"^-?\d+(?:\.\d+)?[smhd]?$")
+
+# Commands whose own argument is another command, so the binary that matters is
+# not the first token.
+_WRAPPER_COMMANDS = frozenset(
+    {
+        "builtin",
+        "busybox",
+        "command",
+        "doas",
+        "env",
+        "eval",
+        "exec",
+        "ionice",
+        "nice",
+        "nohup",
+        "setsid",
+        "stdbuf",
+        "sudo",
+        "time",
+        "timeout",
+        "xargs",
+    }
+)
+
+# Wrappers that take a bare number of their own (``timeout 5 …``, ``nice 10 …``)
+_NUMERIC_ARG_WRAPPERS = frozenset({"ionice", "nice", "time", "timeout"})
+
+
+def _basename(token: str) -> str:
+    """Strip any directory prefix, POSIX or Windows."""
+    return token.rpartition("/")[2].rpartition("\\")[2]
+
+
+def _normalize_invocation(command: str) -> str:
+    """Return *command* reduced to the binary it actually runs, plus its arguments.
+
+    Every shipped pattern is anchored with ``^`` on a bare command name, so
+    anything that pushes the binary off the front of the string evades all of
+    them at once.  ``/bin/rm -rf x``, ``LC_ALL=C rm -rf x``, ``command rm -rf x``
+    and ``nohup rm -rf x`` all normalize to ``rm -rf x``.
+
+    Returns the input unchanged when there is nothing to strip.  Callers match
+    against both forms, so an imperfect normalization can only add coverage,
+    never remove it.
+    """
+    tokens = command.split()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if _ENV_ASSIGNMENT_RE.match(token):
+            index += 1
+            continue
+        name = _basename(token)
+        if name in _WRAPPER_COMMANDS:
+            index += 1
+            # Skip the wrapper's own options so the wrapped binary lands first.
+            while index < len(tokens) and (
+                tokens[index].startswith("-")
+                or (name in _NUMERIC_ARG_WRAPPERS and _NUMERIC_ARG_RE.match(tokens[index]))
+            ):
+                index += 1
+            continue
+        break
+
+    if index >= len(tokens):
+        return command
+    remaining = tokens[index:]
+    return " ".join([_basename(remaining[0]), *remaining[1:]])
+
+
 def _is_agents_md(path: str) -> bool:
     """Return True if *path* is a working memory agents.md file."""
     return (
@@ -92,23 +164,33 @@ class SafetyClassifier:
 
     @staticmethod
     def _matches(patterns: list[re.Pattern[str]], text: str) -> bool:
-        return any(pattern.search(text) for pattern in patterns)
+        """True if any pattern matches *text* as written, or once normalized.
+
+        Both forms are tried so that normalization can only widen coverage: a
+        command the patterns already catch stays caught even if
+        _normalize_invocation mishandles it.
+        """
+        if any(pattern.search(text) for pattern in patterns):
+            return True
+        normalized = _normalize_invocation(text)
+        if normalized == text:
+            return False
+        return any(pattern.search(normalized) for pattern in patterns)
 
     def _classify_single(self, command: str) -> Risk:
         """Classify a single command (no chaining operators)."""
         # Check blocked first
-        for pattern in self._blocked_patterns:
-            if pattern.search(command):
-                logger.warning(f"BLOCKED command: {command}")
-                return Risk.BLOCKED
+        if self._matches(self._blocked_patterns, command):
+            logger.warning(f"BLOCKED command: {command}")
+            return Risk.BLOCKED
 
         # Check confirmation-required patterns
-        for pattern in self._confirm_patterns:
-            if pattern.search(command):
-                return Risk.CONFIRM
+        if self._matches(self._confirm_patterns, command):
+            return Risk.CONFIRM
 
-        # Heuristic: sudo always requires confirmation
-        if command.strip().startswith("sudo "):
+        # Heuristic: sudo always requires confirmation.  Checked on the
+        # normalized form too, so /usr/bin/sudo and `env sudo` are caught.
+        if _normalize_invocation(command).strip().startswith("sudo "):
             return Risk.CONFIRM
 
         # Heuristic: redirecting to system paths
