@@ -369,10 +369,12 @@ class TestRegistration:
         registry = create_default_registry()
         assert "update_config" in registry.tool_names
 
-    def test_in_plan_safe_tools(self):
+    def test_not_in_plan_safe_tools(self):
+        """Plan generation reads untrusted material; it must not be offered a
+        tool that rewrites NatShell's configuration while doing so."""
         from natshell.tools.registry import PLAN_SAFE_TOOLS
 
-        assert "update_config" in PLAN_SAFE_TOOLS
+        assert "update_config" not in PLAN_SAFE_TOOLS
 
     def test_not_in_small_context_tools(self):
         from natshell.tools.registry import SMALL_CONTEXT_TOOLS

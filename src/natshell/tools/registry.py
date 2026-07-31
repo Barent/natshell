@@ -11,7 +11,14 @@ from natshell.tools.limits import ToolLimits
 
 logger = logging.getLogger(__name__)
 
-# Tools that are safe to use during plan generation (read-only + write_file for PLAN.md)
+# Tools that are safe to use during plan generation (read-only + write_file for PLAN.md).
+#
+# update_config is deliberately absent.  Plan generation is the phase that is
+# explicitly instructed to go and read unfamiliar material — fetch_url, a
+# repository's files, a kiwix article — so it is the phase most likely to be
+# reading text written by someone else.  Offering it a tool that rewrites
+# NatShell's own configuration during that phase inverts the point of the
+# allowlist.  Planning should observe; the plan it produces is what acts.
 PLAN_SAFE_TOOLS: set[str] = {
     "read_file",
     "list_directory",
@@ -20,7 +27,6 @@ PLAN_SAFE_TOOLS: set[str] = {
     "write_file",
     "git_tool",
     "fetch_url",
-    "update_config",
     "kiwix_search",
     "skill",
 }
