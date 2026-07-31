@@ -66,8 +66,10 @@ async def _execute_tool(
     if normalized is not None:
         arguments = normalized
 
-    # Safety check
-    risk = safety.classify_tool_call(name, arguments)
+    # Safety check.  Deliberately ignores the local session's danger mode:
+    # what a remote client may do is governed by mcp.safety_mode, and a
+    # downgrade applied inside the classifier would make strict mean nothing.
+    risk = safety.classify_tool_call(name, arguments, honor_danger_mode=False)
 
     if risk == Risk.BLOCKED:
         raise ValueError(

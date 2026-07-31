@@ -321,7 +321,13 @@ class SafetyClassifier:
         definition = self._registry.get_definition(tool_name)
         return bool(definition is not None and definition.requires_confirmation)
 
-    def classify_tool_call(self, tool_name: str, arguments: dict) -> Risk:
+    def classify_tool_call(
+        self,
+        tool_name: str,
+        arguments: dict,
+        *,
+        honor_danger_mode: bool = True,
+    ) -> Risk:
         """Classify any tool call by risk level.
 
         Unrecognized tools return CONFIRM.  The previous fallthrough was SAFE,
@@ -330,15 +336,23 @@ class SafetyClassifier:
         safety.mode = "danger", danger_fast, mcp.safety_mode = "permissive",
         and a remote inference URL.  Reaching that took no user interaction:
         fetch_url is SAFE, so injected page content could ask for it directly.
+
+        Pass ``honor_danger_mode=False`` to get the risk before the danger-mode
+        downgrade is applied.  The MCP transport needs that: mode = "danger" is
+        a local setting about this operator's own session, and it must not
+        quietly grant a *remote* client the unconfirmed execution that
+        mcp.safety_mode = "strict" was set to deny.
         """
-        if self._declares_confirmation(tool_name) and self.mode != "danger":
+        mode = self.mode if honor_danger_mode else "confirm"
+
+        if self._declares_confirmation(tool_name) and mode != "danger":
             return Risk.CONFIRM
 
         if tool_name == "execute_shell":
             command = arguments.get("command", "")
             risk = self.classify_command(command)
             # In danger mode, downgrade CONFIRM to SAFE (but not BLOCKED)
-            if self.mode == "danger" and risk == Risk.CONFIRM:
+            if mode == "danger" and risk == Risk.CONFIRM:
                 return Risk.SAFE
             return risk
 
@@ -349,7 +363,7 @@ class SafetyClassifier:
             for pattern in _SENSITIVE_PATH_PATTERNS:
                 if pattern in path:
                     return Risk.CONFIRM
-            if self.mode == "danger":
+            if mode == "danger":
                 return Risk.SAFE
             return Risk.CONFIRM
 
@@ -361,12 +375,12 @@ class SafetyClassifier:
             for pattern in _SENSITIVE_PATH_PATTERNS:
                 if pattern in path:
                     return Risk.CONFIRM
-            if self.mode == "danger":
+            if mode == "danger":
                 return Risk.SAFE
             return Risk.CONFIRM
 
         if tool_name == "run_code":
-            if self.mode == "danger":
+            if mode == "danger":
                 return Risk.SAFE
             return Risk.CONFIRM
 
@@ -384,7 +398,7 @@ class SafetyClassifier:
                 return Risk.SAFE
             # Mutating operations require confirmation
             if operation in ("commit", "stash"):
-                if self.mode == "danger":
+                if mode == "danger":
                     return Risk.SAFE
                 return Risk.CONFIRM
             # Unknown operation — let the tool handle the error, but confirm
@@ -398,6 +412,6 @@ class SafetyClassifier:
         logger.debug(
             "Tool %s has no classification rule; requiring confirmation", tool_name
         )
-        if self.mode == "danger":
+        if mode == "danger":
             return Risk.SAFE
         return Risk.CONFIRM

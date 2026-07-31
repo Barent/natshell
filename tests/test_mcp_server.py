@@ -9,14 +9,21 @@ and safety_mode behavior.
 from __future__ import annotations
 
 import sys
+import tempfile
 import types
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from natshell.config import McpConfig, SafetyConfig
 from natshell.safety.classifier import Risk, SafetyClassifier
-from natshell.tools.registry import ToolDefinition, ToolRegistry, ToolResult
+from natshell.tools.registry import (
+    ToolDefinition,
+    ToolRegistry,
+    ToolResult,
+    create_default_registry,
+)
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -270,6 +277,71 @@ class TestExecuteTool:
         with pytest.raises(ValueError, match="requires confirmation"):
             await _execute_tool(
                 registry, safety, mcp_config, "echo_test", {"message": "risky"}
+            )
+
+    async def test_danger_mode_does_not_nullify_strict(self):
+        """safety_mode = "strict" must hold even when the local session is in
+        danger mode.
+
+        classify_tool_call downgraded CONFIRM to SAFE before mcp_server saw the
+        result, so a remote client got unconfirmed writes and shell execution
+        from a setting the operator had explicitly set to strict.
+        """
+        from natshell.mcp_server import _execute_tool
+
+        registry = create_default_registry()
+        safety = _make_safety(mode="danger")
+        mcp_config = McpConfig(safety_mode="strict")
+
+        # run_code is CONFIRM structurally and SAFE in danger mode, so it
+        # isolates the downgrade from any question of pattern coverage.
+        with pytest.raises(ValueError, match="requires confirmation"):
+            await _execute_tool(
+                registry,
+                safety,
+                mcp_config,
+                "run_code",
+                {"language": "python", "code": "print(1)"},
+            )
+
+    async def test_danger_mode_does_not_nullify_strict_for_writes(self):
+        from natshell.mcp_server import _execute_tool
+
+        registry = create_default_registry()
+        safety = _make_safety(mode="danger")
+        mcp_config = McpConfig(safety_mode="strict")
+
+        with pytest.raises(ValueError, match="requires confirmation"):
+            await _execute_tool(
+                registry,
+                safety,
+                mcp_config,
+                "write_file",
+                {"path": str(Path(tempfile.gettempdir()) / "natshell_mcp_test"), "content": "x"},
+            )
+
+    async def test_danger_mode_still_permissive_when_configured(self):
+        from natshell.mcp_server import _execute_tool
+
+        registry = create_default_registry()
+        safety = _make_safety(mode="danger")
+        mcp_config = McpConfig(safety_mode="permissive")
+
+        result = await _execute_tool(
+            registry, safety, mcp_config, "list_directory", {"path": "."}
+        )
+        assert len(result) == 1
+
+    async def test_blocked_still_blocked_in_danger_mode(self):
+        from natshell.mcp_server import _execute_tool
+
+        registry = create_default_registry()
+        safety = _make_safety(mode="danger")
+        mcp_config = McpConfig(safety_mode="permissive")
+
+        with pytest.raises(ValueError, match="blocked by safety policy"):
+            await _execute_tool(
+                registry, safety, mcp_config, "execute_shell", {"command": "rm -rf /"}
             )
 
     async def test_confirm_permissive_executes(self):
