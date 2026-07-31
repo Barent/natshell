@@ -32,6 +32,49 @@ _SENSITIVE_PATH_PATTERNS = [
 ]
 
 
+# Interpreters a fetched script can be piped into, and credential paths worth
+# confirming before they reach the network.  Shared by the patterns below.
+_INTERPRETERS = r"sh|bash|zsh|ksh|dash|fish|python3?|perl|ruby|node|php"
+_NET_CLIENTS = r"curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|rsync"
+# \b rather than a trailing slash so that the directory itself matches:
+# "tar czf - ~/.ssh | curl ..." exfiltrates the keys without naming one.
+_CREDENTIAL_PATHS = (
+    r"\.ssh\b|/id_rsa|/id_ed25519|\.aws/credentials|\.kube/config|"
+    r"/etc/shadow|\.docker/config\.json|\.gnupg\b"
+)
+
+# Confirmation patterns that apply regardless of the user's config.
+#
+# The shipped always_confirm list is a denylist of first tokens, which cannot
+# express a command that is dangerous because of its *shape* -- a download piped
+# into a shell, an interpreter one-liner, a write into a credential path.  These
+# live in Python rather than config.default.toml so that neither an edited
+# config nor a missing default file can remove them; user config extends this
+# list, it does not replace it.
+BASELINE_CONFIRM_PATTERNS: tuple[str, ...] = (
+    # Fetch piped straight into an interpreter — the classic install one-liner.
+    rf"\b(?:curl|wget|fetch)\b[^|]*\|\s*(?:sudo\s+)?(?:\S*/)?(?:{_INTERPRETERS})\b",
+    # Interpreter one-liners: the code never touches disk, so nothing else sees it.
+    rf"\b(?:{_INTERPRETERS})\s+(?:-\S+\s+)*-[ce]\s",
+    # Credentials handed to something that can put them on the network.
+    rf"\b(?:{_NET_CLIENTS})\b[^|;&]*(?:{_CREDENTIAL_PATHS})",
+    rf"(?:{_CREDENTIAL_PATHS})[^|]*\|\s*(?:{_NET_CLIENTS})\b",
+    # Writes into paths that get sourced or trusted on the next login.
+    r">>?\s*[^\s>|;&]*\.(?:ssh|aws|kube|docker|gnupg)/",
+    r">>?\s*[^\s>|;&]*\.(?:bashrc|bash_profile|profile|zshrc|zprofile|zshenv)\b",
+    r">>?\s*[^\s>|;&]*/(?:authorized_keys|known_hosts)\b",
+    # find that mutates rather than lists.
+    r"\bfind\b[^|;&]*\s-(?:delete|exec|execdir|ok|okdir)\b",
+    # Recursive and setuid permission changes.
+    r"\bchmod\b[^|;&]*\s-[a-zA-Z]*R",
+    r"\bchmod\b\s+[ugoa]*\+[rwxt]*s\b",
+    # Irreversible or untracked-file-destroying operations.
+    r"^shred\b",
+    r"^truncate\b",
+    r"\bgit\s+clean\b",
+)
+
+
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _NUMERIC_ARG_RE = re.compile(r"^-?\d+(?:\.\d+)?[smhd]?$")
 
@@ -120,7 +163,11 @@ class SafetyClassifier:
         # MULTILINE so that the '^' every shipped pattern starts with anchors to
         # each line of a multi-line command, not just the first.  Sub-commands are
         # split out below as well; this is the belt to that pair of braces.
-        self._confirm_patterns = [re.compile(p, re.MULTILINE) for p in config.always_confirm]
+        # User config extends the baseline patterns rather than replacing them.
+        self._confirm_patterns = [
+            re.compile(p, re.MULTILINE)
+            for p in (*BASELINE_CONFIRM_PATTERNS, *config.always_confirm)
+        ]
         self._blocked_patterns = [re.compile(p, re.MULTILINE) for p in config.blocked]
 
     def classify_command(self, command: str) -> Risk:
