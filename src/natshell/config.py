@@ -230,7 +230,82 @@ CONFIG_ENUMS: dict[str, dict[str, list[str]]] = {
 }
 
 
-def save_config_value(section: str, key: str, value: str | int | float | bool) -> Path:
+# TOML basic-string escapes, per the spec's list of what must not appear raw.
+_TOML_STRING_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\b": "\\b",
+    "\f": "\\f",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+}
+
+
+def toml_string(value: str) -> str:
+    """Render *value* as an escaped TOML basic string, quotes included.
+
+    Values used to be interpolated as f'"{value}"' with no escaping at all, so
+    a value containing a quote and a newline ended the string and continued the
+    file as TOML source — reaching sections the caller's key allowlist was
+    written to protect.  Values that merely contained a stray quote produced a
+    file that would not parse, which stopped NatShell from starting.
+
+    Escaping rather than rejecting also fixes an ordinary bug: a Windows path
+    like C:\\Users\\me is not a valid TOML string until its backslashes are
+    doubled.
+    """
+    out = []
+    for char in value:
+        escape = _TOML_STRING_ESCAPES.get(char)
+        if escape is not None:
+            out.append(escape)
+        elif char < "\x20" or char == "\x7f":
+            out.append(f"\\u{ord(char):04X}")
+        else:
+            out.append(char)
+    return '"' + "".join(out) + '"'
+
+
+def _format_toml_value(value: str | int | float | bool | list) -> str:
+    """Render a Python value as TOML source."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return toml_string(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(toml_string(str(item)) for item in value) + "]"
+    return str(value)
+
+
+def _write_config_atomically(config_path: Path, text: str) -> None:
+    """Write *text* to *config_path*, but only if it parses as TOML.
+
+    Writing an unparseable config is a self-inflicted denial of service:
+    load_config raised on the next start and NatShell would not launch until
+    the file was edited by hand.  Validating first means a bad write fails
+    where it happens, with the original file still in place.
+    """
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"refusing to write invalid TOML to {config_path}: {e}") from e
+
+    tmp_path = config_path.with_name(config_path.name + ".tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    if config_path.exists():
+        # os.replace would otherwise hand the file default permissions, and
+        # this file can hold an API key.
+        try:
+            os.chmod(tmp_path, config_path.stat().st_mode & 0o777)
+        except OSError:
+            pass
+    os.replace(tmp_path, config_path)
+
+
+def save_config_value(
+    section: str, key: str, value: str | int | float | bool | list
+) -> Path:
     """Persist a single config value to the user config file.
 
     Uses simple line-based TOML editing (same pattern as save_engine_preference).
@@ -241,17 +316,11 @@ def save_config_value(section: str, key: str, value: str | int | float | bool) -
     config_path = cfg_dir / "config.toml"
 
     if config_path.exists():
-        lines = config_path.read_text().splitlines(keepends=True)
+        lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
     else:
         lines = []
 
-    # Format value as TOML
-    if isinstance(value, bool):
-        val_str = "true" if value else "false"
-    elif isinstance(value, str):
-        val_str = f'"{value}"'
-    else:
-        val_str = str(value)
+    val_str = _format_toml_value(value)
 
     section_header = f"[{section}]"
     section_idx = None
@@ -265,10 +334,8 @@ def save_config_value(section: str, key: str, value: str | int | float | bool) -
         elif section_idx is not None and next_section_idx is None:
             if re.match(r"^\[.+\]", stripped):
                 next_section_idx = i
-            elif stripped.startswith(key) or stripped.startswith(f"# {key}"):
-                # Verify this is the actual key, not a prefix match
-                if re.match(rf"^#?\s*{re.escape(key)}\s*=", stripped):
-                    key_idx = i
+            elif re.match(rf"^#?\s*{re.escape(key)}\s*=", stripped):
+                key_idx = i
 
     new_line = f"{key} = {val_str}\n"
 
@@ -284,7 +351,7 @@ def save_config_value(section: str, key: str, value: str | int | float | bool) -
         lines.append(f"\n{section_header}\n")
         lines.append(new_line)
 
-    config_path.write_text("".join(lines))
+    _write_config_atomically(config_path, "".join(lines))
     return config_path
 
 
@@ -301,7 +368,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
     # Load defaults from bundled config
     default_path = Path(__file__).parent / "config.default.toml"
     if default_path.exists():
-        _merge_toml(config, default_path)
+        _merge_toml_safely(config, default_path)
 
     # Load user config
     if config_path:
@@ -310,7 +377,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
         user_path = _get_config_dir() / "config.toml"
 
     if user_path.exists():
-        _merge_toml(config, user_path)
+        _merge_toml_safely(config, user_path)
 
     # Support NATSHELL_API_KEY environment variable as alternative to config file
     env_api_key = os.environ.get("NATSHELL_API_KEY")
@@ -345,6 +412,24 @@ _SECTIONS = (
 )
 
 
+def _merge_toml_safely(config: NatShellConfig, path: Path) -> None:
+    """Merge *path* into *config*, logging and skipping it if it will not parse.
+
+    An unparseable config used to propagate out of tomllib.load and stop
+    NatShell from starting at all, which turned any malformed value into a
+    lockout that had to be fixed by hand-editing the file.  Degrading to the
+    values already loaded is the better failure: config.default.toml is merged
+    first, and the classifier's blocked patterns are built in rather than
+    configured, so skipping a broken file does not skip the safety rules.
+    """
+    try:
+        _merge_toml(config, path)
+    except tomllib.TOMLDecodeError as e:
+        logger.error("Ignoring %s — it is not valid TOML: %s", path, e)
+    except OSError as e:
+        logger.error("Ignoring %s — could not be read: %s", path, e)
+
+
 def _merge_toml(config: NatShellConfig, path: Path) -> None:
     """Merge a TOML file into the config, overwriting only specified fields."""
     with open(path, "rb") as f:
@@ -370,51 +455,13 @@ def _merge_toml(config: NatShellConfig, path: Path) -> None:
 
 
 def save_skills_disabled(disabled: list[str]) -> Path:
-    """Persist the skills.disabled list to the user config file."""
-    cfg_dir = _get_config_dir()
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    config_path = cfg_dir / "config.toml"
+    """Persist the skills.disabled list to the user config file.
 
-    if config_path.exists():
-        lines = config_path.read_text().splitlines(keepends=True)
-    else:
-        lines = []
-
-    items = ", ".join(f'"{n}"' for n in disabled)
-    val_str = f"[{items}]"
-    key = "disabled"
-    section_header = "[skills]"
-
-    section_idx = None
-    next_section_idx = None
-    key_idx = None
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == section_header:
-            section_idx = i
-        elif section_idx is not None and next_section_idx is None:
-            if re.match(r"^\[.+\]", stripped):
-                next_section_idx = i
-            elif re.match(rf"^#?\s*{re.escape(key)}\s*=", stripped):
-                key_idx = i
-
-    new_line = f"{key} = {val_str}\n"
-
-    if section_idx is not None:
-        insert_at = next_section_idx if next_section_idx is not None else len(lines)
-        if key_idx is not None:
-            lines[key_idx] = new_line
-        else:
-            lines.insert(insert_at, new_line)
-    else:
-        if lines and not lines[-1].endswith("\n"):
-            lines.append("\n")
-        lines.append(f"\n{section_header}\n")
-        lines.append(new_line)
-
-    config_path.write_text("".join(lines))
-    return config_path
+    Delegates so that list items are escaped and the result is validated by the
+    same code as every other written value; this used to be a near-copy of
+    save_config_value that interpolated each name with no escaping.
+    """
+    return save_config_value("skills", "disabled", list(disabled))
 
 
 def save_config_values(

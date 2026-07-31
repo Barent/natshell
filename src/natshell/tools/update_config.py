@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from natshell.config import (
@@ -66,11 +67,26 @@ DEFINITION = ToolDefinition(
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
-def _coerce_value(value_str: str, type_str: str) -> int | float | bool | str:
+def _coerce_value(value_str: str, type_str: str) -> int | float | bool | str | list[str]:
     """Coerce a string value to the expected type.
 
     Raises ValueError on type mismatch.
     """
+    if type_str == "list":
+        # skills.disabled is declared as a list but fell through to the string
+        # branch, so a name like "web-research" was stored as a string and
+        # set() later shredded it into its individual characters.
+        text = value_str.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                raise ValueError(f"Expected a JSON array, got: {value_str!r}") from None
+            if not isinstance(parsed, list):
+                raise ValueError(f"Expected a list, got: {value_str!r}")
+            return [str(item) for item in parsed]
+        return [part.strip() for part in text.split(",") if part.strip()]
+
     if type_str == "int":
         try:
             return int(value_str)
@@ -93,7 +109,7 @@ def _coerce_value(value_str: str, type_str: str) -> int | float | bool | str:
 
 
 def _apply_to_live_config(
-    config: NatShellConfig, section: str, key: str, value: int | float | bool | str
+    config: NatShellConfig, section: str, key: str, value: int | float | bool | str | list[str]
 ) -> None:
     """Apply a value to the live config object."""
     section_obj = getattr(config, section, None)
