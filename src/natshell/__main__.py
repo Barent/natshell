@@ -451,7 +451,7 @@ def main() -> None:
     # Build the safety classifier
     from natshell.safety.classifier import SafetyClassifier
 
-    safety = SafetyClassifier(config.safety)
+    safety = SafetyClassifier(config.safety, tools)
 
     # Inject safety config into the natshell_help tool
     from natshell.tools.natshell_help import set_safety_config

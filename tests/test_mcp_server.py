@@ -215,11 +215,32 @@ class TestExecuteTool:
         safety = _make_safety()
         mcp_config = McpConfig()
 
+        # echo_test has no classification rule, and unclassified tools confirm.
+        safety.classify_tool_call = MagicMock(return_value=Risk.SAFE)
+
         result = await _execute_tool(
             registry, safety, mcp_config, "echo_test", {"message": "hello"}
         )
         assert len(result) == 1
         assert "echo: hello" in result[0].text
+
+    async def test_unclassified_tool_is_refused_in_strict_mode(self):
+        """A tool the classifier has no rule for must not auto-run over MCP.
+
+        Registering a tool used to be enough to have it executed by a remote
+        client with no confirmation, because classify_tool_call's fallthrough
+        was SAFE.
+        """
+        from natshell.mcp_server import _execute_tool
+
+        registry = _make_registry_with_tool()
+        safety = _make_safety()
+        mcp_config = McpConfig(safety_mode="strict")
+
+        with pytest.raises(ValueError, match="requires confirmation"):
+            await _execute_tool(
+                registry, safety, mcp_config, "echo_test", {"message": "hello"}
+            )
 
     async def test_blocked_tool_raises(self):
         from natshell.mcp_server import _execute_tool

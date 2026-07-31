@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from enum import Enum
+from typing import Any
 
 from natshell.config import SafetyConfig
 from natshell.safety.command_split import split_commands
@@ -186,6 +187,21 @@ def _normalize_invocation(command: str) -> str:
     return " ".join([_basename(remaining[0]), *remaining[1:]])
 
 
+# Tools that only read.  Everything not named here requires confirmation,
+# including tools added in future — the default has to be that an unclassified
+# capability is dangerous, not that it is safe.
+_READ_ONLY_TOOLS = frozenset(
+    {
+        "fetch_url",
+        "kiwix_search",
+        "list_directory",
+        "natshell_help",
+        "search_files",
+        "skill",
+    }
+)
+
+
 def _is_agents_md(path: str) -> bool:
     """Return True if *path* is a working memory agents.md file."""
     return (
@@ -197,8 +213,12 @@ def _is_agents_md(path: str) -> bool:
 class SafetyClassifier:
     """Classify tool calls by risk level using regex patterns."""
 
-    def __init__(self, config: SafetyConfig) -> None:
+    def __init__(self, config: SafetyConfig, registry: Any = None) -> None:
         self.mode = config.mode
+        # Optional ToolRegistry, consulted only to honour a tool definition's
+        # requires_confirmation flag.  Optional so that constructing a
+        # classifier for pattern checks alone stays a one-argument call.
+        self._registry = registry
         # MULTILINE so that the '^' every shipped pattern starts with anchors to
         # each line of a multi-line command, not just the first.  Sub-commands are
         # split out below as well; this is the belt to that pair of braces.
@@ -288,8 +308,32 @@ class SafetyClassifier:
 
         return Risk.SAFE
 
+    def _declares_confirmation(self, tool_name: str) -> bool:
+        """True if the tool's own definition asks for confirmation.
+
+        ToolDefinition.requires_confirmation was previously read by nothing at
+        all, so a tool declaring True — as update_config did — was still
+        auto-approved.  It is honoured here, but only upward: a definition can
+        ask for a dialog it would not otherwise get, never waive one.
+        """
+        if self._registry is None:
+            return False
+        definition = self._registry.get_definition(tool_name)
+        return bool(definition is not None and definition.requires_confirmation)
+
     def classify_tool_call(self, tool_name: str, arguments: dict) -> Risk:
-        """Classify any tool call by risk level."""
+        """Classify any tool call by risk level.
+
+        Unrecognized tools return CONFIRM.  The previous fallthrough was SAFE,
+        which meant any tool without an explicit branch below ran with no
+        dialog — update_config among them, which can persist
+        safety.mode = "danger", danger_fast, mcp.safety_mode = "permissive",
+        and a remote inference URL.  Reaching that took no user interaction:
+        fetch_url is SAFE, so injected page content could ask for it directly.
+        """
+        if self._declares_confirmation(tool_name) and self.mode != "danger":
+            return Risk.CONFIRM
+
         if tool_name == "execute_shell":
             command = arguments.get("command", "")
             risk = self.classify_command(command)
@@ -346,8 +390,14 @@ class SafetyClassifier:
             # Unknown operation — let the tool handle the error, but confirm
             return Risk.CONFIRM
 
-        if tool_name == "fetch_url":
+        if tool_name in _READ_ONLY_TOOLS:
             return Risk.SAFE
 
-        # list_directory, search_files are always safe
-        return Risk.SAFE
+        # Fail closed.  Anything with no branch above — update_config, a tool
+        # registered by a skill, a tool added next year — confirms.
+        logger.debug(
+            "Tool %s has no classification rule; requiring confirmation", tool_name
+        )
+        if self.mode == "danger":
+            return Risk.SAFE
+        return Risk.CONFIRM
