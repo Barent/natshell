@@ -7,6 +7,7 @@ import re
 from enum import Enum
 
 from natshell.config import SafetyConfig
+from natshell.safety.command_split import split_commands
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +16,6 @@ class Risk(Enum):
     SAFE = "safe"
     CONFIRM = "confirm"
     BLOCKED = "blocked"
-
-
-_CMD_SEPARATORS = re.compile(r"\s*(?:&&|\|\||[;&|])\s*")
 
 # Paths that should require user confirmation before read_file accesses them
 _SENSITIVE_PATH_PATTERNS = [
@@ -47,16 +45,19 @@ class SafetyClassifier:
 
     def __init__(self, config: SafetyConfig) -> None:
         self.mode = config.mode
-        self._confirm_patterns = [re.compile(p) for p in config.always_confirm]
-        self._blocked_patterns = [re.compile(p) for p in config.blocked]
+        # MULTILINE so that the '^' every shipped pattern starts with anchors to
+        # each line of a multi-line command, not just the first.  Sub-commands are
+        # split out below as well; this is the belt to that pair of braces.
+        self._confirm_patterns = [re.compile(p, re.MULTILINE) for p in config.always_confirm]
+        self._blocked_patterns = [re.compile(p, re.MULTILINE) for p in config.blocked]
 
     def classify_command(self, command: str) -> Risk:
         """Classify a shell command string by risk level.
 
         Checks the full command against blocked patterns first (to catch
         multi-token patterns like fork bombs), then splits on shell operators
-        (&&, ||, ;, &, |) and classifies each sub-command independently,
-        returning the highest risk found.
+        (&&, ||, ;, &, |, (, ) and newlines) and classifies each sub-command
+        independently, returning the highest risk found.
         Also flags subshells and backtick expansions as CONFIRM.
         """
         # Check patterns against the full command first
@@ -73,12 +74,8 @@ class SafetyClassifier:
         if re.search(r"`[^`]+`|\$\([^)]+\)", command):
             return Risk.CONFIRM
 
-        sub_commands = _CMD_SEPARATORS.split(command)
         worst_risk = Risk.SAFE
-        for sub in sub_commands:
-            sub = sub.strip()
-            if not sub:
-                continue
+        for sub in split_commands(command):
             risk = self._classify_single(sub)
             if risk == Risk.BLOCKED:
                 return Risk.BLOCKED

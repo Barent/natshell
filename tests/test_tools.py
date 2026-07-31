@@ -212,6 +212,36 @@ class TestSudoPasswordInjection:
         result, count = _inject_sudo_dash_s(cmd)
         assert count == 2
 
+    def test_newline_separated_sudo(self):
+        """A newline starts a new command, so sudo after one is a real invocation."""
+        result, count = _inject_sudo_dash_s("echo hi\nsudo apt update")
+        assert count == 1
+        assert result == "echo hi\nsudo -S apt update"
+
+    def test_subshell_sudo(self):
+        """The classifier and this splitter must agree that '(' starts a command."""
+        result, count = _inject_sudo_dash_s("(sudo apt update)")
+        assert count == 1
+        assert "sudo -S apt update" in result
+
+    def test_separator_inside_quotes_does_not_leak_password(self):
+        """A ';' inside a quoted argument is data, not a command boundary.
+
+        Treating it as a boundary made the text after it look like a sudo
+        invocation, so the password was written to the stdin of a pipeline that
+        never runs sudo and is read by whatever does read stdin.
+        """
+        cmd = 'echo "a; sudo rm -rf /"'
+        result, count = _inject_sudo_dash_s(cmd)
+        assert count == 0
+        assert result == cmd
+
+    def test_rejoins_losslessly_when_no_sudo(self):
+        for cmd in ["ls -la", "a && b | c", 'echo "x;y"', "cd /tmp\nls", r"dir C:\Users"]:
+            result, count = _inject_sudo_dash_s(cmd)
+            assert count == 0
+            assert result == cmd
+
 
 # ─── sudo password detection ────────────────────────────────────────────────
 

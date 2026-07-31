@@ -10,6 +10,7 @@ import subprocess
 import time
 
 from natshell.platform import is_windows
+from natshell.safety.command_split import is_delimiter, split_with_delimiters
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -59,11 +60,6 @@ _SUDO_PW_TIMEOUT = 300  # 5 minutes
 
 _SUDO_RE = re.compile(r"\bsudo\b")
 
-# Splits a command on shell operators, keeping delimiters.
-# Used to identify sub-commands that start with sudo (vs. "sudo" appearing
-# inside quoted arguments like `echo "use sudo"`).
-_CMD_SPLIT_RE = re.compile(r"(&&|\|\||[;&|(])")
-
 # Package manager commands that may prompt "Do you want to continue? [Y/n]"
 _PKG_MANAGER_RE = re.compile(
     r"\b(?:apt|apt-get|dnf|yum|pacman|zypper|apk|emerge)\b"
@@ -77,13 +73,18 @@ def _inject_sudo_dash_s(command: str) -> tuple[str, int]:
     ``\\bsudo\\b`` substitution this avoids matching ``sudo`` inside string
     arguments (e.g. ``echo "use sudo"``), preventing password leaks to
     stdin-reading commands that follow in a pipeline or chain.
+
+    Splitting uses the same helper as the safety classifier.  When the two
+    disagreed about what separates a sub-command, a command could be classified
+    as one thing and executed as another — ``(sudo rm -rf ~)`` classified SAFE
+    because the classifier ignored ``(``, then had the cached root password
+    piped into it because this function did not.
     """
-    parts = _CMD_SPLIT_RE.split(command)
     count = 0
     result_parts: list[str] = []
-    for part in parts:
+    for part in split_with_delimiters(command):
         # Shell-operator delimiters pass through unchanged
-        if _CMD_SPLIT_RE.fullmatch(part):
+        if is_delimiter(part):
             result_parts.append(part)
             continue
         # Check if this sub-command starts with sudo (optional leading whitespace)
