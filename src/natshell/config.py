@@ -230,6 +230,35 @@ CONFIG_ENUMS: dict[str, dict[str, list[str]]] = {
 }
 
 
+def _escape_toml_string(value: str) -> str:
+    """Escape a string for use as a literal in TOML double-quoted strings.
+
+    TOML only allows \\, \", \\b, \\t, \\n, \\r and unicode escapes — so we
+    handle those explicitly and fall back to \\uXXXX for other control chars.
+    """
+    parts: list[str] = []
+    for ch in value:
+        code = ord(ch)
+        if ch == "\\":
+            parts.append("\\\\")
+        elif ch == '"':
+            parts.append('\\"')
+        elif ch == "\b":
+            parts.append("\\b")
+        elif ch == "\t":
+            parts.append("\\t")
+        elif ch == "\n":
+            parts.append("\\n")
+        elif ch == "\r":
+            parts.append("\\r")
+        elif code < 0x20:
+            # Other control characters use unicode escapes
+            parts.append(f"\\u{code:04x}")
+        else:
+            parts.append(ch)
+    return "".join(parts)
+
+
 def save_config_value(section: str, key: str, value: str | int | float | bool) -> Path:
     """Persist a single config value to the user config file.
 
@@ -249,7 +278,7 @@ def save_config_value(section: str, key: str, value: str | int | float | bool) -
     if isinstance(value, bool):
         val_str = "true" if value else "false"
     elif isinstance(value, str):
-        val_str = f'"{value}"'
+        val_str = '"' + _escape_toml_string(value) + '"'
     else:
         val_str = str(value)
 

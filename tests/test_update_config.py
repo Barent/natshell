@@ -212,6 +212,25 @@ class TestSaveConfigValue:
         assert data["agent"]["max_steps"] == 20
         assert data["engine"]["preferred"] == "local"
 
+    def test_special_chars_produce_valid_toml(self, tmp_path: Path):
+        """Strings with quotes, backslashes, and newlines must produce valid TOML."""
+        cfg_dir = tmp_path / ".config" / "natshell"
+        cfg_dir.mkdir(parents=True)
+
+        with patch(
+            "natshell.config._get_config_dir",
+            return_value=cfg_dir,
+        ):
+            save_config_value("model", "hf_repo", 'user/repo"with\backslash')
+            save_config_value("model", "hf_file", 'line1\nline2\ttab\rret')
+
+        config_path = cfg_dir / "config.toml"
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["model"]["hf_repo"] == 'user/repo"with\backslash'
+        assert data["model"]["hf_file"] == 'line1\nline2\ttab\rret'
+
     def test_add_new_section_to_existing_file(self, tmp_path: Path):
         config_dir = tmp_path / ".config" / "natshell"
         config_dir.mkdir(parents=True)
