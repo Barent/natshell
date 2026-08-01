@@ -6,7 +6,6 @@ import logging
 
 from natshell.config import (
     CONFIG_ENUMS,
-    VALID_CONFIG_KEYS,
     NatShellConfig,
     save_config_value,
 )
@@ -14,7 +13,61 @@ from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
 
-# ── Live config injection ─────────────────────────────────────────────────
+# ── Read-only/writable key split ────────────────────────────────────────
+
+# Keys the model is allowed to set via update_config.  Excluded are:
+# safety settings (could disable user protections), remote inference URL/api_key
+# (could redirect traffic / use a malicious backend), engine preference, MCP safety,
+# prompt persona (could override system instructions), and skills.enabled toggles.
+LLM_WRITABLE_KEYS: dict[str, dict[str, str]] = {
+    "model": {
+        "path": "str",
+        "hf_repo": "str",
+        "hf_file": "str",
+        "n_ctx": "int",
+        "n_threads": "int",
+        "n_gpu_layers": "int",
+        "main_gpu": "int",
+        "prompt_cache": "bool",
+        "prompt_cache_mb": "int",
+    },
+    "agent": {
+        "max_steps": "int",
+        "plan_max_steps": "int",
+        "temperature": "float",
+        "max_tokens": "int",
+        "context_reserve": "int",
+    },
+    "ui": {
+        "theme": "str",
+    },
+    "backup": {
+        "enabled": "bool",
+        "max_per_file": "int",
+    },
+    "kiwix": {
+        "url": "str",
+    },
+    "memory": {
+        "enabled": "bool",
+        "max_chars": "int",
+        "min_ctx": "int",
+    },
+    "skills": {
+        "disabled": "list",
+        "inject_in_compact": "bool",
+    },
+    "ollama": {
+        "url": "str",
+        "default_model": "str",
+        "n_ctx": "int",
+    },
+    "prompt": {
+        "extra_instructions": "str",
+    },
+}
+
+# ── Live config injection ───────────────────────────────────────────────
 
 _live_config: NatShellConfig | None = None
 
@@ -106,20 +159,20 @@ def _apply_to_live_config(
 
 async def update_config(section: str, key: str, value: str) -> ToolResult:
     """Validate, coerce, persist, and apply a config change."""
-    # Validate section
-    if section not in VALID_CONFIG_KEYS:
-        valid_sections = ", ".join(sorted(VALID_CONFIG_KEYS.keys()))
+    # Validate section + key — model is NOT allowed to change security-sensitive keys
+    if section not in LLM_WRITABLE_KEYS:
         return ToolResult(
-            error=f"Unknown config section: {section!r}. Valid sections: {valid_sections}",
+            error=(
+                f"Section [{section}] is read-only and cannot be changed by update_config. "
+                f"(Security-sensitive sections require manual edits to config.toml.)"
+            ),
             exit_code=1,
         )
 
-    # Validate key
-    section_keys = VALID_CONFIG_KEYS[section]
+    section_keys = LLM_WRITABLE_KEYS[section]
     if key not in section_keys:
-        valid_keys = ", ".join(sorted(section_keys.keys()))
         return ToolResult(
-            error=f"Unknown key {key!r} in [{section}]. Valid keys: {valid_keys}",
+            error=f"Key {key!r} cannot be changed by update_config.",
             exit_code=1,
         )
 

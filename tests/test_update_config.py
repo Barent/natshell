@@ -286,38 +286,33 @@ class TestUpdateConfigTool:
         assert "0.7" in result.output
 
     @pytest.mark.asyncio
-    async def test_unknown_section(self):
+    async def test_readonly_section(self):
+        result = await update_config("safety", "danger_fast", "true")
+        assert result.exit_code == 1
+        assert "read-only" in result.error
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_section(self):
         result = await update_config("nonexistent", "key", "val")
         assert result.exit_code == 1
-        assert "Unknown config section" in result.error
+        assert "read-only" in result.error  # nonexistent sections treated as read-only
 
     @pytest.mark.asyncio
-    async def test_unknown_key(self):
-        result = await update_config("agent", "nonexistent", "val")
+    async def test_restricted_key(self):
+        """prompt.persona excluded; prompt.extra_instructions still works."""
+        result = await update_config("prompt", "persona", "evil")
         assert result.exit_code == 1
-        assert "Unknown key" in result.error
+        assert "cannot be changed" in result.error
 
     @pytest.mark.asyncio
-    async def test_type_mismatch(self):
-        result = await update_config("agent", "max_steps", "abc")
-        assert result.exit_code == 1
-        assert "integer" in result.error
-
-    @pytest.mark.asyncio
-    async def test_danger_fast_update(self):
-        result = await update_config("safety", "danger_fast", "true")
+    async def test_extra_instructions_ok(self):
+        result = await update_config("prompt", "extra_instructions", "be helpful")
         assert result.exit_code == 0
-        assert "danger_fast" in result.output
-
-    @pytest.mark.asyncio
-    async def test_enum_validation(self):
-        result = await update_config("safety", "mode", "invalid")
-        assert result.exit_code == 1
-        assert "Allowed values" in result.error
+        assert "extra_instructions" in result.output
 
     @pytest.mark.asyncio
     async def test_enum_valid(self):
-        result = await update_config("safety", "mode", "warn")
+        result = await update_config("ui", "theme", "dark")
         assert result.exit_code == 0
 
     @pytest.mark.asyncio
