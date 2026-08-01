@@ -34,12 +34,6 @@ _SENSITIVE_PATH_PATTERNS = [
 ]
 
 
-def _is_agents_md(path: str) -> bool:
-    """Return True if *path* is a working memory agents.md file."""
-    return (
-        path.endswith(".natshell/agents.md")
-        or path.endswith(".config/natshell/agents.md")
-    )
 
 
 class SafetyClassifier:
@@ -121,8 +115,6 @@ class SafetyClassifier:
 
         if tool_name == "write_file":
             path = arguments.get("path", "")
-            if _is_agents_md(path):
-                return Risk.SAFE
             for pattern in _SENSITIVE_PATH_PATTERNS:
                 if pattern in path:
                     return Risk.CONFIRM
@@ -133,8 +125,6 @@ class SafetyClassifier:
         if tool_name == "edit_file":
             # Always confirm edits; also check sensitive paths
             path = arguments.get("path", "")
-            if _is_agents_md(path):
-                return Risk.SAFE
             for pattern in _SENSITIVE_PATH_PATTERNS:
                 if pattern in path:
                     return Risk.CONFIRM
