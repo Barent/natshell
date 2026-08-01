@@ -164,7 +164,14 @@ async def edit_file(
     end_line: int | None = None,
 ) -> ToolResult:
     """Replace a unique occurrence of old_text with new_text in a file."""
-    target = Path(path).expanduser().resolve()
+    raw = Path(path).expanduser()
+
+    # Refuse to follow symlinks — prevents editing an arbitrary target through
+    # a symlink (e.g. /tmp/evil/.natshell/agents.md -> ~/.bashrc)
+    if raw.is_symlink():
+        return ToolResult(error=f"Symlink not allowed: {raw}", exit_code=1)
+
+    target = raw.resolve()
 
     if not target.exists():
         return ToolResult(error=f"File not found: {target}", exit_code=1)

@@ -40,7 +40,14 @@ DEFINITION = ToolDefinition(
 
 async def write_file(path: str, content: str, mode: str = "overwrite") -> ToolResult:
     """Write content to a file."""
-    target = Path(path).expanduser().resolve()
+    raw = Path(path).expanduser()
+
+    # Refuse to follow symlinks — prevents writing through a symlink to an
+    # arbitrary target (e.g. /tmp/evil/.natshell/agents.md -> ~/.bashrc)
+    if raw.is_symlink():
+        return ToolResult(error=f"Symlink not allowed: {raw}", exit_code=1)
+
+    target = raw.resolve()
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
