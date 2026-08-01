@@ -32,7 +32,7 @@ def split_commands(command: str) -> list[str]:
         >>> split_commands("echo hello && ls")
         ['echo hello', 'ls']
         >>> split_commands('grep "a;b" test')
-        ["grep \"a;b\" test"]
+        ["grep \\"a;b\\" test"]
     """
     result: list[str] = []
     current: list[str] = []
@@ -63,16 +63,32 @@ def split_commands(command: str) -> list[str]:
             continue
 
         # Shell operator or newline — start new sub-command
-        if char in ("&", "|", ";", "(", ")", "\n") and not current and result and result[-1]:
+        if char in (
+            "&",
+            "|",
+            ";",
+            "(",
+            ")",
+            "\n",
+        ) and not current and result and result[-1]:
             # Don't split on a bare delimiter before any content has been
             # collected for this token; swallow it.  This avoids producing
             # spurious empty tokens at the start of chains like "&& ls".
             i += 1
             continue
 
-        if char in ("&", "|", ";", "(", ")") or char == "\n":
+        if char in (
+            "&",
+            "|",
+            ";",
+            "(",
+            ")",
+        ) or char == "\n":
             # Handle two-char operators first (&&, ||)
-            if char in ("&", "|") and i + 1 < length and command[i + 1] == char:
+            if char in (
+                "&",
+                "|",
+            ) and i + 1 < length and command[i + 1] == char:
                 i += 2
             else:
                 i += 1
@@ -104,11 +120,12 @@ def split_with_delimiters(command: str) -> list[str]:
 
     Example:
 
-        >>> split_with_delimiters("A && B || C")
-        ['A', '&& ', 'B', '|| ', 'C']
+        >>> split_with_delimiters("A && B || C")  # noqa: E501
+        ['A', ' && ', 'B', ' || ', 'C']
 
     The even entries (0, 2, 4…) are sub-command tokens; the odd entries are
-    delimiter fragments that were removed during the split.
+    delimiter fragments. Leading and trailing whitespace is included in each
+    delimiter so that ``"".join(tokens)`` reconstructs the original command.
     """
     result: list[str] = []
     current: list[str] = []
@@ -137,17 +154,31 @@ def split_with_delimiters(command: str) -> list[str]:
             current.extend(tokens)
             continue
 
-        if char in ("&", "|", ";", "(", ")") or char == "\n":
-            # Capture leading whitespace into the delimiter
+        if char in (
+            "&",
+            "|",
+            ";",
+            "(",
+            ")",
+        ) or char == "\n":
+            # Capture leading whitespace before operator into the delimiter.
             ws_start = i
             while ws_start > 0 and command[ws_start - 1] == " ":
                 ws_start -= 1
 
-            # Two-char operator
-            if char in ("&", "|") and i + 1 < length and command[i + 1] == char:
+            # Handle two-char operators
+            if char in (
+                "&",
+                "|",
+            ) and i + 1 < length and command[i + 1] == char:
                 op_end = i + 2
             else:
                 op_end = i + 1
+
+            # Also capture trailing whitespace after operator so that joining
+            # reconstructed tokens yields the original spacing.
+            while op_end < length and command[op_end] == " ":
+                op_end += 1
 
             delimiter = command[ws_start:op_end]
 
