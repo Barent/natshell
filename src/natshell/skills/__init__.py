@@ -195,15 +195,36 @@ def load_skills(tool_registry: ToolRegistry, config: NatShellConfig) -> SkillReg
             logger.warning("skipping skill %s: description must be one line", name)
             continue
 
+        # 3. Prevent shadowing: a project skill cannot override a builtin or user skill
+        if name in seen and source == "project" and seen[name].source != "project":
+            logger.warning(
+                "skipping project skill %s at %s: shadows existing %s skill",
+                name, skill_dir, seen[name].source,
+            )
+            continue
+
+        # 4. Check disabled before executing any Python code
+        #    (disabled flag was previously only consulted when listing for the model)
+        if name in disabled:
+            logger.info("skill %s is disabled — skipping exec_module", name)
+            seen[name] = Skill(name=name, description=desc, path=skill_dir, source=source)
+            continue
+
+        # 5. Build registry entry (later sources override earlier on collision)
         if name in seen:
             logger.info("skill %s: %s overrides %s", name, source, seen[name].source)
         seen[name] = Skill(name=name, description=desc, path=skill_dir, source=source)
 
+        # 6. Execute tools.py only for non-project skills
         tools_py = skill_dir / "tools.py"
         if source == "project":
             # project skills can only be injected as instructions (SKILL.md),
             # we do NOT run their Python code — arbitrary repos could supply malicious code
-            logger.info("skill %s: project-level tools.py not auto-executed", name)
+            logger.info(
+                "skill %s: project-level tools.py not auto-executed "
+                "(move it to ~/.config/natshell/skills/%s/tools.py if you want it loaded)",
+                name, name,
+            )
         elif tools_py.is_file():
             try:
                 spec = importlib.util.spec_from_file_location(
