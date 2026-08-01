@@ -159,32 +159,27 @@ class ToolRegistry:
             )
 
         # ── Step 1: validate arguments against the handler signature ──
-        # ``sig.bind`` raises TypeError on unknown kwargs or missing
-        # required args, but does NOT execute the handler body.  This
-        # lets us separate "bad arg names" from "handler crashed mid-run".
-        try:
-            inspect.signature(handler).bind(**arguments)
-        except TypeError:
-            remapped = self._remap_arguments(name, arguments)
-            if remapped is None:
-                defn = self._definitions.get(name)
-                expected = (
-                    list(defn.parameters.get("properties", {}).keys()) if defn else []
-                )
-                return ToolResult(
-                    output="",
-                    error=f"Tool error: wrong arguments for {name}. "
-                    f"Got: {list(arguments.keys())}. "
-                    f"Expected: {expected}",
-                    exit_code=1,
-                )
+        normalized = self.normalize_arguments(name, arguments)
+        if normalized is None:
+            defn = self._definitions.get(name)
+            expected = (
+                list(defn.parameters.get("properties", {}).keys()) if defn else []
+            )
+            return ToolResult(
+                output="",
+                error=f"Tool error: wrong arguments for {name}. "
+                f"Got: {list(arguments.keys())}. "
+                f"Expected: {expected}",
+                exit_code=1,
+            )
+        if normalized is not arguments:
             logger.warning(
                 "Tool %s: remapped bad arg names %s → %s",
                 name,
                 list(arguments.keys()),
-                list(remapped.keys()),
+                list(normalized.keys()),
             )
-            arguments = remapped
+        arguments = normalized
 
         # ── Step 2: execute the handler.  Any exception from here on is
         #    a runtime error inside the tool, not a kwarg problem. ──
@@ -197,6 +192,37 @@ class ToolRegistry:
                 error=f"Tool error: {type(e).__name__}: {e}",
                 exit_code=1,
             )
+
+    def normalize_arguments(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return the arguments ``execute`` would really call *name* with.
+
+        Callers that inspect a tool call before running it -- the safety
+        classifier above all -- have to judge this dict rather than the model's
+        raw one.  ``execute`` repairs misnamed parameters by position, so the
+        two can differ: ``execute_shell({"cmd": "rm -rf /"})`` carries no
+        "command" key, and a classifier reading ``arguments["command"]`` sees an
+        empty string, matches no pattern, and approves a call that then runs
+        with the name supplied.
+
+        Returns None when the call cannot be repaired; ``execute`` turns that
+        into a wrong-arguments error, and a caller classifying beforehand should
+        treat it as the unrunnable call it is.
+        """
+        handler = self._tools.get(name)
+        if handler is None:
+            return None
+        # ``sig.bind`` raises TypeError on unknown kwargs or missing required
+        # args, but does NOT execute the handler body.  This lets us separate
+        # "bad arg names" from "handler crashed mid-run".
+        try:
+            inspect.signature(handler).bind(**arguments)
+        except TypeError:
+            return self._remap_arguments(name, arguments)
+        return arguments
 
     def _remap_arguments(
         self,

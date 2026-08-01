@@ -790,6 +790,22 @@ class AgentLoop:
                     yield AgentEvent(type=EventType.PLANNING, data=result.content)
 
                 for tool_call in result.tool_calls:
+                    # Bind the arguments to their parameter names *before*
+                    # classifying, so the classifier judges the call that will
+                    # actually run.  execute() repairs misnamed parameters by
+                    # position, which used to happen after this point: a model
+                    # that wrote "cmd" instead of "command" -- a mistake the
+                    # remap exists because small models make constantly -- got
+                    # classified against an absent key and ran unconfirmed.
+                    #
+                    # Assigning back onto the call also makes the confirmation
+                    # dialog show the arguments the tool will receive.
+                    normalized = self.tools.normalize_arguments(
+                        tool_call.name, tool_call.arguments
+                    )
+                    if normalized is not None:
+                        tool_call.arguments = normalized
+
                     # Safety classification
                     risk = self.safety.classify_tool_call(tool_call.name, tool_call.arguments)
                     logger.debug(
