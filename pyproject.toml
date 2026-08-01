@@ -42,7 +42,7 @@ dev = [
     "llama-cpp-python>=0.3.20",
     "huggingface-hub>=0.24",
     "pytest",
-    "pytest-asyncio",
+    "pytest-asyncio>=0.23",
     "ruff",
 ]
 
