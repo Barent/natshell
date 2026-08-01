@@ -59,6 +59,13 @@ async def _execute_tool(
     """Execute a NatShell tool with safety classification, returning MCP content."""
     from mcp.types import TextContent
 
+    # Bind the arguments to their parameter names before classifying, so the
+    # classifier judges the call that will actually run rather than the model's
+    # raw one -- execute() repairs misnamed parameters by position.
+    normalized = registry.normalize_arguments(name, arguments)
+    if normalized is not None:
+        arguments = normalized
+
     # Safety check
     risk = safety.classify_tool_call(name, arguments)
 
