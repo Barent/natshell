@@ -6,7 +6,6 @@ import logging
 
 from natshell.config import (
     CONFIG_ENUMS,
-    VALID_CONFIG_KEYS,
     NatShellConfig,
     save_config_value,
 )
