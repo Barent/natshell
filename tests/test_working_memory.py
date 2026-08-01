@@ -273,7 +273,8 @@ def test_memory_config_in_natshell_config() -> None:
 # ── Safety exemption ─────────────────────────────────────────────────
 
 
-def test_safety_exempts_agents_md_write() -> None:
+def test_safety_agents_md_write_is_confirm() -> None:
+    """agents.md writes are no longer SAFE; they go through normal CONFIRM gating."""
     from natshell.config import SafetyConfig
     from natshell.safety.classifier import Risk, SafetyClassifier
 
@@ -281,10 +282,11 @@ def test_safety_exempts_agents_md_write() -> None:
     risk = sc.classify_tool_call(
         "write_file", {"path": "/home/user/project/.natshell/agents.md"}
     )
-    assert risk == Risk.SAFE
+    assert risk == Risk.CONFIRM
 
 
-def test_safety_exempts_agents_md_edit() -> None:
+def test_safety_agents_md_edit_is_confirm() -> None:
+    """agents.md edits are no longer SAFE; they go through normal CONFIRM gating."""
     from natshell.config import SafetyConfig
     from natshell.safety.classifier import Risk, SafetyClassifier
 
@@ -292,7 +294,7 @@ def test_safety_exempts_agents_md_edit() -> None:
     risk = sc.classify_tool_call(
         "edit_file", {"path": "/home/user/.config/natshell/agents.md"}
     )
-    assert risk == Risk.SAFE
+    assert risk == Risk.CONFIRM
 
 
 def test_safety_still_confirms_other_writes() -> None:
