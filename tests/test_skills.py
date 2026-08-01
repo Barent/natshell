@@ -459,6 +459,74 @@ class TestLoadSkills:
         assert skill_reg.get("user-tool-skill") is not None
         assert "tools.py load failed" in caplog.text
 
+    def test_disabled_skill_skips_exec_module(self, tmp_path, caplog):
+        """Disabled skills must NOT have their tools.py run at all."""
+        d = _make_skill_dir(tmp_path, "nosafe", "A disabled skill", "Body here.")
+        (d / "tools.py").write_text("raise RuntimeError('executed despite disabled!')\n")
+        cfg = _make_config(disabled=["nosafe"])
+
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "builtin")]):
+            from natshell.skills import load_skills
+
+            # Should NOT raise — exec_module is skipped for disabled skills
+            with caplog.at_level(logging.INFO):
+                skill_reg = load_skills(registry, cfg)
+
+        assert skill_reg.get("nosafe") is not None
+        assert "skipping exec_module" in caplog.text
+
+    def test_project_skill_cannot_shadow_builtin(self, tmp_path, caplog):
+        """A project-level skill with the same name as a builtin must be skipped."""
+        d_builtin = _make_skill_dir(
+            tmp_path / "builtin", "shared-skill", "Builtin version", "Builtin body."
+        )
+        d_project = _make_skill_dir(
+            tmp_path / "project", "shared-skill", "Project shadow", "Project body."
+        )
+
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch(
+            "natshell.skills._iter_skill_dirs",
+            return_value=[(d_builtin, "builtin"), (d_project, "project")],
+        ):
+            from natshell.skills import load_skills
+
+            with caplog.at_level(logging.WARNING):
+                skill_reg = load_skills(registry, cfg)
+
+        # Builtin should win — project version is rejected
+        s = skill_reg.get("shared-skill")
+        assert s is not None
+        assert s.source == "builtin"
+        assert "shadows existing" in caplog.text
+
+    def test_project_skill_override_another_project_allowed(self, tmp_path, caplog):
+        """Two project skills from different dirs can still override each other
+        (e.g., nested repos) — only cross-source shadowing is blocked."""
+        d1 = _make_skill_dir(tmp_path / "p1", "proj-skill", "Proj v1", "body")
+        d2 = _make_skill_dir(tmp_path / "p2", "proj-skill", "Proj v2", "body")
+
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch(
+            "natshell.skills._iter_skill_dirs",
+            return_value=[(d1, "project"), (d2, "project")],
+        ):
+            from natshell.skills import load_skills
+
+            skill_reg = load_skills(registry, cfg)
+
+        # Later project wins — not blocked because both are project-source
+        s = skill_reg.get("proj-skill")
+        assert s is not None
+        assert s.source == "project"
+        assert s.description == "Proj v2"
+
 
 # ---------------------------------------------------------------------------
 # skill tool handler
