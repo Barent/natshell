@@ -200,7 +200,11 @@ def load_skills(tool_registry: ToolRegistry, config: NatShellConfig) -> SkillReg
         seen[name] = Skill(name=name, description=desc, path=skill_dir, source=source)
 
         tools_py = skill_dir / "tools.py"
-        if tools_py.is_file():
+        if source == "project":
+            # project skills can only be injected as instructions (SKILL.md),
+            # we do NOT run their Python code — arbitrary repos could supply malicious code
+            logger.info("skill %s: project-level tools.py not auto-executed", name)
+        elif tools_py.is_file():
             try:
                 spec = importlib.util.spec_from_file_location(
                     f"natshell_skill_tools_{name.replace('-', '_')}", tools_py

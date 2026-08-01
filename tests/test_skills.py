@@ -424,6 +424,41 @@ class TestLoadSkills:
             with caplog.at_level(logging.WARNING):
                 load_skills(registry, cfg)
 
+    def test_project_tools_py_not_executed(self, tmp_path):
+        """Project-level skills should NOT have their tools.py auto-executed."""
+        d = _make_skill_dir(tmp_path, "proj-skill", "A project skill", "Instructions.")
+        # tools.py raises if executed — this should be silently skipped for project source
+        (d / "tools.py").write_text("raise RuntimeError('project tools.py ran!')\n")
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "project")]):
+            from natshell.skills import load_skills
+
+            # Should NOT raise — project tools.py skipped entirely
+            skill_reg = load_skills(registry, cfg)
+
+        # SKILL.md still loaded even though tools.py was skipped
+        assert skill_reg.get("proj-skill") is not None
+
+    def test_user_tools_py_does_execute(self, tmp_path, caplog):
+        """User-source skills SHOULD have their tools.py executed (errors caught & logged)."""
+        d = _make_skill_dir(tmp_path, "user-tool-skill", "Registers a tool", "Body.")
+        # A crashing tools.py on user source should be caught as warning
+        (d / "tools.py").write_text("raise RuntimeError('user tools.py executed')\n")
+        cfg = _make_config()
+        registry = _make_tool_registry()
+
+        with patch("natshell.skills._iter_skill_dirs", return_value=[(d, "user")]):
+            from natshell.skills import load_skills
+
+            with caplog.at_level(logging.WARNING):
+                skill_reg = load_skills(registry, cfg)
+
+        # Skill loaded, but error was logged (proves exec was attempted)
+        assert skill_reg.get("user-tool-skill") is not None
+        assert "tools.py load failed" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # skill tool handler
