@@ -10,6 +10,7 @@ import subprocess
 import time
 
 from natshell.platform import is_windows
+from natshell.safety.command_split import split_with_delimiters
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -59,11 +60,6 @@ _SUDO_PW_TIMEOUT = 300  # 5 minutes
 
 _SUDO_RE = re.compile(r"\bsudo\b")
 
-# Splits a command on shell operators, keeping delimiters.
-# Used to identify sub-commands that start with sudo (vs. "sudo" appearing
-# inside quoted arguments like `echo "use sudo"`).
-_CMD_SPLIT_RE = re.compile(r"(&&|\|\||[;&|(])")
-
 # Package manager commands that may prompt "Do you want to continue? [Y/n]"
 _PKG_MANAGER_RE = re.compile(
     r"\b(?:apt|apt-get|dnf|yum|pacman|zypper|apk|emerge)\b"
@@ -73,20 +69,19 @@ _PKG_MANAGER_RE = re.compile(
 def _inject_sudo_dash_s(command: str) -> tuple[str, int]:
     """Replace ``sudo`` with ``sudo -S`` only at command-invocation positions.
 
-    Returns ``(modified_command, replacement_count)``.  Unlike a naive
-    ``\\bsudo\\b`` substitution this avoids matching ``sudo`` inside string
-    arguments (e.g. ``echo "use sudo"``), preventing password leaks to
-    stdin-reading commands that follow in a pipeline or chain.
+    Returns ``(modified_command, replacement_count)``.  Uses the shared
+    tokenizer from ``natshell.safety.command_split`` (same as the classifier)
+    so that splitting logic is identical between classify and execute paths.
     """
-    parts = _CMD_SPLIT_RE.split(command)
+    parts = split_with_delimiters(command)
     count = 0
     result_parts: list[str] = []
-    for part in parts:
-        # Shell-operator delimiters pass through unchanged
-        if _CMD_SPLIT_RE.fullmatch(part):
+    for i_part, part in enumerate(parts):
+        # Odd indices are delimiters — pass through unchanged
+        if i_part % 2 == 1:
             result_parts.append(part)
             continue
-        # Check if this sub-command starts with sudo (optional leading whitespace)
+        # Even indices are tokens — check for sudo at start of position
         stripped = part.lstrip()
         if re.match(r"sudo(?:\s|$)", stripped):
             idx = part.index("sudo")
