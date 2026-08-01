@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,57 @@ from pathlib import Path
 from natshell.platform import config_dir as _platform_config_dir
 
 logger = logging.getLogger(__name__)
+
+
+def _toml_escape(s: str) -> str:
+    """Escape a Python string as a safe TOML basic-string literal.
+
+    Handles backslash, double-quote, and all control characters per the
+    TOML spec so no value can corrupt config syntax (or inject section
+    headers that bypass VALID_CONFIG_KEYS).
+    """
+    out = (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\b", "\\b")
+        .replace("\f", "\\f")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    escaped = []
+    for ch in out:
+        cp = ord(ch)
+        if cp < 0x20 or cp == 0x7F:
+            escaped.append(f"\\u{cp:04x}")
+        else:
+            escaped.append(ch)
+    return "\"{}\"".format("".join(escaped))
+
+
+def _write_config_atomically(path: Path, text: str) -> None:
+    """Write *text* to *path* via temp-file + os.replace after validating TOML.
+
+    If the rendered content is invalid TOML, the old file stays untouched and
+    a RuntimeError propagates instead of corrupting on-disk state.
+    """
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise RuntimeError(f"Config would become invalid TOML: {e}") from e
+
+    dir_ = path.parent
+    fd, tmp = tempfile.mkstemp(dir=str(dir_), suffix=".toml")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _get_config_dir() -> Path:
@@ -245,11 +297,11 @@ def save_config_value(section: str, key: str, value: str | int | float | bool) -
     else:
         lines = []
 
-    # Format value as TOML
+    # Format value as TOML (strings are escaped to prevent injection)
     if isinstance(value, bool):
         val_str = "true" if value else "false"
     elif isinstance(value, str):
-        val_str = f'"{value}"'
+        val_str = _toml_escape(value)
     else:
         val_str = str(value)
 
@@ -284,7 +336,7 @@ def save_config_value(section: str, key: str, value: str | int | float | bool) -
         lines.append(f"\n{section_header}\n")
         lines.append(new_line)
 
-    config_path.write_text("".join(lines))
+    _write_config_atomically(config_path, "".join(lines))
     return config_path
 
 
@@ -346,9 +398,17 @@ _SECTIONS = (
 
 
 def _merge_toml(config: NatShellConfig, path: Path) -> None:
-    """Merge a TOML file into the config, overwriting only specified fields."""
-    with open(path, "rb") as f:
-        data = tomllib.load(f)
+    """Merge a TOML file into the config, overwriting only specified fields.
+
+    If *path* is unreadable or contains invalid TOML, log a warning and skip —
+    so a corrupted config file never prevents NatShell from starting.
+    """
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except (tomllib.TOMLDecodeError, OSError) as e:
+        logger.error("Failed to load %s: %s — skipping.", path.name, e)
+        return
 
     for section_name in _SECTIONS:
         if section_name in data:
@@ -380,7 +440,7 @@ def save_skills_disabled(disabled: list[str]) -> Path:
     else:
         lines = []
 
-    items = ", ".join(f'"{n}"' for n in disabled)
+    items = ", ".join(_toml_escape(n) for n in disabled)
     val_str = f"[{items}]"
     key = "disabled"
     section_header = "[skills]"
@@ -413,7 +473,7 @@ def save_skills_disabled(disabled: list[str]) -> Path:
         lines.append(f"\n{section_header}\n")
         lines.append(new_line)
 
-    config_path.write_text("".join(lines))
+    _write_config_atomically(config_path, "".join(lines))
     return config_path
 
 
