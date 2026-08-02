@@ -71,6 +71,22 @@ if [[ "$IS_RPI" == true && "$LITE_MODE" != true ]]; then
     fi
 fi
 
+# Auto-offer lite mode on WSL when --lite was not already passed
+if [[ "$IS_WSL" == true && "$LITE_MODE" != true ]]; then
+    echo ""
+    echo "  WSL detected."
+    echo "  Building llama-cpp-python from source in WSL can be slow and"
+    echo "  GPU support often doesn't work (WSL2 Vulkan is limited)."
+    echo "  The lite install skips the local inference engine and configures a"
+    echo "  remote Ollama or LM Studio endpoint instead."
+    echo ""
+    read -rp "  Use lite install (remote endpoint only)? [Y/n]: " wsl_lite_answer
+    if [[ -z "$wsl_lite_answer" ]] || is_yes "$wsl_lite_answer"; then
+        LITE_MODE=true
+        info "Lite mode enabled — skipping llama-cpp-python build"
+    fi
+fi
+
 # ─── Preflight checks ────────────────────────────────────────────────────────
 
 if [[ $EUID -eq 0 ]]; then

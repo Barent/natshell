@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _backend: str | None = None  # cached after first detection
 _wayland_warned: bool = False  # one-time warning flag
+_wsl_clipboard_warned: bool = False  # one-time WSL clip.exe warning flag
 
 
 def _is_wsl() -> bool:
@@ -79,7 +80,7 @@ def copy(text: str, app=None) -> bool:
     "osc52", delegates to ``app.copy_to_clipboard()`` (which may silently
     fail on terminals that don't support OSC52).
     """
-    global _wayland_warned
+    global _wayland_warned, _wsl_clipboard_warned
     backend = detect_backend()
 
     # Warn once if using an X11 clipboard tool on a Wayland session
@@ -94,6 +95,13 @@ def copy(text: str, app=None) -> bool:
         )
 
     if backend == "osc52":
+        # Warn once when on WSL with no clipboard tool available
+        if _is_wsl() and not _wsl_clipboard_warned:
+            _wsl_clipboard_warned = True
+            logger.warning(
+                "WSL detected but no clipboard tool found (clip.exe, wl-copy, xsel). "
+                "Ensure /mnt/c/Windows/System32 is in your PATH for clip.exe access."
+            )
         if app is not None:
             try:
                 app.copy_to_clipboard(text)
@@ -220,6 +228,7 @@ def read() -> str | None:
 
 def _reset() -> None:
     """Reset cached backend (for testing)."""
-    global _backend, _wayland_warned
+    global _backend, _wayland_warned, _wsl_clipboard_warned
     _backend = None
     _wayland_warned = False
+    _wsl_clipboard_warned = False

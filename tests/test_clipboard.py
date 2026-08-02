@@ -14,6 +14,7 @@ from natshell.ui.clipboard import (
     backend_name,
     copy,
     detect_backend,
+    logger,
     read,
 )
 
@@ -321,6 +322,31 @@ class TestWSLBackend:
                 assert copy("hello") is True
                 write_call = mock_run.call_args_list[0]
                 assert write_call.args[0] == ["clip.exe"]
+
+    def test_wsl_osc52_warns_about_clip_exe(self):
+        """WSL + osc52 backend should warn once with helpful clip.exe message."""
+        import logging
+
+        with patch("natshell.ui.clipboard._is_wsl", return_value=True):
+            with patch("natshell.ui.clipboard.shutil.which", return_value=None):
+                detect_backend()  # forces osc52 on WSL without clip.exe
+
+                msg_capture = []
+                handler = logging.Handler()
+                handler.emit = lambda record: msg_capture.append(record.getMessage())
+                logger.addHandler(handler)
+
+                copy("test", app=None)
+                assert any("clip.exe" in m for m in msg_capture), (
+                    f"Expected WSL clip.exe warning, got: {msg_capture}"
+                )
+
+                # Second call: no duplicate warning
+                msg_capture.clear()
+                copy("again", app=None)
+                assert not any("clip.exe" in m for m in msg_capture), (
+                    f"Expected no repeat warning, got: {msg_capture}"
+                )
 
 
 # ─── read ─────────────────────────────────────────────────────────────────────
