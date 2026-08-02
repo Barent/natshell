@@ -208,18 +208,53 @@ class TestBuildToolList:
 class TestExecuteTool:
     """Test tool execution with safety classification."""
 
-    async def test_safe_tool_executes(self):
+    async def test_unclassified_tool_is_not_auto_approved(self):
+        """A tool with no classification rule must not run unconfirmed.
+
+        This test previously asserted the opposite: `echo_test` has no branch
+        in classify_tool_call, and the classifier's fallthrough returned SAFE,
+        so it executed in strict mode with no confirmation.  The classifier
+        now fails closed, so an unlisted tool is CONFIRM and strict mode
+        refuses it.
+        """
         from natshell.mcp_server import _execute_tool
 
         registry = _make_registry_with_tool()
         safety = _make_safety()
         mcp_config = McpConfig()
 
+        with pytest.raises(ValueError, match="requires confirmation"):
+            await _execute_tool(
+                registry, safety, mcp_config, "echo_test", {"message": "hello"}
+            )
+
+    async def test_unclassified_tool_executes_in_permissive_mode(self):
+        """Permissive MCP mode still auto-approves, and the call succeeds."""
+        from natshell.mcp_server import _execute_tool
+
+        registry = _make_registry_with_tool()
+        safety = _make_safety()
+        mcp_config = McpConfig(safety_mode="permissive")
+
         result = await _execute_tool(
             registry, safety, mcp_config, "echo_test", {"message": "hello"}
         )
         assert len(result) == 1
         assert "echo: hello" in result[0].text
+
+    async def test_read_only_tool_executes(self):
+        """Tools on the read-only allowlist stay SAFE and run in strict mode."""
+        from natshell.mcp_server import _execute_tool
+        from natshell.tools.registry import create_default_registry
+
+        registry = create_default_registry()
+        safety = _make_safety()
+        mcp_config = McpConfig()
+
+        result = await _execute_tool(
+            registry, safety, mcp_config, "list_directory", {"path": "."}
+        )
+        assert len(result) == 1
 
     async def test_blocked_tool_raises(self):
         from natshell.mcp_server import _execute_tool

@@ -118,6 +118,16 @@ class ToolRegistry:
         """Get a tool definition by name."""
         return self._definitions.get(name)
 
+    def confirm_required_tools(self) -> set[str]:
+        """Names of tools whose definition declares requires_confirmation.
+
+        Handed to SafetyClassifier so the flag actually gates execution — it
+        was declared on several tools and read by nothing.
+        """
+        return {
+            name for name, defn in self._definitions.items() if defn.requires_confirmation
+        }
+
     @staticmethod
     def _is_enabled_skill(name: str) -> bool:
         """True if ``name`` is a registered, enabled skill (not a tool)."""
