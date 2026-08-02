@@ -64,6 +64,93 @@ _BLOCKED_BRANCH_PREFIXES = ("--force",)
 # Subcommands blocked in git stash — use execute_shell for destructive stash ops
 _BLOCKED_STASH_FLAGS = {"drop", "clear"}
 
+# Read-only operations are classified SAFE and so run with no confirmation
+# dialog.  That makes their flags load-bearing: `git diff --output=FILE`
+# creates and truncates FILE even when the command then errors out, which is an
+# arbitrary-file-write primitive reachable without any user interaction.  Flags
+# are therefore allowlisted rather than denylisted.  Only arguments starting
+# with "-" are checked — paths, revisions and pathspecs pass through untouched.
+_ALLOWED_READ_FLAGS: dict[str, frozenset[str]] = {
+    "status": frozenset(
+        {
+            "--porcelain", "--short", "-s", "--branch", "-b", "--long",
+            "--untracked-files", "-u", "--ignored", "--no-renames",
+            "--find-renames", "-z", "--column", "--no-column",
+        }
+    ),
+    "diff": frozenset(
+        {
+            "--stat", "--numstat", "--shortstat", "--summary", "--cached",
+            "--staged", "--name-only", "--name-status", "--patch", "-p", "-u",
+            "--no-patch", "-s", "--unified", "-U", "--raw", "--word-diff",
+            "--color", "--no-color", "--check", "--find-renames", "-M",
+            "--find-copies", "-C", "--diff-filter", "--ignore-all-space", "-w",
+            "--ignore-space-change", "-b", "--ignore-blank-lines", "-R",
+            "--text", "-a", "--binary", "--full-index", "--abbrev", "-z",
+            "--no-renames", "--relative", "--function-context", "-W",
+        }
+    ),
+    "log": frozenset(
+        {
+            "--oneline", "--no-decorate", "--decorate", "--graph", "--stat",
+            "--shortstat", "--numstat", "--name-only", "--name-status",
+            "--max-count", "-n", "--skip", "--since", "--after", "--until",
+            "--before", "--author", "--committer", "--grep", "--all",
+            "--first-parent", "--merges", "--no-merges", "--reverse",
+            "--format", "--pretty", "--abbrev-commit", "--date", "--follow",
+            "--color", "--no-color", "-p", "--patch", "-z",
+        }
+    ),
+    # `branch` also creates/renames/deletes, so the non-listing flags git
+    # treats as safe are included here.  The force variants (-D, -M, -C,
+    # --force, --delete) are deliberately absent and stay rejected.
+    "branch": frozenset(
+        {
+            "--list", "-l", "-v", "-vv", "--verbose", "-a", "--all", "-r",
+            "--remotes", "--merged", "--no-merged", "--contains",
+            "--no-contains", "--sort", "--color", "--no-color", "--column",
+            "--show-current", "-d", "-m", "-c", "--track", "--no-track",
+            "--set-upstream-to", "--unset-upstream",
+        }
+    ),
+}
+
+
+def _reject_disallowed_flags(operation: str, extra_args: list[str]) -> str | None:
+    """Return an error message if any flag is not allowlisted for ``operation``.
+
+    Handles both ``--flag=value`` and bare ``--flag`` spellings, plus the
+    attached-value short forms git accepts (``-U5``, ``-n10``, ``-M50%``).
+    """
+    allowed = _ALLOWED_READ_FLAGS.get(operation)
+    if allowed is None:
+        return None
+
+    for arg in extra_args:
+        # Everything after the `--` separator is a pathspec by definition
+        if arg == "--":
+            break
+        if not arg.startswith("-") or arg == "-":
+            continue  # a path, revision or pathspec — not our business
+
+        # `-10` is git's shorthand for `--max-count=10`
+        if operation == "log" and arg[1:].isdigit():
+            continue
+
+        name = arg.split("=", 1)[0]
+        if name in allowed:
+            continue
+        # Short flags may carry their value attached: -U5, -n10, -M50%
+        if len(name) > 2 and not name.startswith("--") and name[:2] in allowed:
+            continue
+
+        return (
+            f"Flag {arg!r} is not allowed for the read-only git '{operation}' "
+            "operation via git_tool. Use execute_shell if you really need it — "
+            "that path goes through the safety classifier and will ask first."
+        )
+    return None
+
 
 def _run_git(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run a git command synchronously (to be called via asyncio.to_thread)."""
@@ -195,6 +282,11 @@ async def git_tool(operation: str, args: str = "") -> ToolResult:
         extra_args = shlex.split(args) if args else []
     except ValueError as e:
         return ToolResult(error=f"Invalid arguments: {e}", exit_code=1)
+
+    # Read-only operations run unconfirmed, so their flags are allowlisted.
+    flag_error = _reject_disallowed_flags(operation, extra_args)
+    if flag_error:
+        return ToolResult(error=flag_error, exit_code=1)
 
     try:
         if operation == "status":
