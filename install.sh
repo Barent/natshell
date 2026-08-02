@@ -46,6 +46,15 @@ elif [[ "$OS" == "Linux" ]]; then
     fi
 fi
 
+# On WSL, add Windows System32 to PATH so clip.exe, powershell.exe, etc. are found
+if [[ "$IS_WSL" == true ]]; then
+    SYS32="/mnt/c/Windows/System32"
+    if [[ -d "$SYS32" && ":$PATH:" != *":$SYS32:"* ]]; then
+        export PATH="$SYS32:$PATH"
+        info "WSL: added $SYS32 to PATH (clip.exe, powershell.exe, etc.)"
+    fi
+fi
+
 # Auto-offer lite mode on Raspberry Pi when --lite was not already passed
 if [[ "$IS_RPI" == true && "$LITE_MODE" != true ]]; then
     echo ""
@@ -57,6 +66,22 @@ if [[ "$IS_RPI" == true && "$LITE_MODE" != true ]]; then
     echo ""
     read -rp "  Use lite install (remote endpoint only)? [Y/n]: " rpi_lite_answer
     if [[ -z "$rpi_lite_answer" ]] || is_yes "$rpi_lite_answer"; then
+        LITE_MODE=true
+        info "Lite mode enabled — skipping llama-cpp-python build"
+    fi
+fi
+
+# Auto-offer lite mode on WSL when --lite was not already passed
+if [[ "$IS_WSL" == true && "$LITE_MODE" != true ]]; then
+    echo ""
+    echo "  WSL detected."
+    echo "  Building llama-cpp-python from source in WSL can be slow and"
+    echo "  GPU support often doesn't work (WSL2 Vulkan is limited)."
+    echo "  The lite install skips the local inference engine and configures a"
+    echo "  remote Ollama or LM Studio endpoint instead."
+    echo ""
+    read -rp "  Use lite install (remote endpoint only)? [Y/n]: " wsl_lite_answer
+    if [[ -z "$wsl_lite_answer" ]] || is_yes "$wsl_lite_answer"; then
         LITE_MODE=true
         info "Lite mode enabled — skipping llama-cpp-python build"
     fi
@@ -278,6 +303,18 @@ if [[ "$LITE_MODE" != true ]]; then
     ok "C++ compiler — OK"
 fi
 
+# CMake — required to build llama-cpp-python from source
+if [[ "$LITE_MODE" != true && "$IS_MACOS" != true ]]; then
+    if ! command -v cmake &>/dev/null; then
+        warn "cmake is required to build llama-cpp-python."
+        install_pkg "cmake" "cmake" "cmake" ""
+        if ! command -v cmake &>/dev/null; then
+            die "cmake still not available after install attempt."
+        fi
+    fi
+    ok "cmake — OK"
+fi
+
 # A stale CC/CXX in the environment (e.g. CC=gcc-12 left over from before a
 # distro upgrade removed that binary) makes CMake fail with "Could not find the
 # compiler specified in the environment variable CC" — long before it would fall
@@ -309,6 +346,15 @@ fi
 # Clipboard tool — needed for copy buttons in the TUI
 if [[ "$IS_MACOS" == true ]]; then
     ok "Clipboard — OK (pbcopy built-in)"
+elif [[ "$IS_WSL" == true ]]; then
+    if command -v clip.exe &>/dev/null; then
+        ok "Clipboard — OK (clip.exe via Windows host)"
+    else
+        warn "WSL detected but clip.exe not found in PATH."
+        warn "  Copy/paste from NatShell won't reach Windows apps without it."
+        warn "  Ensure /mnt/c/Windows/System32 is in your PATH, or enable"
+        warn "  Windows path auto-merge: wsl --shutdown then wsl --set-default-version 2"
+    fi
 elif [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
     if ! command -v wl-copy &>/dev/null; then
         warn "Wayland session detected but wl-copy is not installed."
@@ -546,14 +592,40 @@ else
     info "No GPU detected — building llama-cpp-python for CPU"
 fi
 
+# On WSL, warn that Vulkan may not actually work even when deps are present
+if [[ "$IS_WSL" == true && "$GPU_DETECTED" == true ]]; then
+    warn "WSL + GPU detected: the Vulkan build may still fail if your GPU"
+    warn "driver doesn't support Vulkan in WSL2 (common with integrated GPUs)."
+    warn "If the build fails, I'll automatically retry with CPU-only."
+fi
+
 if [[ "$LITE_MODE" != true ]]; then
     info "Installing llama-cpp-python (this may take a few minutes)..."
+    BUILD_OK=false
     if [[ -n "$CMAKE_ARGS" ]]; then
-        CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python --no-binary llama-cpp-python --no-cache-dir -q
+        CMAKE_ARGS="$CMAKE_ARGS" "$VENV_DIR/bin/pip" install llama-cpp-python \
+            --no-binary llama-cpp-python --no-cache-dir -q && BUILD_OK=true
     else
-        "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q
+        "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q && BUILD_OK=true
     fi
-    ok "llama-cpp-python installed"
+
+    if [[ "$BUILD_OK" != true ]]; then
+        if [[ "$IS_WSL" == true && "$GPU_DETECTED" == true ]]; then
+            echo ""
+            warn "GPU build failed on WSL. Falling back to CPU-only build..."
+            CMAKE_ARGS=""
+            "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q && BUILD_OK=true
+            GPU_DETECTED=false
+        else
+            die "Failed to build llama-cpp-python. Fix the errors above, then re-run install.sh."
+        fi
+    fi
+
+    if [[ "$BUILD_OK" == true ]]; then
+        ok "llama-cpp-python installed"
+    else
+        die "llama-cpp-python installation failed (even CPU-only). See errors above."
+    fi
 fi
 
 # ─── Install NatShell package ─────────────────────────────────────────────────
