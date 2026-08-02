@@ -21,13 +21,29 @@ _head_chars = 2000
 _tail_chars = 1500
 
 
-def configure_limits(max_output_chars: int) -> None:
-    """Set shell output truncation limits (called by agent loop based on context size)."""
-    global _max_output_chars, _head_chars, _tail_chars, _base_max_output_chars
+# Never scale below this: at a tail of 0, text[-0:] returns the *entire*
+# string, so the truncation would return more than an untruncated result.
+_MIN_OUTPUT_CHARS = 200
+
+
+def _apply_limits(max_output_chars: int) -> None:
+    """Set the effective limits without touching the scaling baseline."""
+    global _max_output_chars, _head_chars, _tail_chars
+    max_output_chars = max(_MIN_OUTPUT_CHARS, max_output_chars)
     _max_output_chars = max_output_chars
     _head_chars = max_output_chars // 2
-    _tail_chars = int(max_output_chars * 0.375)
-    _base_max_output_chars = max_output_chars
+    _tail_chars = max(1, int(max_output_chars * 0.375))
+
+
+def configure_limits(max_output_chars: int) -> None:
+    """Set shell output truncation limits (called by agent loop based on context size).
+
+    This sets the baseline that per-step scaling is computed *from*.  Step
+    scaling must not come through here — see configure_step_scaling.
+    """
+    global _base_max_output_chars
+    _apply_limits(max_output_chars)
+    _base_max_output_chars = max(_MIN_OUTPUT_CHARS, max_output_chars)
 
 
 def reset_limits() -> None:
@@ -35,7 +51,9 @@ def reset_limits() -> None:
     configure_limits(4000)
 
 
-# Step-aware output scaling — reduces output budget as context fills up
+# Step-aware output scaling — reduces output budget as context fills up.
+# This is the baseline the per-step scale factor is applied to; it is set by
+# configure_limits and must stay fixed for the duration of a run.
 _base_max_output_chars: int = 4000
 
 
@@ -45,12 +63,16 @@ def configure_step_scaling(step: int, max_steps: int) -> None:
     Called by the agent loop at the start of each step.  The scale factor
     drops linearly from 1.0 (step 0) to 0.3 (step == max_steps), so later
     tool results occupy less context and leave room for the model to reason.
+
+    The scale is always applied to the fixed baseline.  It used to be applied
+    via configure_limits, which reassigned the baseline to the just-scaled
+    value, so the factor compounded every step: a normal 15-step run decayed
+    the budget from 4000 to 1 rather than to 1200.
     """
     if max_steps <= 0:
         return
     scale = max(0.3, 1.0 - 0.7 * (step / max_steps))
-    effective = int(_base_max_output_chars * scale)
-    configure_limits(effective)
+    _apply_limits(int(_base_max_output_chars * scale))
 
 # ── Sudo password support ───────────────────────────────────────────────────
 
@@ -250,7 +272,10 @@ def _truncate_output(text: str) -> tuple[str, bool]:
 
     lines = text.splitlines()
     head = text[:_head_chars]
-    tail = text[-_tail_chars:]
+    # Guard the slice directly as well as at the limit-setting sites:
+    # text[-0:] is the whole string, which would make "truncation" return
+    # more than the untruncated output rather than less.
+    tail = text[-_tail_chars:] if _tail_chars > 0 else ""
 
     # Count omitted lines for the message
     head_lines = head.count("\n")
