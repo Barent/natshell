@@ -451,7 +451,9 @@ def main() -> None:
     # Build the safety classifier
     from natshell.safety.classifier import SafetyClassifier
 
-    safety = SafetyClassifier(config.safety)
+    # Built after skill loading so every registered tool's requires_confirmation
+    # flag is visible to the classifier.
+    safety = SafetyClassifier(config.safety, confirm_required=tools.confirm_required_tools())
 
     # Inject safety config into the natshell_help tool
     from natshell.tools.natshell_help import set_safety_config
