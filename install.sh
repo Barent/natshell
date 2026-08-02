@@ -46,6 +46,15 @@ elif [[ "$OS" == "Linux" ]]; then
     fi
 fi
 
+# On WSL, add Windows System32 to PATH so clip.exe, powershell.exe, etc. are found
+if [[ "$IS_WSL" == true ]]; then
+    SYS32="/mnt/c/Windows/System32"
+    if [[ -d "$SYS32" && ":$PATH:" != *":$SYS32:"* ]]; then
+        export PATH="$SYS32:$PATH"
+        info "WSL: added $SYS32 to PATH (clip.exe, powershell.exe, etc.)"
+    fi
+fi
+
 # Auto-offer lite mode on Raspberry Pi when --lite was not already passed
 if [[ "$IS_RPI" == true && "$LITE_MODE" != true ]]; then
     echo ""
