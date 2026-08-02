@@ -38,7 +38,9 @@ NatShell is an agentic TUI that provides a natural language interface to Linux, 
 
 ## Security Features (summary)
 
-Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`/`&`/`|` before classification; sudo password cached 5 min; sensitive env vars filtered from subprocess; HTTPS warning for plaintext API keys; SSH key/shadow/`.env` path gating; session/backup dir 0o700; session path traversal validation; git commit flag blocklist (`--amend`, `--author=`, `--date=`); SSRF blocking in fetch_url.
+Rich markup escaping on all LLM output; command chaining splits on `&&`/`||`/`;`/`&`/`|` before classification; sudo password cached 5 min; sensitive env vars filtered from subprocess; HTTPS warning for plaintext API keys; SSH key/shadow/`.env` path gating (paths resolved before matching, applied to `read_file`/`write_file`/`edit_file`/`search_files`); session/backup dir 0o700; session path traversal validation; git commit flag blocklist (`--amend`, `--author=`, `--date=`) plus a read-only flag **allowlist** on `status`/`diff`/`log`/`branch`; SSRF blocking in fetch_url.
+
+Classifier fails closed: a tool with no rule in `classify_tool_call` returns `CONFIRM` unless it is on the read-only allowlist (`_READ_ONLY_TOOLS`), and `ToolDefinition.requires_confirmation` escalates `SAFE`→`CONFIRM` (never downgrades, never overrides danger mode). Patterns match the command as written *and* with env assignments, wrapper commands and the executable's path stripped (`_normalize_invocation`) — additive, so it can only widen coverage. All blocked checks complete before any `CONFIRM` is returned.
 
 ## Modules
 
@@ -129,7 +131,7 @@ Default: Qwen3-4B, auto-downloaded to `~/.local/share/natshell/models/`. Context
 
 ## Testing
 
-Run with `pytest` (1,422 tests, 40 files). Mock `InferenceEngine` for agent loop tests. Use `/tmp` for write_file tests.
+Run with `pytest` (1,570 tests, 41 files). Mock `InferenceEngine` for agent loop tests. Use `/tmp` for write_file tests.
 
 Key test files: `test_agent.py`, `test_safety.py`, `test_tools.py`, `test_coding_tools.py`, `test_file_tracker.py`, `test_sessions.py`, `test_backup.py`, `test_headless.py`, `test_git_tool.py`, `test_mcp_server.py`, `test_skills.py`, `test_plan_*.py`, `test_engine_*.py`, `test_ollama*.py`, `test_slash_commands.py`, `test_context_manager.py`, `test_widgets.py`, `test_commands.py`, `test_gpu.py`, `test_platform.py`, `test_clipboard.py`, `test_fetch_url.py`, `test_natshell_help.py`, `test_history_input.py`, `test_prompt_cache.py`, `test_context.py`
 
