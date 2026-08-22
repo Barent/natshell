@@ -28,6 +28,41 @@ die()   { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
 # Case-insensitive yes check — bash 3.2 compatible (no ${,,})
 is_yes() { [[ "$1" =~ ^[Yy]$ ]]; }
 
+# SPIRV-Headers is required by llama.cpp's CMake for Vulkan builds. It ships a
+# CMake package config rather than a pkg-config file, so probe for that.
+# Checks the usual prefixes first (fast), then falls back to a scan of the
+# cmake search roots. Deliberately does NOT scan all of /usr — that is slow and
+# was the reason earlier versions timed out on large systems.
+have_spirv_headers() {
+    local d
+    for d in /usr/share/cmake/SPIRV-Headers /usr/lib64/cmake/SPIRV-Headers \
+             /usr/lib/cmake/SPIRV-Headers /usr/local/share/cmake/SPIRV-Headers \
+             /usr/local/lib/cmake/SPIRV-Headers; do
+        [[ -e "$d/SPIRV-HeadersConfig.cmake" || -e "$d/spirv-headers-config.cmake" ]] && return 0
+    done
+    find /usr/share/cmake /usr/lib/cmake /usr/lib64/cmake \
+         /usr/local/share/cmake /usr/local/lib/cmake \
+         -maxdepth 3 \
+         \( -name "SPIRV-HeadersConfig.cmake" -o -name "spirv-headers-config.cmake" \
+            -o -name "SPIRV-Headers.cps" -o -name "spirv-headers.cps" \) \
+         2>/dev/null | grep -q .
+}
+
+# Fedora Atomic: apply an already-staged deployment to the RUNNING filesystem.
+# A package staged by an earlier run is "already requested", so a repeat
+# `rpm-ostree install --idempotent --apply-live` no-ops and the file still
+# is not on disk. `rpm-ostree apply-live` pulls the pending deployment down
+# into the live tree, avoiding a reboot.
+rpm_ostree_apply_live() {
+    [[ "${PKG_MGR:-}" == "rpm-ostree" ]] || return 1
+    # Only meaningful when a deployment is actually staged. The plain-text
+    # status output does not label it, so read the JSON.
+    rpm-ostree status --json 2>/dev/null \
+        | grep -q '"staged"[[:space:]]*:[[:space:]]*true' || return 1
+    info "Applying staged rpm-ostree packages to the running system..."
+    sudo rpm-ostree apply-live
+}
+
 # ─── Platform detection ─────────────────────────────────────────────────────
 
 OS="$(uname -s)"
@@ -141,6 +176,13 @@ install_pkg() {
         rpm-ostree)
             read -rp "  Install $dnf_pkg now? (requires sudo, uses rpm-ostree) [Y/n]: " answer
             if [[ -z "$answer" ]] || is_yes "$answer"; then
+                # --apply-live makes the package usable in the CURRENT boot.
+                # Without it rpm-ostree only stages for next boot, and the
+                # build that follows would still fail on a missing header.
+                if sudo rpm-ostree install --idempotent --apply-live "$dnf_pkg"; then
+                    return 0
+                fi
+                warn "Live-apply failed — staging $dnf_pkg for next boot instead."
                 sudo rpm-ostree install --idempotent "$dnf_pkg"
                 return $?
             fi
@@ -169,7 +211,7 @@ install_pkg() {
         die "Please install it manually:
   Debian/Ubuntu:  sudo apt install $apt_pkg
   Fedora:         sudo dnf install $dnf_pkg
-  Fedora Atomic:  sudo rpm-ostree install $dnf_pkg  (then reboot)
+  Fedora Atomic:  sudo rpm-ostree install --apply-live $dnf_pkg
   Arch:           sudo pacman -S $pacman_pkg"
     fi
 }
@@ -407,10 +449,7 @@ elif [[ "$IS_MACOS" != true ]]; then
         fi
 
         # Check for SPIRV-Headers (required by llama.cpp CMake for Vulkan builds)
-        if ! find /usr /usr/local -name "SPIRV-HeadersConfig.cmake" \
-                                  -o -name "spirv-headers-config.cmake" \
-                                  -o -name "SPIRV-Headers.cps" \
-                                  -o -name "spirv-headers.cps" 2>/dev/null | grep -q .; then
+        if ! have_spirv_headers; then
             NEED_VULKAN_DEPS=true
         fi
 
@@ -432,10 +471,8 @@ elif [[ "$IS_MACOS" != true ]]; then
             fi
 
             # Install SPIRV-Headers (required by llama.cpp CMake for Vulkan builds)
-            if ! find /usr /usr/local -name "SPIRV-HeadersConfig.cmake" \
-                                      -o -name "spirv-headers-config.cmake" \
-                                      -o -name "SPIRV-Headers.cps" \
-                                      -o -name "spirv-headers.cps" 2>/dev/null | grep -q .; then
+            if ! have_spirv_headers; then
+                warn "SPIRV-Headers not found (required by llama.cpp's Vulkan CMake)."
                 (install_pkg "spirv-headers" "spirv-headers-devel" "spirv-headers") || \
                     warn "SPIRV-Headers could not be installed — Vulkan GPU build may fail"
             fi
@@ -460,6 +497,18 @@ elif [[ "$IS_MACOS" != true ]]; then
                 fi
             fi
 
+            # If a dependency is still missing on Fedora Atomic, the package
+            # was very likely staged (by this run or an earlier one) but never
+            # applied to the live tree. Pull it down before declaring failure.
+            if [[ "$PKG_MGR" == "rpm-ostree" ]]; then
+                if ! pkg-config --exists vulkan 2>/dev/null || \
+                   ! command -v glslc &>/dev/null || \
+                   ! have_spirv_headers; then
+                    rpm_ostree_apply_live || true
+                    hash -r 2>/dev/null || true
+                fi
+            fi
+
             # Verify after install
             if pkg-config --exists vulkan 2>/dev/null; then
                 ok "Vulkan development headers — OK"
@@ -471,11 +520,22 @@ elif [[ "$IS_MACOS" != true ]]; then
             else
                 warn "glslc still not found — GPU build may fail"
             fi
+            if have_spirv_headers; then
+                ok "SPIRV-Headers — OK"
+            else
+                warn "SPIRV-Headers still not found — GPU build will be skipped"
+            fi
 
-            # On Fedora Atomic, layered packages need a reboot to take effect
+            # On Fedora Atomic, layered packages only take effect after reboot
+            # unless they were applied live. Check every dependency here — not
+            # just Vulkan and glslc — or a staged-but-inactive SPIRV-Headers
+            # slips through and the Vulkan build fails at CMake configure time.
             if [[ "$PKG_MGR" == "rpm-ostree" ]]; then
-                if ! pkg-config --exists vulkan 2>/dev/null || ! command -v glslc &>/dev/null; then
-                    warn "On Fedora Atomic, layered packages take effect after reboot."
+                if ! pkg-config --exists vulkan 2>/dev/null || \
+                   ! command -v glslc &>/dev/null || \
+                   ! have_spirv_headers; then
+                    warn "On Fedora Atomic, layered packages take effect after reboot"
+                    warn "  unless rpm-ostree could apply them live."
                     warn "  Reboot, then re-run install.sh to build with GPU support."
                     warn "  (Continuing with CPU-only build for now.)"
                 fi
@@ -544,9 +604,11 @@ elif [[ "$IS_MACOS" == true ]]; then
     CMAKE_ARGS="-DGGML_METAL=on"
     GPU_DETECTED=true
 elif command -v vulkaninfo &>/dev/null 2>&1; then
-    # vulkaninfo (runtime) is present — verify the dev libs are too
-    # CMake's FindVulkan also requires glslc; skip Vulkan build if it's unavailable
-    if pkg-config --exists vulkan 2>/dev/null && command -v glslc &>/dev/null; then
+    # vulkaninfo (runtime) is present — verify the build-time deps are too.
+    # All three are required: the Vulkan dev headers, glslc (CMake's FindVulkan
+    # demands it specifically), and SPIRV-Headers' CMake package config.
+    # Missing any one of them makes the Vulkan build fail at configure time.
+    if pkg-config --exists vulkan 2>/dev/null && command -v glslc &>/dev/null && have_spirv_headers; then
         info "Vulkan detected — building llama-cpp-python with Vulkan support"
         CMAKE_ARGS="-DGGML_VULKAN=on"
         GPU_DETECTED=true
@@ -556,7 +618,7 @@ elif command -v vulkaninfo &>/dev/null 2>&1; then
             warn "  GPU support requires the Vulkan dev package."
             case "$PKG_MGR" in
                 apt)       warn "    sudo apt install libvulkan-dev" ;;
-                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel  (then reboot)" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install --apply-live vulkan-devel" ;;
                 dnf)       warn "    sudo dnf install vulkan-devel" ;;
                 pacman)    warn "    sudo pacman -S vulkan-headers" ;;
             esac
@@ -571,17 +633,34 @@ elif command -v vulkaninfo &>/dev/null 2>&1; then
             warn "  GPU support requires glslc. It is not packaged on all distros."
             case "$PKG_MGR" in
                 apt)       warn "    sudo apt install shaderc  (Ubuntu) — not available on all Debian variants" ;;
-                rpm-ostree) warn "    sudo rpm-ostree install glslc  (then reboot)" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install --apply-live glslc" ;;
                 dnf)       warn "    sudo dnf install glslc" ;;
                 pacman)    warn "    sudo pacman -S shaderc" ;;
             esac
         fi
-        if pkg-config --exists vulkan 2>/dev/null && command -v glslc &>/dev/null; then
-            info "Vulkan dev libraries and glslc found — building with Vulkan support"
+        if ! have_spirv_headers; then
+            warn "Vulkan runtime found but SPIRV-Headers is missing (required by llama.cpp's CMake)."
+            case "$PKG_MGR" in
+                apt)       warn "    sudo apt install spirv-headers" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install --apply-live spirv-headers-devel" ;;
+                dnf)       warn "    sudo dnf install spirv-headers-devel" ;;
+                pacman)    warn "    sudo pacman -S spirv-headers" ;;
+            esac
+            echo ""
+            read -rp "  Try to install SPIRV-Headers now? [Y/n]: " sh_answer
+            if [[ -z "$sh_answer" ]] || is_yes "$sh_answer"; then
+                (install_pkg "spirv-headers" "spirv-headers-devel" "spirv-headers") || true
+            fi
+        fi
+        if pkg-config --exists vulkan 2>/dev/null && command -v glslc &>/dev/null && have_spirv_headers; then
+            info "Vulkan dev libraries, glslc and SPIRV-Headers found — building with Vulkan support"
             CMAKE_ARGS="-DGGML_VULKAN=on"
             GPU_DETECTED=true
         else
             warn "Continuing with CPU-only build. Re-run install.sh after resolving Vulkan build dependencies."
+            if [[ "$PKG_MGR" == "rpm-ostree" ]]; then
+                warn "  On Fedora Atomic a reboot may be needed first for layered packages to apply."
+            fi
         fi
     fi
 elif command -v nvidia-smi &>/dev/null 2>&1; then
@@ -610,12 +689,24 @@ if [[ "$LITE_MODE" != true ]]; then
     fi
 
     if [[ "$BUILD_OK" != true ]]; then
-        if [[ "$IS_WSL" == true && "$GPU_DETECTED" == true ]]; then
+        # A GPU build can fail for reasons the dependency checks cannot predict
+        # (driver quirks, toolchain mismatches, a distro that ships an
+        # incomplete Vulkan SDK). Never let that end the install — CPU always
+        # works, and the GPU can be enabled later by re-running install.sh.
+        if [[ "$GPU_DETECTED" == true ]]; then
             echo ""
-            warn "GPU build failed on WSL. Falling back to CPU-only build..."
+            if [[ "$IS_WSL" == true ]]; then
+                warn "GPU build failed on WSL. Falling back to CPU-only build..."
+            else
+                warn "GPU build failed. Falling back to CPU-only build..."
+            fi
             CMAKE_ARGS=""
             "$VENV_DIR/bin/pip" install llama-cpp-python --no-cache-dir -q && BUILD_OK=true
             GPU_DETECTED=false
+            if [[ "$BUILD_OK" == true ]]; then
+                warn "NatShell will run on CPU. Re-run install.sh once the GPU"
+                warn "  build dependencies are resolved to enable GPU offloading."
+            fi
         else
             die "Failed to build llama-cpp-python. Fix the errors above, then re-run install.sh."
         fi
@@ -649,7 +740,7 @@ if [[ "$LITE_MODE" != true && "$GPU_DETECTED" == true ]]; then
             warn "  To fix: install Vulkan development packages and re-run install.sh"
             case "$PKG_MGR" in
                 apt)  warn "    sudo apt install libvulkan-dev spirv-headers shaderc" ;;
-                rpm-ostree) warn "    sudo rpm-ostree install vulkan-devel spirv-headers-devel glslc  (then reboot)" ;;
+                rpm-ostree) warn "    sudo rpm-ostree install --apply-live vulkan-devel spirv-headers-devel glslc" ;;
                 dnf)  warn "    sudo dnf install vulkan-devel spirv-headers-devel glslc" ;;
                 pacman) warn "    sudo pacman -S vulkan-headers spirv-headers glslang" ;;
             esac
@@ -659,7 +750,7 @@ if [[ "$LITE_MODE" != true && "$GPU_DETECTED" == true ]]; then
                 (install_pkg "libvulkan-dev" "vulkan-devel" "vulkan-headers") || true
                 (install_pkg "spirv-headers" "spirv-headers-devel" "spirv-headers") || true
                 (install_pkg "shaderc" "glslc" "shaderc") || true
-                if pkg-config --exists vulkan 2>/dev/null; then
+                if pkg-config --exists vulkan 2>/dev/null && command -v glslc &>/dev/null && have_spirv_headers; then
                     info "Rebuilding llama-cpp-python with Vulkan support..."
                     CMAKE_ARGS="-DGGML_VULKAN=on" "$VENV_DIR/bin/pip" install llama-cpp-python \
                         --no-binary llama-cpp-python --no-cache-dir --force-reinstall -q
@@ -670,7 +761,10 @@ if [[ "$LITE_MODE" != true && "$GPU_DETECTED" == true ]]; then
                         warn "  NatShell will work fine on CPU, but inference will be slower."
                     fi
                 else
-                    warn "Vulkan dev libs still not available. Continuing with CPU-only."
+                    warn "Vulkan build dependencies still not available. Continuing with CPU-only."
+                    if [[ "$PKG_MGR" == "rpm-ostree" ]]; then
+                        warn "  On Fedora Atomic, reboot and re-run install.sh to pick up layered packages."
+                    fi
                 fi
             else
                 warn "  NatShell will work fine on CPU, but inference will be slower."
