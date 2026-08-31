@@ -1,3 +1,5 @@
+
+
 # NatShell
 
 [![PyPI version](https://img.shields.io/pypi/v/natshell)](https://pypi.org/project/natshell/)
@@ -141,7 +143,7 @@ Save and restore conversations with `/save`, `/load`, and `/sessions`. Sessions 
 Run NatShell non-interactively with `--headless "prompt"`. Response text goes to stdout (pipeable), everything else to stderr. Use `--danger-fast` to auto-approve confirmations, or `--no-danger-fast` to force confirmations back on for one run. Set `[safety] danger_fast = true` in `config.toml` (or answer "yes" to the setup wizard/installer prompt) to always run in danger-fast mode on a given machine, without passing the flag every time.
 
 ### MCP Server
-Run NatShell as an MCP (Model Context Protocol) server with `--mcp`. Exposes all tools via JSON-RPC over stdin/stdout for integration with other AI tools.
+Run NatShell as an MCP (Model Context Protocol) server with `--mcp` (requires `pip install natshell[mcp]`). Exposes all tools via JSON-RPC over stdin/stdout for integration with other AI tools.
 
 ### Skill System
 NatShell ships 10 built-in skills covering spreadsheets, PDFs, Word docs, coding, testing, git, system administration, data analysis, web research, and markdown documentation. The model automatically sees a short description of each skill and calls `skill(name=...)` to load full instructions on demand.
