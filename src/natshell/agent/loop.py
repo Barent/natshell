@@ -8,13 +8,16 @@ import logging
 import re
 import shlex
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from natshell.agent.context import SystemContext
 from natshell.agent.context_manager import ContextManager
+from natshell.agent.events import AgentEvent, EventType
+from natshell.agent.intent import is_analysis_request, is_plan_request
+from natshell.agent.repetition_guard import RepetitionGuard
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
@@ -35,55 +38,20 @@ from natshell.tools.registry import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
 
-_PLAN_REQUEST_RE = re.compile(
-    r"\b(?:create|write|make|draft|update|build)\b.{0,30}\bplan\b"
-    r"|\bplan\b.{0,30}\b(?:for|how|what)\b"
-    r"|\bplan\s+to\s+(?:update|fix|refactor|migrate|implement|add|remove|change|deploy|install|configure|set\s*up|build|create|upgrade)\b",
-    re.IGNORECASE,
+# Intent heuristics now live in natshell.agent.intent.  Re-keep the module-level
+# names as thin aliases so existing imports (tests, callers) keep working.
+from natshell.agent.intent import (  # noqa: E402
+    _ANALYSIS_REQUEST_RE as _ANALYSIS_REQUEST_RE,
+    _PLAN_REQUEST_RE as _PLAN_REQUEST_RE,
+    is_analysis_request as _is_analysis_request,
+    is_plan_request as _is_plan_request,
 )
 
 
-def _is_plan_request(text: str) -> bool:
-    """Detect if the user is asking the model to create/write a plan."""
-    return bool(_PLAN_REQUEST_RE.search(text))
-
-
-_ANALYSIS_REQUEST_RE = re.compile(
-    r"\b(?:review|audit|analyze|examine|inspect)\b.{0,40}\b(?:code|codebase|security|module|implementation|PR|pull\s*request|diff|repository|repo)\b"
-    r"|\b(?:code|security|codebase)\s+(?:review|audit|analysis)\b",
-    re.IGNORECASE,
-)
-
-
-def _is_analysis_request(text: str) -> bool:
-    """Detect if the user is asking for a code review, audit, or analysis."""
-    return bool(_ANALYSIS_REQUEST_RE.search(text))
-
-
-class EventType(Enum):
-    THINKING = "thinking"
-    PLANNING = "planning"  # Model's text before tool calls
-    EXECUTING = "executing"  # About to run a tool
-    TOOL_RESULT = "tool_result"  # Result from a tool
-    CONFIRM_NEEDED = "confirm_needed"  # Awaiting user confirmation
-    BLOCKED = "blocked"  # Command was blocked
-    RESPONSE = "response"  # Final text response from model
-    ERROR = "error"  # Something went wrong
-    RUN_STATS = "run_stats"  # Cumulative stats for the full agent run
-    QUEUED_MESSAGE = "queued_message"  # User message injected mid-run
-    PLAN_STEP = "plan_step"  # Plan step divider (start/update)
-    PLAN_COMPLETE = "plan_complete"  # Entire plan finished
-
-
-@dataclass
-class AgentEvent:
-    """An event yielded by the agent loop for the TUI to render."""
-
-    type: EventType
-    data: Any = None
-    tool_call: ToolCall | None = None
-    tool_result: ToolResult | None = None
-    metrics: dict[str, Any] | None = None
+# ─────────────────────────────────────────────────────────────────────────────
+# AgentEvent / EventType live in natshell.agent.events (imported above); they
+# are re-exported here for backward-compatible imports.
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _build_metrics(result: CompletionResult, elapsed_ms: int) -> dict[str, Any]:
@@ -149,22 +117,9 @@ class AgentLoop:
         self.messages: list[dict[str, Any]] = []
         self._context_manager: ContextManager | None = None
         self._max_tokens: int = config.max_tokens
-        # Edit failure tracking
-        self._edit_failures: int = 0
-        self._edit_successes: int = 0
-        self._completion_warning_sent: bool = False
-        # Repetitive read detection
-        self._read_counts: dict[str, int] = {}
-        # Repetitive URL fetch detection (cumulative, not just consecutive)
-        self._fetch_url_counts: dict[str, int] = {}
-        # Command-family repetition detection (e.g., 10+ `du` calls)
-        self._cmd_family_counts: dict[str, int] = {}
-        # Duplicate tool call detection
-        self._last_tool_key: str = ""
-        self._consecutive_dupes: int = 0
-        # Similar-command detection (strips flags/pipes to find semantic dupes)
-        self._similar_cmd_key: str = ""
-        self._consecutive_similar: int = 0
+        # Repetition / edit-failure guards (state + detectors live in
+        # natshell.agent.repetition_guard)
+        self._repetition_guard = RepetitionGuard()
         # Context overflow recovery guard
         self._context_recovery_attempted: bool = False
         # Message queue for mid-run user input
@@ -323,22 +278,6 @@ class AgentLoop:
         """Canonicalize a path for tracking (mirrors file_tracker)."""
         return str(Path(path).expanduser().resolve())
 
-    @staticmethod
-    def _normalize_shell_cmd(cmd: str) -> str:
-        """Strip flags and pipes to detect semantically duplicate commands.
-
-        ``grep -o "Check" file | head -1`` and ``grep "Check" file``
-        both normalise to ``grep Check file``, so the similar-command
-        detector can spot the pattern even when the model tweaks flags.
-        """
-        base = cmd.split("|")[0].strip()
-        try:
-            tokens = shlex.split(base)
-        except ValueError:
-            tokens = base.split()
-        core = [t for t in tokens if not t.startswith("-")]
-        return " ".join(core)
-
     def _setup_context_manager(self) -> None:
         """Create a ContextManager sized to the current engine's context window."""
         try:
@@ -485,17 +424,9 @@ class AgentLoop:
         else:
             effective_filter = tool_filter
 
-        # Reset edit failure tracking for this run
-        self._edit_failures = 0
-        self._edit_successes = 0
-        self._completion_warning_sent = False
-        self._read_counts = {}
-        self._fetch_url_counts = {}
-        self._cmd_family_counts = {}
-        self._last_tool_key = ""
-        self._consecutive_dupes = 0
-        self._similar_cmd_key = ""
-        self._consecutive_similar = 0
+        # Reset repetition/edit-failure tracking for this run (lives in
+        # natshell.agent.repetition_guard — thresholds & state in one place)
+        self._repetition_guard.reset()
         self._context_recovery_attempted = False
 
         # Cumulative stats for this run
@@ -843,271 +774,85 @@ class AgentLoop:
                         len(tool_result.output or ""),
                     )
 
-                    # If sudo needs a password, prompt the user and retry
+
+                    # If sudo needs a password, prompt the user and retry.
+                    # (Event order + re-classification preserved via
+                    #  natshell.agent.sudo_retry — see that module.)
+                    from natshell.agent.sudo_retry import run as _sudo_retry_run
+
                     if (
                         tool_call.name == "execute_shell"
                         and password_callback
                         and _needs_sudo_password(tool_result)
                     ):
-                        password = await password_callback(tool_call)
-                        if password:
-                            from natshell.tools.execute_shell import (
-                                _has_sudo_invocation,
-                                set_sudo_password,
-                            )
-
-                            set_sudo_password(password)
-                            # If the command doesn't contain sudo at a command
-                            # position (e.g. "apt install" which internally
-                            # invokes sudo), prepend it so the password
-                            # injection in execute_shell kicks in.
-                            retry_args = dict(tool_call.arguments)
-                            cmd = retry_args.get("command", "")
-                            if cmd and not _has_sudo_invocation(cmd):
-                                retry_args["command"] = f"sudo {cmd}"
-                            # Re-classify the modified command — prepending
-                            # sudo may change the risk level.
-                            retry_risk = self.safety.classify_tool_call(
-                                tool_call.name, retry_args
-                            )
-                            if retry_risk == Risk.BLOCKED:
-                                yield AgentEvent(
-                                    type=EventType.BLOCKED, tool_call=tool_call
-                                )
+                        buffered: list[AgentEvent] = []
+                        outcome = await _sudo_retry_run(
+                            tool_call,
+                            tools=self.tools,
+                            safety=self.safety,
+                            password_callback=password_callback,
+                            confirm_callback=confirm_callback,
+                            on_event=buffered.append,
+                        )
+                        for ev in buffered:
+                            yield ev
+                        if outcome.status == "retried":
+                            tool_result = outcome.tool_result
+                        else:
+                            # blocked / declined_password / declined_confirm
+                            if outcome.status == "blocked":
                                 self._append_tool_exchange(
                                     tool_call,
                                     "BLOCKED: The retried command with sudo was "
                                     "blocked by the safety classifier.",
                                 )
-                                continue
-                            if retry_risk == Risk.CONFIRM and confirm_callback:
-                                yield AgentEvent(
-                                    type=EventType.CONFIRM_NEEDED,
-                                    tool_call=tool_call,
+                            elif outcome.status == "declined_confirm":
+                                self._append_tool_exchange(
+                                    tool_call,
+                                    "DECLINED: The user declined the retried "
+                                    "command with sudo.",
                                 )
-                                confirmed = await confirm_callback(tool_call)
-                                if not confirmed:
-                                    self._append_tool_exchange(
-                                        tool_call,
-                                        "DECLINED: The user declined the retried "
-                                        "command with sudo.",
-                                    )
-                                    continue
-                            yield AgentEvent(type=EventType.THINKING)
-                            tool_result = await self.tools.execute(
-                                tool_call.name, retry_args
-                            )
+                            elif outcome.status == "declined_password":
+                                self._append_tool_exchange(
+                                    tool_call,
+                                    "DECLINED: The user cancelled the sudo "
+                                    "password prompt.",
+                                )
+                            continue
 
-                    # Track edit_file/write_file results
-                    if tool_call.name == "edit_file":
-                        if tool_result.exit_code != 0:
-                            self._edit_failures += 1
-                        else:
-                            self._edit_successes += 1
-                    elif tool_call.name == "write_file" and tool_result.exit_code == 0:
-                        self._edit_successes += 1
+                    # Record the (possibly retried) result + ask the guard
+                    # whether it should warn the model.  The guard also owns
+                    # the edit-succeed/fail bookkeeping and the read-count
+                    # reset, in the same order the inline version had.
+                    self._repetition_guard.register_outcome(
+                        tool_call.name, tool_result.exit_code
+                    )
 
+                    # Yield the tool result event.  (This matches the
+                    # original order: TOOL_RESULT fires *before* the guard
+                    # checks so the TUI sees the raw result either way.)
                     yield AgentEvent(
                         type=EventType.TOOL_RESULT,
                         tool_call=tool_call,
                         tool_result=tool_result,
                     )
 
-                    # Build result content with warnings
-                    result_content = tool_result.to_message_content()
+                    # Observations (repetition warnings + stop signal).
+                    # NOTE: we must skip the register_outcome path inside
+                    # .observe() here — already done above — otherwise the
+                    # counters would double-count.
+                    observation = self._repetition_guard.observe(
+                        name=tool_call.name,
+                        arguments=tool_call.arguments,
+                        exit_code=tool_result.exit_code,
+                        record=False,
+                    )
+                    result_content = (
+                        tool_result.to_message_content() + observation.suffix
+                    )
 
-                    # Duplicate tool call detection — catch infinite retry loops
-                    tool_key = f"{tool_call.name}:{json.dumps(tool_call.arguments, sort_keys=True)}"
-                    if tool_key == self._last_tool_key:
-                        self._consecutive_dupes += 1
-                    else:
-                        self._last_tool_key = tool_key
-                        self._consecutive_dupes = 1
-
-                    _DUPE_WARN_THRESHOLD = 3
-                    _DUPE_ABORT_THRESHOLD = 5
-                    if self._consecutive_dupes >= _DUPE_ABORT_THRESHOLD:
-                        result_content += (
-                            f"\n\n\u26a0 CRITICAL: You have called {tool_call.name} "
-                            f"with identical arguments {self._consecutive_dupes} "
-                            "times in a row. The output will not change. "
-                            "STOP making this tool call. Complete the task using "
-                            "your existing knowledge and information already gathered."
-                        )
-                        self._append_tool_exchange(tool_call, result_content)
-                        # Reset counter so the LLM can use other tools freely
-                        self._last_tool_key = ""
-                        self._consecutive_dupes = 0
-                        # Break out of the tool-dispatch inner loop.
-                        # The outer step loop will call the LLM again — it will see
-                        # the warning in history and produce a final response.
-                        break
-                    elif self._consecutive_dupes >= _DUPE_WARN_THRESHOLD:
-                        result_content += (
-                            f"\n\n\u26a0 You have called {tool_call.name} with "
-                            f"identical arguments {self._consecutive_dupes} times "
-                            "in a row and gotten the same result each time. "
-                            "Try a DIFFERENT approach — change the arguments, "
-                            "use a different tool, or fix the underlying issue "
-                            "before retrying."
-                        )
-
-                    # Repetitive read detection
-                    if tool_call.name == "read_file":
-                        read_path = tool_call.arguments.get("path", "")
-                        if read_path:
-                            resolved = self._resolve_path(read_path)
-                            self._read_counts[resolved] = self._read_counts.get(resolved, 0) + 1
-                            count = self._read_counts[resolved]
-                            if count >= 3:
-                                result_content += (
-                                    f"\n\n\u26a0 You have read this file {count} times "
-                                    "without modifying it. Stop re-reading and use the "
-                                    "information you already have to make changes. "
-                                    "If edit_file is failing, use write_file instead."
-                                )
-
-                    # Repetitive URL fetch detection
-                    # (cumulative across all calls, not just consecutive)
-                    if tool_call.name == "fetch_url":
-                        url = tool_call.arguments.get("url", "")
-                        if url:
-                            self._fetch_url_counts[url] = (
-                                self._fetch_url_counts.get(url, 0) + 1
-                            )
-                            count = self._fetch_url_counts[url]
-                            if count == 2:
-                                result_content += (
-                                    f"\n\n\u26a0 You have fetched this URL {count} times. "
-                                    "The content will not change. Do NOT fetch it again — "
-                                    "use the information already in your context."
-                                )
-                            elif count >= 3:
-                                result_content += (
-                                    f"\n\n\u26a0 CRITICAL: You have fetched this URL"
-                                    f" {count} times. "
-                                    "STOP fetching it. The result is already in your"
-                                    " conversation history. Use your existing knowledge"
-                                    " to complete the task."
-                                )
-
-                    # Command-family repetition detection for execute_shell
-                    if tool_call.name == "execute_shell":
-                        cmd = tool_call.arguments.get("command", "")
-                        # Extract the first token as the command family
-                        family = cmd.strip().split()[0] if cmd.strip() else ""
-                        # Normalise common prefixes (sudo X → X)
-                        if family == "sudo" and len(cmd.strip().split()) > 1:
-                            family = cmd.strip().split()[1]
-                        if family:
-                            self._cmd_family_counts[family] = (
-                                self._cmd_family_counts.get(family, 0) + 1
-                            )
-                            fam_count = self._cmd_family_counts[family]
-                            _FAM_WARN = 4
-                            _FAM_CRITICAL = 7
-                            _FAM_HARD_STOP = 12
-                            if fam_count >= _FAM_HARD_STOP:
-                                result_content += (
-                                    f"\n\n\u26a0 HARD STOP: You have run"
-                                    f" `{family}` {fam_count} times."
-                                    " You MUST use a completely"
-                                    " different approach or tool."
-                                    " Further `{family}` calls"
-                                    " are blocked."
-                                )
-                                self._append_tool_exchange(
-                                    tool_call, result_content,
-                                )
-                                break
-                            elif fam_count >= _FAM_CRITICAL:
-                                result_content += (
-                                    f"\n\n\u26a0 CRITICAL: You have run"
-                                    f" `{family}` {fam_count} times in"
-                                    " this session. STOP running more"
-                                    f" `{family}` commands. Synthesize"
-                                    " your findings from the output"
-                                    " already gathered and give the"
-                                    " user a complete answer NOW."
-                                )
-                            elif fam_count >= _FAM_WARN:
-                                result_content += (
-                                    f"\n\n\u26a0 You have run `{family}`"
-                                    f" {fam_count} times. Consolidate"
-                                    " your findings and answer with"
-                                    " what you have. Avoid further"
-                                    f" `{family}` calls unless"
-                                    " absolutely necessary."
-                                )
-
-                        # Similar-command detection — catches near-duplicate
-                        # commands that differ only in flags or pipes
-                        # (e.g. grep -o vs grep -n on the same pattern/file)
-                        norm_key = self._normalize_shell_cmd(cmd)
-                        if norm_key and len(norm_key.split()) > 1:
-                            if norm_key == self._similar_cmd_key:
-                                self._consecutive_similar += 1
-                            else:
-                                self._similar_cmd_key = norm_key
-                                self._consecutive_similar = 1
-
-                            _SIM_WARN = 3
-                            _SIM_ABORT = 5
-                            if self._consecutive_similar >= _SIM_ABORT:
-                                result_content += (
-                                    f"\n\n\u26a0 CRITICAL: You have run"
-                                    f" {self._consecutive_similar}"
-                                    " near-identical commands in a"
-                                    " row (same target, different"
-                                    " flags). The result will not"
-                                    " change. STOP and try a"
-                                    " completely different approach."
-                                )
-                                self._append_tool_exchange(
-                                    tool_call, result_content,
-                                )
-                                self._similar_cmd_key = ""
-                                self._consecutive_similar = 0
-                                break
-                            elif (
-                                self._consecutive_similar >= _SIM_WARN
-                            ):
-                                result_content += (
-                                    f"\n\n\u26a0 You have run"
-                                    f" {self._consecutive_similar}"
-                                    " near-identical commands."
-                                    " Changing flags or adding"
-                                    " pipes will not produce"
-                                    " different results. Try a"
-                                    " different approach."
-                                )
-
-                    # Reset read count when write/edit succeeds on a path
-                    if tool_call.name in ("edit_file", "write_file") and tool_result.exit_code == 0:
-                        write_path = tool_call.arguments.get("path", "")
-                        if write_path:
-                            resolved = self._resolve_path(write_path)
-                            self._read_counts.pop(resolved, None)
-
-                    # Escalating warnings on repeated edit failures
-                    if (
-                        tool_call.name == "edit_file"
-                        and tool_result.exit_code != 0
-                    ):
-                        if self._edit_failures >= 3:
-                            result_content += (
-                                "\n\n\u26a0 REPEATED EDIT FAILURES (3+). "
-                                "STOP using edit_file for this file. "
-                                "Use write_file to rewrite the entire file instead."
-                            )
-                        elif self._edit_failures >= 2:
-                            result_content += (
-                                "\n\n\u26a0 Multiple edit failures. Try: "
-                                "(1) use the closest match shown above as your old_text, or "
-                                "(2) use write_file to rewrite the entire file instead."
-                            )
-
-                    # Step budget awareness
+                    # Step budget awareness (unchanged semantics; kept in the
+                    # loop so it can see max_steps from the current config.)
                     pct_used = steps_used / max_steps
                     if pct_used >= 0.90:
                         remaining = max_steps - steps_used
@@ -1130,21 +875,24 @@ class AgentLoop:
                             " \u2014 plan your approach before diving in]"
                         )
 
-                    # Append exchange to conversation history
+                    # Append exchange to conversation history.  A ``stop``
+                    # observation (duplicate-abort, command-family hard stop,
+                    # similar-cmd abort) ends the tool-dispatch inner loop
+                    # the same way the inline version did with an explicit
+                    # ``break``.
                     self._append_tool_exchange(tool_call, result_content)
+                    if observation.stop:
+                        break
 
                 # Continue the loop — model will see tool results and decide next step
                 continue
 
             # Case 2: Model responded with text only (task complete or needs info)
             if result.content:
-                # Completion guard: warn if all edits failed
-                if (
-                    self._edit_failures > 0
-                    and self._edit_successes == 0
-                    and not self._completion_warning_sent
-                ):
-                    self._completion_warning_sent = True
+                # Completion guard: warn if all edits failed (state now lives
+                # in the repetition guard)
+                if self._repetition_guard.completion_guard_due:
+                    self._repetition_guard.mark_completion_guard_sent()
                     self.messages.append(
                         {"role": "assistant", "content": result.content}
                     )
@@ -1238,54 +986,17 @@ class AgentLoop:
         await self.swap_engine(engine)
         return True
 
-    # Number of most-recent messages to keep uncompressed (3 tool exchanges)
-    _COMPRESS_PRESERVE_RECENT = 6
-
     def _compress_old_messages(self) -> None:
         """Compress old tool exchanges to save context tokens.
 
-        Replaces full file content in write_file arguments and truncates
-        long tool results for messages older than the last few exchanges.
-        Safe because the model has already processed these results.
+        Delegates to :meth:`natshell.agent.context_manager.ContextManager.
+        compress_artifacts`, which rewrites the most expensive bytes
+        (write_file contents, long tool results) in place for the older
+        half of the conversation.  Recent messages are left untouched.
         """
-        if len(self.messages) <= self._COMPRESS_PRESERVE_RECENT + 1:
+        if self._context_manager is None:
             return
-
-        cutoff = len(self.messages) - self._COMPRESS_PRESERVE_RECENT
-
-        for i in range(1, cutoff):  # skip system prompt
-            msg = self.messages[i]
-
-            # Compress write_file arguments (elide full file content)
-            if msg.get("tool_calls"):
-                for tc in msg.get("tool_calls", []):
-                    func = tc.get("function", {})
-                    name = func.get("name", "")
-                    args_str = func.get("arguments", "")
-
-                    if name == "write_file" and len(args_str) > 300:
-                        try:
-                            args = json.loads(args_str)
-                            content = args.get("content", "")
-                            if len(content) > 100:
-                                args["content"] = f"[{len(content)} chars elided]"
-                                func["arguments"] = json.dumps(args)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-
-            # Compress long tool results
-            if msg.get("role") == "tool":
-                content = msg.get("content", "")
-                if len(content) > 800:
-                    lines = content.split("\n")
-                    if len(lines) > 8:
-                        head = "\n".join(lines[:4])
-                        tail = "\n".join(lines[-3:])
-                        msg["content"] = (
-                            f"{head}\n"
-                            f"... [{len(lines) - 7} lines elided] ...\n"
-                            f"{tail}"
-                        )
+        self._context_manager.compress_artifacts(self.messages)
 
     def _append_tool_exchange(self, tool_call: ToolCall, result_content: str) -> None:
         """Append a tool call + result pair to the message history."""
@@ -1331,13 +1042,7 @@ class AgentLoop:
         else:
             self.messages = []
         reset_tracker()
-        self._read_counts = {}
-        self._fetch_url_counts = {}
-        self._cmd_family_counts = {}
-        self._last_tool_key = ""
-        self._consecutive_dupes = 0
-        self._similar_cmd_key = ""
-        self._consecutive_similar = 0
+        self._repetition_guard.reset()
         # Drain any pending queued messages
         while not self._message_queue.empty():
             try:

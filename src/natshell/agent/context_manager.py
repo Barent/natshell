@@ -268,3 +268,77 @@ class ContextManager:
         if len(summary) > 800:
             summary = summary[:800] + "..."
         return summary
+
+    # ------------------------------------------------------------------
+    # Artifact elision (cheap in-place compression, no summarizer)
+    # ------------------------------------------------------------------
+
+    #: Most-recent non-system messages to leave untouched by
+    #: :meth:`compress_artifacts`. Mirrors the "3 tool exchanges" intuition
+    #: that used to live in ``agent.loop._compress_old_messages``.
+    COMPRESS_PRESERVE_RECENT = 6
+
+    def compress_artifacts(
+        self, messages: list[dict[str, Any]]
+    ) -> bool:
+        """Elide big write_file contents and truncate long tool results
+        for the *older* half of the conversation.
+
+        Unlike :meth:`trim_messages`, this does **not** drop messages or
+        insert a summary — it just rewrites the most expensive bytes in
+        place.  Safe (and cheap) to run frequently because the model has
+        already processed the affected messages and the elided content is
+        still available if the model re-reads the file.
+
+        Returns True if any message was modified, False otherwise.
+        """
+        import json as _json
+
+        if len(messages) <= self.COMPRESS_PRESERVE_RECENT + 1:
+            return False
+
+        cutoff = len(messages) - self.COMPRESS_PRESERVE_RECENT
+        changed = False
+
+        for i in range(1, cutoff):  # skip system prompt
+            msg = messages[i]
+
+            # Compress write_file arguments (elide full file content)
+            if msg.get("tool_calls"):
+                new_tool_calls = []
+                modified_in_msg = False
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
+                    name = func.get("name", "")
+                    args_str = func.get("arguments", "")
+                    if name == "write_file" and len(args_str) > 300:
+                        try:
+                            args = _json.loads(args_str)
+                            content = args.get("content", "")
+                            if len(content) > 100:
+                                args["content"] = f"[{len(content)} chars elided]"
+                                func["arguments"] = _json.dumps(args)
+                                modified_in_msg = True
+                        except (_json.JSONDecodeError, TypeError):
+                            pass
+                    new_tool_calls.append(tc)
+                if modified_in_msg:
+                    msg["tool_calls"] = new_tool_calls
+                    changed = True
+
+            # Compress long tool results
+            if msg.get("role") == "tool":
+                content = msg.get("content", "")
+                if len(content) > 800:
+                    lines = content.split("\n")
+                    if len(lines) > 8:
+                        head = "\n".join(lines[:4])
+                        tail = "\n".join(lines[-3:])
+                        msg["content"] = (
+                            f"{head}\n"
+                            f"... [{len(lines) - 7} lines elided] ...\n"
+                            f"{tail}"
+                        )
+                        changed = True
+
+        return changed

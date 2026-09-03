@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -442,6 +442,21 @@ class NatShellApp(App):
 
         conversation.scroll_end()
 
+    # ─── Shared agent callbacks ─────────────────────────────────────────
+    # Confirm and sudo-password prompts are identical across run_agent,
+    # run_plan_generation and run_plan; they live here once.
+
+    async def _confirm_callback(self, tool_call: ToolCall) -> bool:
+        return await self.push_screen_wait(ConfirmScreen(tool_call))
+
+    async def _password_callback(self, tool_call: ToolCall) -> str | None:
+        command = tool_call.arguments.get("command", "")
+        return await self.push_screen_wait(SudoPasswordScreen(command))
+
+    def _gated_confirm_callback(self) -> Callable[[ToolCall], Awaitable[bool]] | None:
+        """Confirm callback, or None when permissions are skipped."""
+        return None if self._skip_permissions else self._confirm_callback
+
     @work(exclusive=True, thread=False)
     async def run_agent(self, user_text: str) -> None:
         """Run the agent loop in a background worker."""
@@ -449,14 +464,8 @@ class NatShellApp(App):
         thinking_ref: list[ThinkingIndicator | None] = [None]
         elapsed_ref: list[int] = [0]
 
-        async def confirm_callback(tool_call: ToolCall) -> bool:
-            return await self.push_screen_wait(ConfirmScreen(tool_call))
-
-        async def password_callback(tool_call: ToolCall) -> str | None:
-            command = tool_call.arguments.get("command", "")
-            return await self.push_screen_wait(SudoPasswordScreen(command))
-
-        confirm_cb = None if self._skip_permissions else confirm_callback
+        confirm_cb = self._gated_confirm_callback()
+        password_callback = self._password_callback
 
         try:
             async for event in self.agent.handle_user_message(
@@ -645,14 +654,8 @@ class NatShellApp(App):
         elapsed_ref: list[int] = [0]
         self._busy = True
 
-        async def confirm_callback(tool_call: ToolCall) -> bool:
-            return await self.push_screen_wait(ConfirmScreen(tool_call))
-
-        async def password_callback(tool_call: ToolCall) -> str | None:
-            command = tool_call.arguments.get("command", "")
-            return await self.push_screen_wait(SudoPasswordScreen(command))
-
-        confirm_cb = None if self._skip_permissions else confirm_callback
+        confirm_cb = self._gated_confirm_callback()
+        password_callback = self._password_callback
 
         # Fresh context — plan generation is self-contained
         self.agent.clear_history()
@@ -775,14 +778,8 @@ class NatShellApp(App):
         )
         conversation.scroll_end()
 
-        async def confirm_callback(tool_call: ToolCall) -> bool:
-            return await self.push_screen_wait(ConfirmScreen(tool_call))
-
-        async def password_callback(tool_call: ToolCall) -> str | None:
-            command = tool_call.arguments.get("command", "")
-            return await self.push_screen_wait(SudoPasswordScreen(command))
-
-        confirm_cb = None if self._skip_permissions else confirm_callback
+        confirm_cb = self._gated_confirm_callback()
+        password_callback = self._password_callback
 
         completed_summaries: list[str] = []
         completed_files: list[str] = []
