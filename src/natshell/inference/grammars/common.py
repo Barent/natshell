@@ -66,6 +66,26 @@ def new_tool_call_id() -> str:
     return str(uuid.uuid4())[:9]
 
 
+def is_degenerate_output(text: str) -> bool:
+    """Detect degenerate repetitive output from local models.
+
+    Returns True when the output is dominated by a single repeated
+    character, which indicates context exhaustion or model collapse.
+    Only triggers on outputs longer than 100 characters to avoid
+    false positives on short valid responses.
+    """
+    if len(text) < 100:
+        return False
+    non_ws = text.replace(" ", "").replace("\n", "").replace("\t", "")
+    if not non_ws:
+        return False
+    from collections import Counter
+
+    counts = Counter(non_ws)
+    _char, top_count = counts.most_common(1)[0]
+    return top_count / len(non_ws) > 0.5
+
+
 def parse_structured_tool_calls(
     structured: list[Any] | None,
 ) -> list[ToolCall]:
@@ -366,7 +386,7 @@ class Grammar:
         content: str,
         *,
         structured: list[Any] | None = None,
-        family_strip: list[re.Pattern] | tuple[re.Pattern, ...] = (),
+        family_strip=None,
     ) -> tuple[list[ToolCall], str, bool]:
         """Run the full parse pipeline and return ``(tool_calls, content, fired)``.
 
@@ -374,7 +394,18 @@ class Grammar:
         fired, so the caller knows to scrub the recovered JSON blob from the
         prose.  ``content`` is the cleaned prose (with think blocks and every
         family's markers stripped).
+
+        When ``family_strip`` is None (the default), the union of *all*
+        families' marker regexes is applied — the original local.py stripped
+        that union from every response regardless of family, and this
+        preserves that behaviour exactly.
         """
+        if family_strip is None:
+            # Lazy import: grammars/__init__ imports the family modules, which
+            # import common — an eager import here would be circular.
+            from natshell.inference.grammars import ALL_FAMILY_STRIP
+
+            family_strip = ALL_FAMILY_STRIP
         tool_calls = parse_structured_tool_calls(structured)
         if not tool_calls:
             tool_calls = self.parse_native(content)
@@ -382,7 +413,7 @@ class Grammar:
         if not tool_calls:
             tool_calls, fired = self.recover(content)
         content = strip_prose_markers(
-            content, family_regexes=list(family_strip)
+            content, family_regexes=tuple(family_strip)
         )
         if fired:
             content = self.scrub_recovered(content)
