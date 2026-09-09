@@ -12,21 +12,26 @@ from typing import Any, AsyncIterator
 from natshell.agent.context import SystemContext
 from natshell.agent.context_manager import ContextManager
 from natshell.agent.events import AgentEvent, EventType
-from natshell.agent.intent import is_analysis_request, is_plan_request
 from natshell.agent.recovery import RecoveryCoordinator, RecoveryOutcome
 from natshell.agent.repetition_guard import RepetitionGuard
 from natshell.agent.step_metrics import (
     RunStats,
     StepControl,
+)
+from natshell.agent.step_metrics import (
     build_metrics as _build_metrics,
+)
+from natshell.agent.step_metrics import (
     handle_degenerate_output as _handle_degenerate_output,
+)
+from natshell.agent.step_metrics import (
     handle_token_limit as _handle_token_limit,
 )
-from natshell.agent.tool_dispatch import dispatch_tool_call
 from natshell.agent.system_prompt import build_system_prompt
+from natshell.agent.tool_dispatch import dispatch_tool_call
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
-from natshell.safety.classifier import Risk, SafetyClassifier
+from natshell.safety.classifier import SafetyClassifier
 from natshell.scaling import (
     MAX_OUTPUT_CHARS_TABLE,
     MAX_STEPS_TABLE,
@@ -38,7 +43,7 @@ from natshell.tools import execute_shell as _exec_shell_mod
 from natshell.tools import read_file as _read_file_mod
 from natshell.tools.file_tracker import reset_tracker
 from natshell.tools.limits import ToolLimits
-from natshell.tools.registry import ToolRegistry, ToolResult
+from natshell.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +51,16 @@ logger = logging.getLogger(__name__)
 # names as thin aliases so existing imports (tests, callers) keep working.
 from natshell.agent.intent import (  # noqa: E402
     _ANALYSIS_REQUEST_RE as _ANALYSIS_REQUEST_RE,
+)
+from natshell.agent.intent import (  # noqa: E402
     _PLAN_REQUEST_RE as _PLAN_REQUEST_RE,
+)
+from natshell.agent.intent import (  # noqa: E402
     is_analysis_request as _is_analysis_request,
+)
+from natshell.agent.intent import (  # noqa: E402
     is_plan_request as _is_plan_request,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AgentEvent / EventType live in natshell.agent.events (imported above); they

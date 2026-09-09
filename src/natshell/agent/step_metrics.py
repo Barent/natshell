@@ -20,7 +20,6 @@ loop used to inline now live in one place:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -35,7 +34,6 @@ from natshell.inference.grammars.common import (  # noqa: E402
     THINK_RE,
     THINK_UNCLOSED_RE,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Metrics / stats builders (moved verbatim from loop.py, R1-7)

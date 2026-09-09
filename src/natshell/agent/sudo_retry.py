@@ -27,7 +27,7 @@ from natshell.tools.execute_shell import (
     needs_sudo_password,
     set_sudo_password,
 )
-from natshell.tools.registry import ToolResult, ToolRegistry
+from natshell.tools.registry import ToolRegistry, ToolResult
 
 
 @dataclass

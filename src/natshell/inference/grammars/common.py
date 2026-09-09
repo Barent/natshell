@@ -22,7 +22,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from natshell.inference.engine import ToolCall
 

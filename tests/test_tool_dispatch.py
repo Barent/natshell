@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from natshell.agent.events import EventType
 from natshell.agent.repetition_guard import RepetitionGuard
 from natshell.agent.tool_dispatch import (
@@ -23,7 +21,7 @@ from natshell.agent.tool_dispatch import (
 from natshell.config import SafetyConfig
 from natshell.inference.engine import ToolCall
 from natshell.safety.classifier import SafetyClassifier
-from natshell.tools.registry import ToolRegistry, ToolResult
+from natshell.tools.registry import ToolResult
 
 
 class FakeRegistry:

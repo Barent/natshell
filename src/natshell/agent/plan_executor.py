@@ -8,7 +8,6 @@ re-exported here so every existing import path keeps working.
 from __future__ import annotations
 
 from natshell.agent.plan import Plan
-from natshell.scaling import PLAN_MAX_STEPS_TABLE, scale_for_context
 
 # Re-exported from natshell.agent.plan_prompts (moved in R1-8) so the
 # historical import paths (app.py, headless.py, tests) keep working.
@@ -19,6 +18,7 @@ from natshell.agent.plan_prompts import (  # noqa: E402
     _build_verify_fix_prompt,
     _shallow_tree,
 )
+from natshell.scaling import PLAN_MAX_STEPS_TABLE, scale_for_context
 
 __all__ = [
     "VERIFY_FIX_BUDGET",

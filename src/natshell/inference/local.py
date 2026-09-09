@@ -19,27 +19,24 @@ import re
 from pathlib import Path
 from typing import Any
 
-from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
+from natshell.inference.engine import CompletionResult, EngineInfo
+
+# ---------------------------------------------------------------------------
+# Per-family modules
+# ---------------------------------------------------------------------------
+from natshell.inference.grammars import gemma, mistral, qwen  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Family-agnostic helpers (shared pipeline primitives)
 # ---------------------------------------------------------------------------
 # Re-exported here so the historical import surface
 # (``from natshell.inference.local import _THINK_RE, ...``) keeps working.
-
 from natshell.inference.grammars.common import (  # noqa: E402
     CODE_FENCE_JSON_RE,
     THINK_RE,
     THINK_UNCLOSED_RE,
     is_degenerate_output,
-    new_tool_call_id,
 )
-
-# ---------------------------------------------------------------------------
-# Per-family modules
-# ---------------------------------------------------------------------------
-
-from natshell.inference.grammars import gemma, mistral, qwen  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Backwards-compatible aliases (historical names, now implemented in grammars/)

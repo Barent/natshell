@@ -29,7 +29,6 @@ from typing import Any
 from natshell.inference.engine import ToolCall
 from natshell.inference.grammars.common import (
     Grammar,
-    is_bare_tool_json,
     new_tool_call_id,
     normalize_messages_strict_alternation,
     try_bare_json_recovery,

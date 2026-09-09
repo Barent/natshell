@@ -10,7 +10,6 @@ pinned here at the module level; the loop-level integration is pinned by
 
 from __future__ import annotations
 
-import re
 import time
 
 import pytest
@@ -19,7 +18,6 @@ from natshell.agent.events import EventType
 from natshell.agent.step_metrics import (
     RunStats,
     StepControl,
-    StepOutcome,
     build_metrics,
     build_run_stats,
     handle_degenerate_output,
