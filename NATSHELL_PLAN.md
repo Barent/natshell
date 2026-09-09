@@ -34,7 +34,7 @@ the review's items are already done. The original two-part analysis lives in
 | R1-4 | app.py: dedupe 3× confirm/password into one factory | R1§4 | ✅ DONE | `_gated_confirm_callback()` + `_password_callback` factory used by run_agent/run_plan/run_plan_generation. |
 | R1-5 | intent.py / events.py / SudoRetry extraction | R1§5 | ✅ DONE | `agent/intent.py`, `agent/events.py`, `agent/sudo_retry.py` landed. |
 | R1-6 | Extraction of recovery state machine to `recovery.py` | R1§1.3 | ✅ DONE | `agent/recovery.py` owns the ordered ladder + per-run `attempted` latch; loop delegates via `RecoveryCoordinator.handle`; `_context_recovery_attempted` now a read-only property; 16 new tests in `tests/test_recovery.py`. Suite 1614 green. |
-| R1-7 | Slim `handle_user_message` to ~250 lines (orchestrator only) | R1§1 | 🛠 IN PROGRESS | 790→491→437→**390** lines. Done: `_inject_intent`, `_preflight_compaction`, `_apply_inference_feedback` (`0873256`); degenerate-output + length-truncation blocks + run stats → `agent/step_metrics.py` (`920ece4`; 22 new tests). Remaining: the tool-call dispatch loop (6 `continue`/`break` flow exits — the hard one) and optionally the completion-guard block in Case 2. Resume next tick. |
+| R1-7 | Slim `handle_user_message` to ~250 lines (orchestrator only) | R1§1 | ✅ DONE | `handle_user_message` 790 → **252 lines** (`0873256` → `920ece4` → `627d9fc`; loop.py file 1048 → 824 lines). Extracted: intent/pre-flight/feedback (method helpers), degenerate + length-truncation outcomes + run stats → `agent/step_metrics.py` (22 tests), tool-call dispatch lifecycle → `agent/tool_dispatch.py` (15 tests). Event order/side effects byte-identical throughout; the loop stays the sole owner of message mutation and flow (continue/return/break). |
 | R1-8 | `plan_executor.py`: split prompt-templates from pure helpers | R1§5 | ⏳ PENDING | `_build_step_prompt` instruction strings → greppable/testable data. |
 | — | Small: group `execute_shell` sudo helpers into one `SudoHandler` | R1§5 | ⏳ OPTIONAL | `_inject_sudo_dash_s`/`_has_sudo_invocation`/`needs_sudo_password`/`configure_limits`. |
 
@@ -56,6 +56,12 @@ push. **Verify the seam R1 created before building on it.**
 
 ## Changelog (newest first)
 
+- **2026-09-09** R1-7 DONE (`627d9fc`): tool-call dispatch lifecycle
+  (normalize → classify → confirm → execute → sudo retry → guard observe →
+  budget hint) extracted from `handle_user_message` into
+  `agent/tool_dispatch.py`; method is now **252 lines** (started at 790),
+  hitting the ~250-line orchestrator target; **15 new tests** in
+  `tests/test_tool_dispatch.py`. Suite **1651 green**.
 - **2026-09-09** R1-7 sub-step 2 (`920ece4`): degenerate-output +
   length-truncation outcome blocks and the per-run stat counters moved out of
   `handle_user_message` into `agent/step_metrics.py` (437→390 lines); event
