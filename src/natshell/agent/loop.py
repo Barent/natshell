@@ -17,6 +17,7 @@ from natshell.agent.context import SystemContext
 from natshell.agent.context_manager import ContextManager
 from natshell.agent.events import AgentEvent, EventType
 from natshell.agent.intent import is_analysis_request, is_plan_request
+from natshell.agent.recovery import RecoveryCoordinator, RecoveryOutcome
 from natshell.agent.repetition_guard import RepetitionGuard
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
@@ -120,8 +121,25 @@ class AgentLoop:
         # Repetition / edit-failure guards (state + detectors live in
         # natshell.agent.repetition_guard)
         self._repetition_guard = RepetitionGuard()
-        # Context overflow recovery guard
-        self._context_recovery_attempted: bool = False
+        # Context overflow recovery guard — the ordered ladder
+        # (overflow → compact/retry → connectivity → ping/compact → local
+        # fallback) lives in natshell.agent.recovery
+        from natshell.agent.fallback import load_fallback_engine
+
+        async def _load_local(config: Any) -> Any:
+            return await load_fallback_engine(config)
+
+        self._recovery = RecoveryCoordinator(
+            engine_ref=lambda: self.engine,
+            fallback_config=fallback_config,
+            compact=self.compact_history,
+            effective_max_tokens=self._effective_max_tokens,
+            context_reserve=config.context_reserve or 800,
+            messages_ref=lambda: self.messages,
+            load_fallback=_load_local,
+            swap_engine=self.swap_engine,
+            context_manager_ref=lambda: self._context_manager,
+        )
         # Message queue for mid-run user input
         self._message_queue: asyncio.Queue[str] = asyncio.Queue()
         # Context-window-based tool filter (set in _setup_context_manager)
@@ -427,7 +445,7 @@ class AgentLoop:
         # Reset repetition/edit-failure tracking for this run (lives in
         # natshell.agent.repetition_guard — thresholds & state in one place)
         self._repetition_guard.reset()
-        self._context_recovery_attempted = False
+        self._recovery.reset()
 
         # Cumulative stats for this run
         run_t0 = time.monotonic()
@@ -524,122 +542,14 @@ class AgentLoop:
                         )
             except Exception as e:
                 logger.exception("Inference error")
-                # Handle context overflow: compact and retry on same engine
-                from natshell.inference.remote import ContextOverflowError
-
-                if isinstance(e, ContextOverflowError):
-                    if self._context_recovery_attempted:
-                        yield AgentEvent(
-                            type=EventType.ERROR,
-                            data="Context window still full after compaction. "
-                            "Use /clear to reset the conversation.",
-                        )
-                        return
-                    stats = self.compact_history()
-                    if stats.get("compacted"):
-                        self._context_recovery_attempted = True
-                        yield AgentEvent(
-                            type=EventType.ERROR,
-                            data="Context window full — automatically compacted "
-                            "conversation. Retrying…",
-                        )
-                        continue  # retry this step with compacted context
-                    else:
-                        yield AgentEvent(
-                            type=EventType.ERROR,
-                            data="Context window full and conversation is too "
-                            "short to compact. Use /clear to reset.",
-                        )
-                        return
-
-                if self._can_fallback(e):
-                    # --- Phase 1: try compaction + retry if server is alive ---
-                    if (
-                        not self._context_recovery_attempted
-                        and len(self.messages) > 3
-                    ):
-                        from natshell.inference.ollama import ping_server
-
-                        server_alive = await ping_server(self.engine.base_url)
-                        if server_alive:
-                            stats = self.compact_history()
-                            if stats.get("compacted"):
-                                self._context_recovery_attempted = True
-                                reason = self._describe_remote_error(e)
-                                yield AgentEvent(
-                                    type=EventType.ERROR,
-                                    data=f"{reason} — compacted "
-                                    "conversation and retrying\u2026",
-                                )
-                                continue  # retry on same remote engine
-
-                    # --- Phase 2: fallback with preserved context ---
-                    # Compact if not already done, then save non-system messages
-                    if (
-                        not self._context_recovery_attempted
-                        and len(self.messages) > 3
-                    ):
-                        self.compact_history()
-                    preserved = (
-                        self.messages[1:] if len(self.messages) > 1 else []
-                    )
-
-                    fell_back = await self._try_local_fallback()
-                    if fell_back:
-                        # Inject preserved context if it fits in local budget
-                        context_restored = False
-                        if preserved:
-                            try:
-                                n_ctx = (
-                                    self.engine.engine_info().n_ctx or 4096
-                                )
-                                max_tok = self._effective_max_tokens(n_ctx)
-                                reserve = self.config.context_reserve or 800
-                                budget = n_ctx - max_tok - reserve
-                                if self._context_manager:
-                                    current = (
-                                        self._context_manager.estimate_tokens(
-                                            self.messages
-                                        )
-                                    )
-                                    needed = (
-                                        self._context_manager.estimate_tokens(
-                                            preserved
-                                        )
-                                    )
-                                    if current + needed < budget:
-                                        self.messages.extend(preserved)
-                                        context_restored = True
-                            except Exception:
-                                logger.debug(
-                                    "Could not restore context after fallback",
-                                    exc_info=True,
-                                )
-
-                        msg = (
-                            "Remote server unreachable."
-                            " Switched to local model."
-                        )
-                        if context_restored:
-                            msg += (
-                                " Previous conversation context preserved."
-                            )
-                        else:
-                            msg += " History cleared."
-                        # Warn if fallback is CPU-only
-                        try:
-                            from llama_cpp import llama_supports_gpu_offload
-
-                            if not llama_supports_gpu_offload():
-                                msg += (
-                                    " Note: local model is running on CPU"
-                                    " (llama-cpp-python has no GPU support)."
-                                )
-                        except ImportError:
-                            pass
-                        yield AgentEvent(type=EventType.ERROR, data=msg)
-                        return
-                yield AgentEvent(type=EventType.ERROR, data=f"Inference error: {e}")
+                # Context overflow / connectivity failure / raw errors are
+                # handled by the ordered recovery ladder in
+                # natshell.agent.recovery — see RecoveryCoordinator.handle.
+                outcome, banner_events = await self._recovery.handle(e)
+                for event in banner_events:
+                    yield event
+                if outcome is RecoveryOutcome.RETRY:
+                    continue  # retry this step (compacted context / same engine)
                 return
 
             # Handle degenerate output (repetitive garbage from local models)
@@ -970,21 +880,18 @@ class AgentLoop:
 
         return describe_remote_error(error)
 
+    @property
+    def _context_recovery_attempted(self) -> bool:
+        """Backward-compatible view of the recovery ladder's per-run latch."""
+        return self._recovery.attempted
+
     def _can_fallback(self, error: Exception) -> bool:
         """Check if we should attempt fallback to local model."""
-        from natshell.agent.fallback import can_fallback
-
-        return can_fallback(error, self.engine, self.fallback_config)
+        return self._recovery._can_fallback(error)
 
     async def _try_local_fallback(self) -> bool:
         """Attempt to load and swap to the local model. Returns True on success."""
-        from natshell.agent.fallback import load_fallback_engine
-
-        engine = await load_fallback_engine(self.fallback_config)
-        if engine is None:
-            return False
-        await self.swap_engine(engine)
-        return True
+        return await self._recovery._local_fallback()
 
     def _compress_old_messages(self) -> None:
         """Compress old tool exchanges to save context tokens.
