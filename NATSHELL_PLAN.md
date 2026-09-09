@@ -34,7 +34,7 @@ the review's items are already done. The original two-part analysis lives in
 | R1-4 | app.py: dedupe 3× confirm/password into one factory | R1§4 | ✅ DONE | `_gated_confirm_callback()` + `_password_callback` factory used by run_agent/run_plan/run_plan_generation. |
 | R1-5 | intent.py / events.py / SudoRetry extraction | R1§5 | ✅ DONE | `agent/intent.py`, `agent/events.py`, `agent/sudo_retry.py` landed. |
 | R1-6 | Extraction of recovery state machine to `recovery.py` | R1§1.3 | ✅ DONE | `agent/recovery.py` owns the ordered ladder + per-run `attempted` latch; loop delegates via `RecoveryCoordinator.handle`; `_context_recovery_attempted` now a read-only property; 16 new tests in `tests/test_recovery.py`. Suite 1614 green. |
-| R1-7 | Slim `handle_user_message` to ~250 lines (orchestrator only) | R1§1 | ⏳ PENDING | Largest residual. After R1-6 the method is a clean step loop. |
+| R1-7 | Slim `handle_user_message` to ~250 lines (orchestrator only) | R1§1 | 🛠 IN PROGRESS | 491→437 lines (`0873256`): extracted `_inject_intent`, `_preflight_compaction`, `_apply_inference_feedback`. Remaining candidates (each carries `continue`/`return` flow, harder): degenerate-output block, `length`-truncation block, the tool-call dispatch loop. Resume next tick. |
 | R1-8 | `plan_executor.py`: split prompt-templates from pure helpers | R1§5 | ⏳ PENDING | `_build_step_prompt` instruction strings → greppable/testable data. |
 | — | Small: group `execute_shell` sudo helpers into one `SudoHandler` | R1§5 | ⏳ OPTIONAL | `_inject_sudo_dash_s`/`_has_sudo_invocation`/`needs_sudo_password`/`configure_limits`. |
 
@@ -56,6 +56,10 @@ push. **Verify the seam R1 created before building on it.**
 
 ## Changelog (newest first)
 
+- **2026-09-08** R1-7 (first sub-step, `0873256`): extracted
+  `_inject_intent` / `_preflight_compaction` / `_apply_inference_feedback`
+  out of `handle_user_message` (491→437 lines); behaviour byte-identical,
+  covered by existing intent + proactive-compaction tests. Suite **1614 green**.
 - **2026-09-08** R1-6 DONE: `agent/recovery.py` — ordered recovery ladder +
   per-run latch extracted from `handle_user_message` (except block 130→11
   lines); `RecoveryCoordinator.handle` + injected collaborators; 16 new
