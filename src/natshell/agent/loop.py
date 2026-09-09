@@ -5,11 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
-import shlex
 import time
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -19,6 +15,13 @@ from natshell.agent.events import AgentEvent, EventType
 from natshell.agent.intent import is_analysis_request, is_plan_request
 from natshell.agent.recovery import RecoveryCoordinator, RecoveryOutcome
 from natshell.agent.repetition_guard import RepetitionGuard
+from natshell.agent.step_metrics import (
+    RunStats,
+    StepControl,
+    build_metrics as _build_metrics,
+    handle_degenerate_output as _handle_degenerate_output,
+    handle_token_limit as _handle_token_limit,
+)
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
@@ -53,41 +56,6 @@ from natshell.agent.intent import (  # noqa: E402
 # AgentEvent / EventType live in natshell.agent.events (imported above); they
 # are re-exported here for backward-compatible imports.
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-def _build_metrics(result: CompletionResult, elapsed_ms: int) -> dict[str, Any]:
-    """Build a metrics dict from inference result and timing."""
-    metrics: dict[str, Any] = {"response_time_ms": elapsed_ms}
-    if result.completion_tokens:
-        metrics["completion_tokens"] = result.completion_tokens
-        if elapsed_ms > 0:
-            metrics["tokens_per_sec"] = result.completion_tokens / (elapsed_ms / 1000)
-    if result.prompt_tokens:
-        metrics["prompt_tokens"] = result.prompt_tokens
-    return metrics
-
-
-def _build_run_stats(
-    steps: int,
-    total_wall_ms: int,
-    total_inference_ms: int,
-    total_prompt_tokens: int,
-    total_completion_tokens: int,
-) -> dict[str, Any]:
-    """Build cumulative stats for an entire agent run."""
-    stats: dict[str, Any] = {
-        "steps": steps,
-        "total_wall_ms": total_wall_ms,
-        "total_inference_ms": total_inference_ms,
-        "total_prompt_tokens": total_prompt_tokens,
-        "total_completion_tokens": total_completion_tokens,
-    }
-    total_tokens = total_prompt_tokens + total_completion_tokens
-    if total_tokens:
-        stats["total_tokens"] = total_tokens
-    if total_inference_ms > 0 and total_completion_tokens:
-        stats["avg_tokens_per_sec"] = total_completion_tokens / (total_inference_ms / 1000)
-    return stats
 
 
 class AgentLoop:
@@ -511,11 +479,9 @@ class AgentLoop:
         self._repetition_guard.reset()
         self._recovery.reset()
 
-        # Cumulative stats for this run
-        run_t0 = time.monotonic()
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
-        total_inference_ms = 0
+        # Cumulative stats for this run (RunStats lives in
+        # natshell.agent.step_metrics — thresholds & bookkeeping in one place)
+        stats = RunStats(t0=time.monotonic())
         steps_used = 0
 
         max_steps = getattr(self, "_max_steps", self.config.max_steps)
@@ -564,9 +530,7 @@ class AgentLoop:
                     max_tokens=self._max_tokens,
                 )
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
-                total_inference_ms += elapsed_ms
-                total_prompt_tokens += result.prompt_tokens or 0
-                total_completion_tokens += result.completion_tokens or 0
+                stats.accumulate(result, elapsed_ms)
 
                 # Calibrate budget + proactive compaction (may yield event)
                 event = self._apply_inference_feedback(result)
@@ -584,72 +548,42 @@ class AgentLoop:
                     continue  # retry this step (compacted context / same engine)
                 return
 
-            # Handle degenerate output (repetitive garbage from local models)
+            # Handle degenerate output (repetitive garbage from local models).
+            # Event text + retry/stop control live in
+            # natshell.agent.step_metrics (byte-identical to the old inline
+            # code; TestDegenerateAgentLoop pins both branches).
             if result.degenerate:
-                compact_stats = self.compact_history()
-                if compact_stats.get("compacted"):
-                    yield AgentEvent(
-                        type=EventType.ERROR,
-                        data=(
-                            "Model produced degenerate output "
-                            "(repeated characters). Automatically "
-                            "compacted conversation — retrying."
-                        ),
-                    )
-                    continue
-                yield AgentEvent(
-                    type=EventType.ERROR,
-                    data=(
-                        "Model produced degenerate output "
-                        "(repeated characters). The context window "
-                        "may be full. Try /clear to reset."
-                    ),
+                outcome = _handle_degenerate_output(
+                    result, compact_stats=self.compact_history()
                 )
+                for ev in outcome.events:
+                    yield ev
+                if outcome.control is StepControl.RETRY:
+                    continue
                 return
 
             # Handle truncated responses (thinking consumed all tokens)
             if result.finish_reason == "length" and not result.tool_calls:
-                raw = result.content or ""
-                # Check if content is only <think> residue or empty
-                # Strip both closed and unclosed <think> blocks
-                stripped = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
-                stripped = re.sub(
-                    r"<think>(?:(?!</think>).)*$", "", stripped, flags=re.DOTALL
-                ).strip()
-                if stripped:
-                    # Partial response — show it but warn the user
-                    self.messages.append({"role": "assistant", "content": stripped})
-                    yield AgentEvent(
-                        type=EventType.RESPONSE,
-                        data=stripped,
-                        metrics=_build_metrics(result, elapsed_ms),
+                # Strip the thinking residue, warn the user, and — when a
+                # partial answer survived — surface it.  Event text, the
+                # think-strip, and the RUN_STATS epilogue live in
+                # natshell.agent.step_metrics (byte-identical to the old
+                # inline code; TestTruncatedResponse pins all three branches).
+                # Message mutation (remembering the partial answer) stays
+                # in the loop.
+                outcome = _handle_token_limit(
+                    result,
+                    steps_used=steps_used,
+                    stats=stats,
+                    now=time.monotonic(),
+                )
+                if outcome.partial is not None:
+                    self.messages.append(
+                        {"role": "assistant", "content": outcome.partial}
                     )
-                    yield AgentEvent(
-                        type=EventType.ERROR,
-                        data="Response was truncated (hit token limit). "
-                        "The context window may be full. Try /clear to reset.",
-                    )
-                    if steps_used > 1:
-                        run_wall_ms = int((time.monotonic() - run_t0) * 1000)
-                        yield AgentEvent(
-                            type=EventType.RUN_STATS,
-                            metrics=_build_run_stats(
-                                steps_used,
-                                run_wall_ms,
-                                total_inference_ms,
-                                total_prompt_tokens,
-                                total_completion_tokens,
-                            ),
-                        )
-                    return
-                else:
-                    yield AgentEvent(
-                        type=EventType.ERROR,
-                        data="Response was truncated — the model used all"
-                        " available tokens without producing a complete"
-                        " response. Try a simpler request or /clear to reset.",
-                    )
-                    return
+                for ev in outcome.events:
+                    yield ev
+                return
 
             # Case 1: Model wants to call tools
             if result.tool_calls:
@@ -862,16 +796,9 @@ class AgentLoop:
                     metrics=_build_metrics(result, elapsed_ms),
                 )
                 if steps_used > 1:
-                    run_wall_ms = int((time.monotonic() - run_t0) * 1000)
                     yield AgentEvent(
                         type=EventType.RUN_STATS,
-                        metrics=_build_run_stats(
-                            steps_used,
-                            run_wall_ms,
-                            total_inference_ms,
-                            total_prompt_tokens,
-                            total_completion_tokens,
-                        ),
+                        metrics=stats.run_stats(steps_used, time.monotonic()),
                     )
                 return
 
@@ -889,7 +816,6 @@ class AgentLoop:
             return
 
         # Hit max steps
-        run_wall_ms = int((time.monotonic() - run_t0) * 1000)
         yield AgentEvent(
             type=EventType.RESPONSE,
             data=f"I've reached the maximum number of steps ({max_steps}). "
@@ -897,13 +823,7 @@ class AgentLoop:
         )
         yield AgentEvent(
             type=EventType.RUN_STATS,
-            metrics=_build_run_stats(
-                steps_used,
-                run_wall_ms,
-                total_inference_ms,
-                total_prompt_tokens,
-                total_completion_tokens,
-            ),
+            metrics=stats.run_stats(steps_used, time.monotonic()),
         )
 
     def _describe_remote_error(self, error: Exception) -> str:
