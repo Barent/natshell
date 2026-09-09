@@ -46,7 +46,7 @@ push. **Verify the seam R1 created before building on it.**
 
 | # | Unit | Review | Status | Verification seam / notes |
 |---|------|--------|--------|---------------------------|
-| R2-1 | **Streaming**: `InferenceEngine.stream_completion(...) -> AsyncIterator[Chunk]` (llama-cpp `stream=True`), route tokens into the existing `THINKING` event; parser still runs on *final* buffered content via `grammar.parse`. Add to `engine.py` protocol + `local.py` + TUI/headless render. | R2§1 | ⏳ NEXT | `local.py` count_tokens/to_thread present; **no `stream` verb yet**. Grammar registry (R1-3) is the seam that decides chunk=tool-call vs prose. |
+| R2-1 | **Streaming**: `InferenceEngine.stream_completion(...) -> AsyncIterator[Chunk]` (llama-cpp `stream=True`), route tokens into the existing `THINKING` event; parser still runs on *final* buffered content via `grammar.parse`. Add to `engine.py` protocol + `local.py` + TUI/headless render. | R2§1 | ✅ CORE DONE | Engine-level streaming shipped (`9fcb768`): `StreamChunk` + `StreamingEngine` protocol (feature-detect), `LocalEngine.stream_completion` async generator (one `to_thread` hop; terminal `CompletionResult` via the *same* `_parse_response` pipeline — tool parse/think-strip/degenerate/overflow all identical). 7 tests in `tests/test_streaming_local.py`. **Follow-up remaining:** route chunks into the TUI `THINKING` widget / headless render (loop.py/app.py) — small, needs an event-thread hop in the Textual app. |
 | R2-2 | **Parallel read-only tool execution**: group SAFE/read-only `_READ_ONLY_TOOLS` calls → `asyncio.gather`; keep SAME-PATH + mutating calls serial. `classifier.py:_READ_ONLY_TOOLS` is the source of the safe set. | R2§2 | ⏳ PENDING | loop.py `for tool_call in` is serial today (no `asyncio.gather`). ~40 lines + a same-path guard. |
 | R2-3 | **Cache-stable tool prefix**: freeze the rendered tool-definition block once per engine (keyed by tool-filter); append conversation as pure suffix. | R2§3 | ⏳ PENDING | `_inject_tools` (local.py:317) re-renders every call today. |
 | R2-4 | `execute_shell`: **stream** stdout to the TUI as it arrives + **background** handle/`tail`. | R2§6 | ⏳ PENDING | after R2-1's stream primitive exists. |
@@ -56,6 +56,14 @@ push. **Verify the seam R1 created before building on it.**
 
 ## Changelog (newest first)
 
+- **2026-09-09** R2-1 CORE DONE (`9fcb768`): engine-level streaming
+  shipped — `StreamChunk` + `StreamingEngine` (runtime-checkable) protocol
+  in `inference/engine.py`, `LocalEngine.stream_completion` async
+  generator (drains llama-cpp `stream=True` in one worker thread, yields
+  raw text deltas, then the terminal `CompletionResult` from the *same*
+  parse pipeline as the blocking path), 7 new tests in
+  `tests/test_streaming_local.py`. Suite **1658 green**. TUI/headless token
+  routing is the recorded follow-up.
 - **2026-09-09** R1-8 DONE (`06381d6`): plan prompt-templates split out of
   `plan_executor.py` into `agent/plan_prompts.py` (429→75 lines of pure
   helpers + re-exports; rendered prompts byte-identical against a
