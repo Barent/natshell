@@ -22,6 +22,7 @@ from natshell.agent.step_metrics import (
     handle_degenerate_output as _handle_degenerate_output,
     handle_token_limit as _handle_token_limit,
 )
+from natshell.agent.tool_dispatch import dispatch_tool_call
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
@@ -35,7 +36,6 @@ from natshell.scaling import (
 from natshell.tools import edit_file as _edit_file_mod
 from natshell.tools import execute_shell as _exec_shell_mod
 from natshell.tools import read_file as _read_file_mod
-from natshell.tools.execute_shell import needs_sudo_password as _needs_sudo_password
 from natshell.tools.file_tracker import reset_tracker
 from natshell.tools.limits import ToolLimits
 from natshell.tools.registry import ToolRegistry, ToolResult
@@ -597,167 +597,29 @@ class AgentLoop:
                     yield AgentEvent(type=EventType.PLANNING, data=result.content)
 
                 for tool_call in result.tool_calls:
-                    # Bind the arguments to their parameter names *before*
-                    # classifying, so the classifier judges the call that will
-                    # actually run.  execute() repairs misnamed parameters by
-                    # position, which used to happen after this point: a model
-                    # that wrote "cmd" instead of "command" -- a mistake the
-                    # remap exists because small models make constantly -- got
-                    # classified against an absent key and ran unconfirmed.
-                    #
-                    # Assigning back onto the call also makes the confirmation
-                    # dialog show the arguments the tool will receive.
-                    normalized = self.tools.normalize_arguments(
-                        tool_call.name, tool_call.arguments
+
+                    # One tool call's whole lifecycle — normalize, classify,
+                    # confirm, execute, optional sudo retry, repetition-guard
+                    # observation, step-budget hint, exchange append — lives
+                    # in natshell.agent.tool_dispatch.  Event order and side
+                    # effects are byte-identical to the old inline code (the
+                    # tool-execution, sudo-retry and repetition tests pin
+                    # them), and the guard's ``stop`` observation breaks the
+                    # batch exactly as the old ``break`` did.
+                    dispatch = await dispatch_tool_call(
+                        tool_call,
+                        tools=self.tools,
+                        safety=self.safety,
+                        guard=self._repetition_guard,
+                        confirm_callback=confirm_callback,
+                        password_callback=password_callback,
+                        steps_used=steps_used,
+                        max_steps=max_steps,
+                        append_exchange=self._append_tool_exchange,
                     )
-                    if normalized is not None:
-                        tool_call.arguments = normalized
-
-                    # Safety classification
-                    risk = self.safety.classify_tool_call(tool_call.name, tool_call.arguments)
-                    logger.debug(
-                        "Tool %s classified as %s", tool_call.name, risk.name,
-                    )
-
-                    if risk == Risk.BLOCKED:
-                        yield AgentEvent(type=EventType.BLOCKED, tool_call=tool_call)
-                        self._append_tool_exchange(
-                            tool_call,
-                            "BLOCKED: This command was blocked by the safety classifier. "
-                            "Try an alternative approach.",
-                        )
-                        continue
-
-                    if risk == Risk.CONFIRM and confirm_callback:
-                        yield AgentEvent(type=EventType.CONFIRM_NEEDED, tool_call=tool_call)
-                        confirmed = await confirm_callback(tool_call)
-                        if not confirmed:
-                            self._append_tool_exchange(
-                                tool_call,
-                                "DECLINED: The user declined to execute this command.",
-                            )
-                            continue
-
-                    # Restart thinking animation before execution
-                    yield AgentEvent(type=EventType.THINKING)
-                    # Execute the tool
-                    yield AgentEvent(type=EventType.EXECUTING, tool_call=tool_call)
-
-                    tool_result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    logger.debug(
-                        "Tool %s → exit_code=%s, output_len=%d",
-                        tool_call.name, tool_result.exit_code,
-                        len(tool_result.output or ""),
-                    )
-
-
-                    # If sudo needs a password, prompt the user and retry.
-                    # (Event order + re-classification preserved via
-                    #  natshell.agent.sudo_retry — see that module.)
-                    from natshell.agent.sudo_retry import run as _sudo_retry_run
-
-                    if (
-                        tool_call.name == "execute_shell"
-                        and password_callback
-                        and _needs_sudo_password(tool_result)
-                    ):
-                        buffered: list[AgentEvent] = []
-                        outcome = await _sudo_retry_run(
-                            tool_call,
-                            tools=self.tools,
-                            safety=self.safety,
-                            password_callback=password_callback,
-                            confirm_callback=confirm_callback,
-                            on_event=buffered.append,
-                        )
-                        for ev in buffered:
-                            yield ev
-                        if outcome.status == "retried":
-                            tool_result = outcome.tool_result
-                        else:
-                            # blocked / declined_password / declined_confirm
-                            if outcome.status == "blocked":
-                                self._append_tool_exchange(
-                                    tool_call,
-                                    "BLOCKED: The retried command with sudo was "
-                                    "blocked by the safety classifier.",
-                                )
-                            elif outcome.status == "declined_confirm":
-                                self._append_tool_exchange(
-                                    tool_call,
-                                    "DECLINED: The user declined the retried "
-                                    "command with sudo.",
-                                )
-                            elif outcome.status == "declined_password":
-                                self._append_tool_exchange(
-                                    tool_call,
-                                    "DECLINED: The user cancelled the sudo "
-                                    "password prompt.",
-                                )
-                            continue
-
-                    # Record the (possibly retried) result + ask the guard
-                    # whether it should warn the model.  The guard also owns
-                    # the edit-succeed/fail bookkeeping and the read-count
-                    # reset, in the same order the inline version had.
-                    self._repetition_guard.register_outcome(
-                        tool_call.name, tool_result.exit_code
-                    )
-
-                    # Yield the tool result event.  (This matches the
-                    # original order: TOOL_RESULT fires *before* the guard
-                    # checks so the TUI sees the raw result either way.)
-                    yield AgentEvent(
-                        type=EventType.TOOL_RESULT,
-                        tool_call=tool_call,
-                        tool_result=tool_result,
-                    )
-
-                    # Observations (repetition warnings + stop signal).
-                    # NOTE: we must skip the register_outcome path inside
-                    # .observe() here — already done above — otherwise the
-                    # counters would double-count.
-                    observation = self._repetition_guard.observe(
-                        name=tool_call.name,
-                        arguments=tool_call.arguments,
-                        exit_code=tool_result.exit_code,
-                        record=False,
-                    )
-                    result_content = (
-                        tool_result.to_message_content() + observation.suffix
-                    )
-
-                    # Step budget awareness (unchanged semantics; kept in the
-                    # loop so it can see max_steps from the current config.)
-                    pct_used = steps_used / max_steps
-                    if pct_used >= 0.90:
-                        remaining = max_steps - steps_used
-                        result_content += (
-                            f"\n\n\u26a0 URGENT: [{steps_used}/{max_steps} steps used"
-                            f" \u2014 only {remaining} steps left. Finish NOW.]"
-                        )
-                    elif pct_used >= 0.75:
-                        result_content += (
-                            f"\n\n\u26a0 [{steps_used}/{max_steps} steps used"
-                            " \u2014 wrap up soon]"
-                        )
-                    elif pct_used >= 0.50:
-                        result_content += (
-                            f"\n\n[{steps_used}/{max_steps} steps used]"
-                        )
-                    elif steps_used == 1:
-                        result_content += (
-                            f"\n\n[Budget: {max_steps} steps available"
-                            " \u2014 plan your approach before diving in]"
-                        )
-
-                    # Append exchange to conversation history.  A ``stop``
-                    # observation (duplicate-abort, command-family hard stop,
-                    # similar-cmd abort) ends the tool-dispatch inner loop
-                    # the same way the inline version did with an explicit
-                    # ``break``.
-                    self._append_tool_exchange(tool_call, result_content)
-                    if observation.stop:
+                    for ev in dispatch.events:
+                        yield ev
+                    if dispatch.stop:
                         break
 
                 # Continue the loop — model will see tool results and decide next step
