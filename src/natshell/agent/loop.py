@@ -281,6 +281,92 @@ class AgentLoop:
         """Queue a user message for injection between agent steps."""
         self._message_queue.put_nowait(text)
 
+    def _inject_intent(self, user_input: str) -> None:
+        """Append planning/analysis mode reminders for intent-matching input.
+
+        Pure append to ``self.messages``; the TUI-visible events happen later.
+        """
+        # Inject planning mode reminder when user asks for a plan
+        if _is_plan_request(user_input):
+            self.messages.append({
+                "role": "system",
+                "content": (
+                    "[Planning mode] The user is asking you to plan. "
+                    "Describe your approach in text FIRST. Do not modify files "
+                    "or run commands until the user approves the plan."
+                ),
+            })
+
+        # Inject analysis guidance when user asks for a review/audit/analysis
+        if _is_analysis_request(user_input):
+            self.messages.append({
+                "role": "system",
+                "content": (
+                    "[Analysis mode] The user is asking you for a code review or analysis. "
+                    "Read configuration and safety-critical files first. "
+                    "Trace data flows — do not stop at function signatures. "
+                    "Verify every finding against actual code before reporting it. "
+                    "Use your full step budget for thorough analysis."
+                ),
+            })
+
+    def _preflight_compaction(self) -> AgentEvent | None:
+        """Pre-flight context-pressure check.
+
+        Returns a banner event (to be yielded) if compaction was forced,
+        else None. Mutates ``self.messages`` when it compacts.
+        """
+        event: AgentEvent | None = None
+        if self._context_manager:
+            estimated = self._context_manager.estimate_tokens(self.messages)
+            try:
+                n_ctx_pf = self.engine.engine_info().n_ctx or 0
+            except (AttributeError, TypeError):
+                n_ctx_pf = 0
+            if n_ctx_pf > 0 and (
+                estimated + self._max_tokens > n_ctx_pf
+                or estimated / n_ctx_pf > self._CONTEXT_PRESSURE_THRESHOLD
+            ):
+                stats = self.compact_history()
+                if stats.get("compacted"):
+                    self.messages = self._context_manager.trim_messages(self.messages)
+                    event = AgentEvent(
+                        type=EventType.ERROR,
+                        data="Context nearing capacity — automatically compacted conversation.",
+                    )
+        return event
+
+    def _apply_inference_feedback(self, result: CompletionResult) -> AgentEvent | None:
+        """Calibrate the token budget from actual usage and proactively compact
+        when context pressure is high.
+
+        Returns a banner event (to be yielded) if compaction fired, else None.
+        """
+        # Calibrate token budget from actual API usage
+        if result.prompt_tokens > 0 and self._context_manager:
+            estimated = self._context_manager.estimate_tokens(self.messages)
+            estimated += getattr(self, '_tool_token_overhead', 0)
+            self._context_manager.calibrate_from_actual(estimated, result.prompt_tokens)
+
+        # Proactive compaction when context pressure is high
+        try:
+            n_ctx = self.engine.engine_info().n_ctx or 0
+        except (AttributeError, TypeError):
+            n_ctx = 0
+        event: AgentEvent | None = None
+        if (
+            n_ctx > 0
+            and result.prompt_tokens > 0
+            and result.prompt_tokens / n_ctx > self._CONTEXT_PRESSURE_THRESHOLD
+        ):
+            compact_stats = self.compact_history()
+            if compact_stats.get("compacted"):
+                event = AgentEvent(
+                    type=EventType.ERROR,
+                    data="Context nearing capacity — automatically compacted conversation.",
+                )
+        return event
+
     def _drain_queued_messages(self) -> list[str]:
         """Drain all queued messages, returning them in order."""
         messages: list[str] = []
@@ -410,29 +496,7 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_input})
 
         if not skip_intent_detection:
-            # Inject planning mode reminder when user asks for a plan
-            if _is_plan_request(user_input):
-                self.messages.append({
-                    "role": "system",
-                    "content": (
-                        "[Planning mode] The user is asking you to plan. "
-                        "Describe your approach in text FIRST. Do not modify files "
-                        "or run commands until the user approves the plan."
-                    ),
-                })
-
-            # Inject analysis guidance when user asks for a review/audit/analysis
-            if _is_analysis_request(user_input):
-                self.messages.append({
-                    "role": "system",
-                    "content": (
-                        "[Analysis mode] The user is asking for a code review or analysis. "
-                        "Read configuration and safety-critical files first. "
-                        "Trace data flows — do not stop at function signatures. "
-                        "Verify every finding against actual code before reporting it. "
-                        "Use your full step budget for thorough analysis."
-                    ),
-                })
+            self._inject_intent(user_input)
 
         # Merge persistent context filter with per-call tool_filter
         if self._context_tool_filter is not None and tool_filter is not None:
@@ -486,23 +550,9 @@ class AgentLoop:
                 self.messages = self._context_manager.trim_messages(self.messages)
 
             # Pre-flight check: force compaction if context pressure is high
-            if self._context_manager:
-                estimated = self._context_manager.estimate_tokens(self.messages)
-                try:
-                    n_ctx_pf = self.engine.engine_info().n_ctx or 0
-                except (AttributeError, TypeError):
-                    n_ctx_pf = 0
-                if n_ctx_pf > 0 and (
-                    estimated + self._max_tokens > n_ctx_pf
-                    or estimated / n_ctx_pf > self._CONTEXT_PRESSURE_THRESHOLD
-                ):
-                    stats = self.compact_history()
-                    if stats.get("compacted"):
-                        self.messages = self._context_manager.trim_messages(self.messages)
-                        yield AgentEvent(
-                            type=EventType.ERROR,
-                            data="Context nearing capacity — automatically compacted conversation.",
-                        )
+            event = self._preflight_compaction()
+            if event is not None:
+                yield event
 
             # Get model response
             try:
@@ -518,28 +568,10 @@ class AgentLoop:
                 total_prompt_tokens += result.prompt_tokens or 0
                 total_completion_tokens += result.completion_tokens or 0
 
-                # Calibrate token budget from actual API usage
-                if result.prompt_tokens > 0 and self._context_manager:
-                    estimated = self._context_manager.estimate_tokens(self.messages)
-                    estimated += getattr(self, '_tool_token_overhead', 0)
-                    self._context_manager.calibrate_from_actual(estimated, result.prompt_tokens)
-
-                # Proactive compaction when context pressure is high
-                try:
-                    n_ctx = self.engine.engine_info().n_ctx or 0
-                except (AttributeError, TypeError):
-                    n_ctx = 0
-                if (
-                    n_ctx > 0
-                    and result.prompt_tokens > 0
-                    and result.prompt_tokens / n_ctx > self._CONTEXT_PRESSURE_THRESHOLD
-                ):
-                    compact_stats = self.compact_history()
-                    if compact_stats.get("compacted"):
-                        yield AgentEvent(
-                            type=EventType.ERROR,
-                            data="Context nearing capacity — automatically compacted conversation.",
-                        )
+                # Calibrate budget + proactive compaction (may yield event)
+                event = self._apply_inference_feedback(result)
+                if event is not None:
+                    yield event
             except Exception as e:
                 logger.exception("Inference error")
                 # Context overflow / connectivity failure / raw errors are
