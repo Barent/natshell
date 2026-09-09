@@ -19,7 +19,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from natshell.inference.engine import CompletionResult, EngineInfo
+from natshell.inference.engine import (
+    CompletionResult,
+    EngineInfo,
+    StreamChunk,
+)
 
 # ---------------------------------------------------------------------------
 # Per-family modules
@@ -310,6 +314,102 @@ class LocalEngine:
             raise
 
         return self._parse_response(response)
+
+    # ── Streaming (R2-1) ─────────────────────────────────────────────────
+    # The grammar's parse() pipeline runs once, over the *buffered* full
+    # content, exactly as _parse_response does for the blocking path —
+    # StreamChunks are only raw text deltas for the TUI to render live.
+
+    async def stream_completion(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ):
+        """Stream raw text deltas, then yield the parsed :class:`CompletionResult`.
+
+        llama-cpp-python's ``stream=True`` mode returns an iterator of
+        chunk dicts (``choices[0].delta.content`` per chunk); that iterator
+        is consumed inside a worker thread (synchronous, like the blocking
+        path) so the async generator only awaits one thread hop and yields
+        each chunk as it arrives.  The terminal result is produced by the
+        identical parse pipeline the blocking ``chat_completion`` uses, run
+        on the concatenated content — tool parsing, think-residue stripping
+        and degenerate-suppression all behave exactly as before.
+        """
+        from natshell.inference.grammars import get_grammar
+
+        grammar = get_grammar(self.model_family)
+        # Same message normalization + tool injection as chat_completion,
+        # so both paths see the same prompt.
+        messages = grammar.normalize_messages(messages)
+        if tools:
+            messages = self._inject_tools(messages, tools)
+
+        def _run_stream():
+            chunks: list[str] = []
+            finish_reason = "stop"
+            usage: dict[str, Any] = {}
+            # Bound through an Any-typed callable: the blocking-return
+            # TypedDict overload of create_chat_completion does not describe
+            # stream=True (a generator of chunk dicts), so annotate via Any
+            # to iterate it cleanly.
+            stream: Any = self.llm.create_chat_completion
+            for item in stream(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                repeat_penalty=1.1,
+                stream=True,
+            ):
+                if not isinstance(item, dict):
+                    continue
+                choice = (item.get("choices") or [{}])[0]
+                if not isinstance(choice, dict):
+                    continue
+                text = (choice.get("delta") or {}).get("content")
+                if text is None:
+                    delta = choice.get("message")
+                    if isinstance(delta, dict):
+                        text = delta.get("content")
+                if text:
+                    chunks.append(text)
+                fr = choice.get("finish_reason")
+                if fr:
+                    finish_reason = fr
+                if isinstance(item.get("usage"), dict) and item["usage"]:
+                    usage = item["usage"]
+            return chunks, finish_reason, usage
+
+        try:
+            chunks, finish_reason, usage = await asyncio.to_thread(_run_stream)
+        except ValueError as e:
+            err_str = str(e).lower()
+            if "context window" in err_str or "exceed" in err_str:
+                from natshell.inference.remote import ContextOverflowError
+
+                raise ContextOverflowError(
+                    f"Prompt exceeds local model context window ({self.n_ctx} tokens): {e}"
+                ) from e
+            raise
+
+        for text in chunks:
+            yield StreamChunk(text=text)
+        # Reuse the full parse pipeline over the buffered content so tool
+        # parsing, think-residue stripping and degenerate detection are
+        # identical to the non-streaming path.
+        yield self._parse_response(
+            {
+                "choices": [
+                    {
+                        "message": {"content": "".join(chunks)},
+                        "finish_reason": finish_reason,
+                    }
+                ],
+                "usage": usage,
+            }
+        )
 
     def _inject_tools(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
