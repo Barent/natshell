@@ -48,7 +48,7 @@ push. **Verify the seam R1 created before building on it.**
 |---|------|--------|--------|---------------------------|
 | R2-1 | **Streaming**: `InferenceEngine.stream_completion(...) -> AsyncIterator[Chunk]` (llama-cpp `stream=True`), route tokens into the existing `THINKING` event; parser still runs on *final* buffered content via `grammar.parse`. Add to `engine.py` protocol + `local.py` + TUI/headless render. | R2§1 | ✅ CORE DONE | Engine-level streaming shipped (`9fcb768`): `StreamChunk` + `StreamingEngine` protocol (feature-detect), `LocalEngine.stream_completion` async generator (one `to_thread` hop; terminal `CompletionResult` via the *same* `_parse_response` pipeline — tool parse/think-strip/degenerate/overflow all identical). 7 tests in `tests/test_streaming_local.py`. **Follow-up remaining:** route chunks into the TUI `THINKING` widget / headless render (loop.py/app.py) — small, needs an event-thread hop in the Textual app. |
 | R2-2 | **Parallel read-only tool execution**: group SAFE/read-only `_READ_ONLY_TOOLS` calls → `asyncio.gather`; keep SAME-PATH + mutating calls serial. `classifier.py:_READ_ONLY_TOOLS` is the source of the safe set. | R2§2 | ✅ DONE | `tool_dispatch.dispatch_tool_batch` ships segment-aware batching: runs of `PARALLEL_SAFE_TOOLS` (= `_READ_ONLY_TOOLS`, all 5 verified concurrency-free) go via `asyncio.gather`; mutating/guard-stateful calls keep the serial path. Event/exchange order = in-batch concatenation (byte-identical to serial). Guard stop halts later segments like the old `break`; guard still fires under concurrency (observe() is sync per-coroutine). 12 new tests; suite 1667 green. |
-| R2-3 | **Cache-stable tool prefix**: freeze the rendered tool-definition block once per engine (keyed by tool-filter); append conversation as pure suffix. | R2§3 | ⏳ PENDING | `_inject_tools` (local.py:317) re-renders every call today. |
+| R2-3 | **Cache-stable tool prefix**: freeze the rendered tool-definition block once per engine (keyed by tool-filter); append conversation as pure suffix. | R2§3 | ✅ DONE | `_inject_tools` memoizes the rendered block per (family, compact-tier, sha256 of canonical tool JSON) in a 32-entry LRU on the engine. Byte-identical output (pinned vs `grammar.render_tools`); 6 new tests in tests/test_tool_prefix_cache.py; suite 1673 green. |
 | R2-4 | `execute_shell`: **stream** stdout to the TUI as it arrives + **background** handle/`tail`. | R2§6 | ⏳ PENDING | after R2-1's stream primitive exists. |
 | R2-5 | **LLM compaction tier**: optional summarizer pass (cheapest local engine / fallback) to summarize a large dropped window, replacing pure extractive glue. | R2§5 | ⏳ PENDING | Gate on R2-1/R2-2 measured first. |
 | R2-6 | **Autotune**: persist `_build_metrics`/`_build_run_stats` to `~/.local/share/natshell/metrics/`, feed back into `n_ctx`/`max_tokens` selection (`scaling.py`, `_infer_context_size`). | R2§7 | ⏳ PENDING | Long-term; removes guesswork tables. |
@@ -56,6 +56,13 @@ push. **Verify the seam R1 created before building on it.**
 
 ## Changelog (newest first)
 
+- **2026-09-10** R2-3 DONE (`a23ebaf`): cache-stable tool prefix —
+  `LocalEngine._inject_tools` now memoizes the rendered tool-definition
+  block per (family, compact-tier, canonical-tools hash) in a bounded 32-
+  entry LRU on the engine instance; output byte-identical to
+  `grammar.render_tools`, only the redundant per-call re-render is
+  removed. 6 new tests in tests/test_tool_prefix_cache.py. Suite **1673
+  green**.
 - **2026-09-10** R2-2 DONE (`1ab9651`): parallel read-only tool
   execution — `dispatch_tool_batch` groups a response's tool calls into
   segments; consecutive runs of `PARALLEL_SAFE_TOOLS` (list_directory,
