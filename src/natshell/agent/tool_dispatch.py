@@ -1,4 +1,4 @@
-"""Single tool-call dispatch — classify, confirm, execute, observe, budget-hint.
+"""Tool-call batch dispatch — classify, confirm, execute, observe, budget-hint.
 
 Extracted from ``AgentLoop.handle_user_message`` (R1-7, final chunk).  The
 loop used to inline one whole tool call's lifecycle; :func:`dispatch_tool_call`
@@ -24,10 +24,24 @@ with message mutation still happening in the loop-supplied callback.
 
 :func:`step_budget_hint` is the pure step-exhaustion suffix the model used
 to get inline — now unit-testable on its own.
+
+:func:`dispatch_tool_batch` (R2-2) groups a batch of tool calls so that
+consecutive :data:`PARALLEL_SAFE_TOOLS` calls — tools that are pure or free
+of shared mutable state (``list_directory``, ``natshell_help``, ``skill``,
+``fetch_url``, ``kiwix_search``) — run concurrently via ``asyncio.gather``
+while any mutating or guard-stateful call (``execute_shell``, ``read_file``,
+``search_files``, ``write_file``, ``edit_file``, ``run_code``, …) keeps the
+serial dispatch path, one at a time.  Events and exchange ordering are the
+in-batch concatenation of each call's own events in batch order — identical
+to the serial version for every call; only execution concurrency changes.
+A guard ``stop`` observation halts the remaining batch segments (the old
+inline loop also broke out of the remaining calls), while the run itself
+continues to its next LLM step so the model sees the CRITICAL suffix.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -41,6 +55,37 @@ from natshell.tools.execute_shell import needs_sudo_password
 from natshell.tools.registry import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+# Tools safe to run concurrently within one dispatch batch (R2-2).
+# Candidate set is ``SafetyClassifier``'s ``_READ_ONLY_TOOLS`` (the tools
+# that cannot mutate state); from it we subtract the two whose guard
+# bookkeeping is order-dependent — ``read_file`` (read-count / dupe
+# counters reset on writes) and ``search_files`` (same dupe-key path) —
+# because reordering their observation could mask the repetition guard's
+# detectors.
+#
+# The five kept are verified concurrency-safe:
+#   - ``list_directory`` / ``skill`` / ``natshell_help`` are pure — they
+#     read from the filesystem / the in-memory skill registry and never
+#     touch shared module state.
+#   - ``fetch_url`` creates a per-call ``httpx.AsyncClient`` inside an
+#     ``async with`` (no shared client) and only ever *reads*
+#     ``_limits`` — no global mutation on the hot path.
+#   - ``kiwix_search`` also creates a per-call client; its ``global
+#     _kiwix_url`` writes are the benign re-discovery fallback (same
+#     CPython string replacement a serial call would do) and
+#     ``_known_books`` is only ever appended at startup, so concurrent
+#     reads during a call are safe.
+PARALLEL_SAFE_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_directory",
+        "natshell_help",
+        "skill",
+        "fetch_url",
+        "kiwix_search",
+    }
+)
 
 
 def step_budget_hint(steps_used: int, max_steps: int) -> str:
@@ -245,3 +290,140 @@ async def dispatch_tool_call(
     # the tool-dispatch batch the same way the inline version did.
     append_exchange(tool_call, result_content)
     return DispatchOutcome(events=events, stop=observation.stop, tool_result=tool_result)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Batch dispatch (R2-2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def dispatch_tool_batch(
+    tool_calls: list[ToolCall],
+    *,
+    tools: ToolRegistry,
+    safety: SafetyClassifier,
+    guard: RepetitionGuard,
+    confirm_callback: Callable[[ToolCall], Any] | None,
+    password_callback: Callable[[ToolCall], Any] | None = None,
+    steps_used: int = 1,
+    max_steps: int = 15,
+    append_exchange: Callable[[ToolCall, str], None],
+) -> DispatchOutcome:
+    """Dispatch a batch of tool calls (R2-2).
+
+    Runs consecutive :data:`PARALLEL_SAFE_TOOLS` calls concurrently via
+    ``asyncio.gather``; mutating / stateful calls (``read_file``,
+    ``search_files``, ``execute_shell``, ``write_file``, ``edit_file``,
+    ``run_code``, and any tool not on the allowlist) each take the serial
+    dispatch path — same lifecycle, same event order, same guard bookkeeping
+    as before.
+
+    The final :class:`DispatchOutcome` is the concatenation of each call's
+    events in batch order; ``stop`` fires if any call's guard observation
+    set it.  A ``stop`` also halts the dispatch of any later segments in
+    the batch (the old inline loop also broke out of the remaining calls),
+    while the run itself continues to its next LLM step so the model sees
+    the CRITICAL suffix and can stop repeating.  Callers must NOT call
+    :func:`dispatch_tool_call` separately on a batch — the loop uses
+    :func:`dispatch_tool_batch` exclusively.
+
+    For a batch of *one* call, this is byte-identical to one call to
+    :func:`dispatch_tool_call`.  For a batch of only pure parallel-safe
+    tools, the calls execute concurrently, but each call's guard
+    observation still increments the dupe counter (``observe()`` is
+    synchronous inside each coroutine, so a run of identical calls still
+    reaches the abort threshold and fires ``stop`` on the last one —
+    the serial loop's end state, with all results delivered).  For mixed
+    batches the serial segments run one at a time in order after their
+    neighbours, as the historical loop did.
+    """
+    if not tool_calls:
+        return DispatchOutcome()
+    if len(tool_calls) == 1:
+        # Fast path: one call.  Identical to a single dispatch_tool_call and
+        # preserves every behaviour the existing test suite pins.
+        only = await dispatch_tool_call(
+            tool_calls[0],
+            tools=tools,
+            safety=safety,
+            guard=guard,
+            confirm_callback=confirm_callback,
+            password_callback=password_callback,
+            steps_used=steps_used,
+            max_steps=max_steps,
+            append_exchange=append_exchange,
+        )
+        return only
+
+    # Split the batch: consecutive PARALLEL_SAFE runs and everything else.
+    # A "serial" item is any call NOT on the allowlist — mutating or
+    # stateful tools (read_file, search_files, execute_shell, write_file,
+    # edit_file, run_code, …) that must keep the historical one-at-a-time
+    # dispatch; each also arrives as its own singleton segment.
+    segments: list[list[ToolCall]] = []
+    for tc in tool_calls:
+        if tc.name in PARALLEL_SAFE_TOOLS:
+            if segments and segments[-1][0].name in PARALLEL_SAFE_TOOLS:
+                segments[-1].append(tc)
+            else:
+                segments.append([tc])
+        else:
+            segments.append([tc])
+
+    async def _dispatch_one(tc: ToolCall) -> DispatchOutcome:
+        return await dispatch_tool_call(
+            tc,
+            tools=tools,
+            safety=safety,
+            guard=guard,
+            confirm_callback=confirm_callback,
+            password_callback=password_callback,
+            steps_used=steps_used,
+            max_steps=max_steps,
+            append_exchange=append_exchange,
+        )
+
+    outcomes: list[DispatchOutcome] = []
+    stopped = False
+    for segment in segments:
+        # The old inline serial loop broke out of the remaining tool calls
+        # when a guard observation set ``stop`` (the *run* continued to its
+        # next LLM step — the model had to see the CRITICAL suffix to stop
+        # repeating — but the rest of the current batch was skipped).  We
+        # preserve that here: once any earlier segment's outcome reported
+        # ``stop``, skip all later segments.  A single in-flight gather
+        # cannot be cancelled from the outside, but the next segment is.
+        if stopped:
+            break
+        if (
+            len(segment) > 1
+            and all(tc.name in PARALLEL_SAFE_TOOLS for tc in segment)
+        ):
+            # R2-2 fast path: pure read-only calls execute concurrently.
+            # Events and exchange appends are buffered per-call by
+            # dispatch_tool_call (so no interleaving hazard) and concatenated
+            # in segment order, matching the serial result.
+            outcome_group = await asyncio.gather(*(
+                _dispatch_one(tc) for tc in segment
+            ))
+            for out in outcome_group:
+                outcomes.append(out)
+                if out.stop:
+                    stopped = True
+        else:
+            # Serial path: mutating calls keep the historical one-at-a-time
+            # dispatch.  A CONFIRM gate inside a gather would also be fine
+            # but the historical event order is easiest to reason about
+            # when the confirm dialog awaits are strictly sequential.
+            out = await _dispatch_one(segment[0])
+            outcomes.append(out)
+            if out.stop:
+                stopped = True
+
+    all_events: list[AgentEvent] = []
+    stop = False
+    for outcome in outcomes:
+        all_events.extend(outcome.events)
+        if outcome.stop:
+            stop = True
+    return DispatchOutcome(events=all_events, stop=stop, tool_result=None)

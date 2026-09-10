@@ -28,7 +28,7 @@ from natshell.agent.step_metrics import (
     handle_token_limit as _handle_token_limit,
 )
 from natshell.agent.system_prompt import build_system_prompt
-from natshell.agent.tool_dispatch import dispatch_tool_call
+from natshell.agent.tool_dispatch import dispatch_tool_batch
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
 from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
 from natshell.safety.classifier import SafetyClassifier
@@ -606,31 +606,34 @@ class AgentLoop:
                 if result.content:
                     yield AgentEvent(type=EventType.PLANNING, data=result.content)
 
-                for tool_call in result.tool_calls:
-
-                    # One tool call's whole lifecycle — normalize, classify,
-                    # confirm, execute, optional sudo retry, repetition-guard
-                    # observation, step-budget hint, exchange append — lives
-                    # in natshell.agent.tool_dispatch.  Event order and side
-                    # effects are byte-identical to the old inline code (the
-                    # tool-execution, sudo-retry and repetition tests pin
-                    # them), and the guard's ``stop`` observation breaks the
-                    # batch exactly as the old ``break`` did.
-                    dispatch = await dispatch_tool_call(
-                        tool_call,
-                        tools=self.tools,
-                        safety=self.safety,
-                        guard=self._repetition_guard,
-                        confirm_callback=confirm_callback,
-                        password_callback=password_callback,
-                        steps_used=steps_used,
-                        max_steps=max_steps,
-                        append_exchange=self._append_tool_exchange,
-                    )
-                    for ev in dispatch.events:
-                        yield ev
-                    if dispatch.stop:
-                        break
+                # One dispatch batch's whole lifecycle — per-call normalize,
+                # classify, confirm, execute, optional sudo retry,
+                # repetition-guard observation, step-budget hint, exchange
+                # append — lives in natshell.agent.tool_dispatch.  Consecutive
+                # PARALLEL_SAFE_TOOLS calls (list_directory, natshell_help,
+                # skill, fetch_url, kiwix_search) run concurrently (R2-2);
+                # everything else keeps the historical one-at-a-time path.
+                # Event ordering is the in-batch concatenation each call
+                # produced serially (the tool-execution, sudo-retry and
+                # repetition tests pin it).  A guard ``stop`` halts the
+                # remaining batch segments exactly as the old inline loop's
+                # ``break`` did (its regression is pinned in
+                # tests/test_tool_dispatch.py), and the run then continues
+                # to the next LLM step so the model sees the CRITICAL
+                # suffix and stops repeating.
+                dispatch = await dispatch_tool_batch(
+                    result.tool_calls,
+                    tools=self.tools,
+                    safety=self.safety,
+                    guard=self._repetition_guard,
+                    confirm_callback=confirm_callback,
+                    password_callback=password_callback,
+                    steps_used=steps_used,
+                    max_steps=max_steps,
+                    append_exchange=self._append_tool_exchange,
+                )
+                for ev in dispatch.events:
+                    yield ev
 
                 # Continue the loop — model will see tool results and decide next step
                 continue
