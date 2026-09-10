@@ -47,7 +47,7 @@ push. **Verify the seam R1 created before building on it.**
 | # | Unit | Review | Status | Verification seam / notes |
 |---|------|--------|--------|---------------------------|
 | R2-1 | **Streaming**: `InferenceEngine.stream_completion(...) -> AsyncIterator[Chunk]` (llama-cpp `stream=True`), route tokens into the existing `THINKING` event; parser still runs on *final* buffered content via `grammar.parse`. Add to `engine.py` protocol + `local.py` + TUI/headless render. | R2§1 | ✅ CORE DONE | Engine-level streaming shipped (`9fcb768`): `StreamChunk` + `StreamingEngine` protocol (feature-detect), `LocalEngine.stream_completion` async generator (one `to_thread` hop; terminal `CompletionResult` via the *same* `_parse_response` pipeline — tool parse/think-strip/degenerate/overflow all identical). 7 tests in `tests/test_streaming_local.py`. **Follow-up remaining:** route chunks into the TUI `THINKING` widget / headless render (loop.py/app.py) — small, needs an event-thread hop in the Textual app. |
-| R2-2 | **Parallel read-only tool execution**: group SAFE/read-only `_READ_ONLY_TOOLS` calls → `asyncio.gather`; keep SAME-PATH + mutating calls serial. `classifier.py:_READ_ONLY_TOOLS` is the source of the safe set. | R2§2 | ⏳ PENDING | loop.py `for tool_call in` is serial today (no `asyncio.gather`). ~40 lines + a same-path guard. |
+| R2-2 | **Parallel read-only tool execution**: group SAFE/read-only `_READ_ONLY_TOOLS` calls → `asyncio.gather`; keep SAME-PATH + mutating calls serial. `classifier.py:_READ_ONLY_TOOLS` is the source of the safe set. | R2§2 | ✅ DONE | `tool_dispatch.dispatch_tool_batch` ships segment-aware batching: runs of `PARALLEL_SAFE_TOOLS` (= `_READ_ONLY_TOOLS`, all 5 verified concurrency-free) go via `asyncio.gather`; mutating/guard-stateful calls keep the serial path. Event/exchange order = in-batch concatenation (byte-identical to serial). Guard stop halts later segments like the old `break`; guard still fires under concurrency (observe() is sync per-coroutine). 12 new tests; suite 1667 green. |
 | R2-3 | **Cache-stable tool prefix**: freeze the rendered tool-definition block once per engine (keyed by tool-filter); append conversation as pure suffix. | R2§3 | ⏳ PENDING | `_inject_tools` (local.py:317) re-renders every call today. |
 | R2-4 | `execute_shell`: **stream** stdout to the TUI as it arrives + **background** handle/`tail`. | R2§6 | ⏳ PENDING | after R2-1's stream primitive exists. |
 | R2-5 | **LLM compaction tier**: optional summarizer pass (cheapest local engine / fallback) to summarize a large dropped window, replacing pure extractive glue. | R2§5 | ⏳ PENDING | Gate on R2-1/R2-2 measured first. |
@@ -56,6 +56,15 @@ push. **Verify the seam R1 created before building on it.**
 
 ## Changelog (newest first)
 
+- **2026-09-10** R2-2 DONE (`1ab9651`): parallel read-only tool
+  execution — `dispatch_tool_batch` groups a response's tool calls into
+  segments; consecutive runs of `PARALLEL_SAFE_TOOLS` (list_directory,
+  natshell_help, skill, fetch_url, kiwix_search) execute concurrently via
+  `asyncio.gather`, everything else keeps the serial one-at-a-time path.
+  Event/exchange ordering remains the in-batch concatenation (serial-
+  identical); guard `stop` still halts the later segments exactly as the
+  old inline `break`; dupe-abort still fires under concurrency. 12 new
+  tests in tests/test_tool_dispatch.py. Suite **1667 green**.
 - **2026-09-09** R2-1 CORE DONE (`9fcb768`): engine-level streaming
   shipped — `StreamChunk` + `StreamingEngine` (runtime-checkable) protocol
   in `inference/engine.py`, `LocalEngine.stream_completion` async
