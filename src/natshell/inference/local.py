@@ -13,9 +13,12 @@ the underscored helpers from here).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import re
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -414,17 +417,51 @@ class LocalEngine:
     def _inject_tools(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Inject tool definitions into the system message as plain text."""
+        """Inject tool definitions into the system message as plain text.
+
+        R2-3: the rendered tool block is memoized per (family, compact,
+        tools-content), so the identical string is produced once and reused
+        for every subsequent call with the same tool set — a cache-stable
+        prefix that llama.cpp's RAM prompt cache can rely on (same bytes
+        at the same position, call after call).  Rendering itself is keyed
+        by the canonical serialization of the tool list, so equivalent
+        lists (regardless of argument order) share one entry.
+        """
         from natshell.inference.grammars import get_grammar
 
         compact = self.n_ctx < 16384
-        tool_text = get_grammar(self.model_family).render_tools(tools, compact=compact)
+        # Key on the canonical serialization of the tool list: two equal
+        # tool sets must share one cached string regardless of how they
+        # were constructed this call.
+        key_parts: tuple[Any, ...] = (
+            self.model_family,
+            compact,
+            hashlib.sha256(
+                json.dumps(tools, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest(),
+        )
+
+        if not hasattr(self, "_tool_text_cache"):
+            # Bounded LRU: tool blocks are largeish strings; 32 entries
+            # covers every realistic rotation of tool sets (full, small-
+            # context subset, skill-grown) plus per-family variants.
+            self._tool_text_cache: OrderedDict[tuple, str] = OrderedDict()
+
+        cache: "OrderedDict[tuple, str]" = self._tool_text_cache
+        text = cache.get(key_parts)
+        if text is None:
+            text = get_grammar(self.model_family).render_tools(
+                tools, compact=compact
+            )
+            cache[key_parts] = text
+            if len(cache) > 32:
+                cache.popitem(last=False)
 
         # Shallow-copy the list and deep-copy only the system message
         messages = list(messages)
         for i, msg in enumerate(messages):
             if msg["role"] == "system":
-                messages[i] = {**msg, "content": msg["content"] + "\n\n" + tool_text}
+                messages[i] = {**msg, "content": msg["content"] + "\n\n" + text}
                 break
 
         return messages
