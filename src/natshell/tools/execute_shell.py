@@ -6,8 +6,10 @@ import asyncio
 import logging
 import os
 import re
+import signal
 import subprocess
 import time
+from typing import Any, Callable
 
 from natshell.platform import is_windows
 from natshell.safety.command_split import split_with_delimiters
@@ -149,6 +151,18 @@ _SENSITIVE_ENV_VARS = {
 _SENSITIVE_SUFFIXES = ("_PASSWORD", "_SECRET", "_TOKEN", "_API_KEY")
 
 
+def _filtered_env() -> dict[str, str]:
+    """The environment passed to executed commands, with all sensitive
+    variables removed.  Shared by the blocking and streaming paths so the
+    two can never drift."""
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if k not in _SENSITIVE_ENV_VARS
+        and not any(k.endswith(s) for s in _SENSITIVE_SUFFIXES)
+    }
+
+
 def _get_sudo_password() -> str | None:
     """Return the cached sudo password, or None if expired."""
     global _sudo_password, _sudo_password_time
@@ -265,6 +279,70 @@ def _min_timeout_for(command: str) -> int:
     return 0
 
 
+def _effective_timeout(command: str, timeout: int) -> int:
+    """Coerce, clamp and auto-raise a requested timeout for ``command``.
+
+    Shared by the blocking and streaming paths so their timeout behaviour is
+    byte-identical (including the ``1 <= t <= 300`` clamp and the long-running
+    minimums from :data:`_LONG_RUNNING_PATTERNS`).
+    """
+    try:
+        timeout = int(timeout)
+    except (TypeError, ValueError):
+        timeout = 60
+    timeout = max(1, min(timeout, 300))
+    # Auto-raise timeout for known long-running commands
+    min_timeout = _min_timeout_for(command)
+    if min_timeout > timeout:
+        logger.info(
+            "Auto-raised timeout %ds → %ds for long-running command",
+            timeout,
+            min_timeout,
+        )
+        timeout = min_timeout
+    return max(1, min(timeout, 300))  # re-clamp after auto-raise
+
+
+def _prepare_sudo(command: str) -> tuple[str, str | None]:
+    """Return ``(final_command, stdin_text_or_None)`` for a sudo-aware run.
+
+    When a sudo password is cached and ``command`` invokes sudo at a command
+    position, sudo is rewritten to ``sudo -S`` (via :func:`_inject_sudo_dash_s`,
+    so matches inside quoted strings are *not* rewritten) and the password —
+    one line per sudo occurrence — is returned as the stdin payload.  A
+    trailing ``y\\n`` x3 is appended for package-manager prompts *only*, so
+    interactive programs (fdisk, mysql, …) never receive a stray ``y``.
+    Returns ``None`` stdin when no password injection applies, meaning the
+    caller should feed stdin from ``/dev/null``.
+    """
+    sudo_pw = _get_sudo_password()
+    if not is_windows() and sudo_pw and _has_sudo_invocation(command):
+        command, count = _inject_sudo_dash_s(command)
+        stdin_text = (sudo_pw + "\n") * count
+        if _PKG_MANAGER_RE.search(command):
+            stdin_text += "y\n" * 3
+        return command, stdin_text
+    return command, None
+
+
+def _scrub_sudo_prompt(stderr: str, sudo_pw: str | None) -> str:
+    """Remove sudo's ``[sudo] password for …`` prompt lines from stderr.
+
+    sudo -S echoes its prompt to stderr; it must not reach the model (and it
+    is a password-plumbing leak).  A no-op when no password is in play or on
+    Windows, so non-sudo runs keep their stderr untouched.
+    """
+    if sudo_pw and not is_windows():
+        return (
+            "\n".join(
+                line for line in stderr.splitlines()
+                if not line.startswith("[sudo] password for")
+            )
+            .strip()
+        )
+    return stderr
+
+
 def _truncate_output(text: str) -> tuple[str, bool]:
     """Truncate output to fit in context window, preserving head and tail."""
     if len(text) <= _max_output_chars:
@@ -291,19 +369,7 @@ async def execute_shell(
     timeout: int = 60,
 ) -> ToolResult:
     """Execute a shell command and return structured results."""
-    # Coerce timeout to int (LLMs may send it as a string) and clamp
-    try:
-        timeout = int(timeout)
-    except (TypeError, ValueError):
-        timeout = 60
-    timeout = max(1, min(timeout, 300))
-
-    # Auto-raise timeout for known long-running commands
-    min_timeout = _min_timeout_for(command)
-    if min_timeout > timeout:
-        logger.info("Auto-raised timeout %ds → %ds for long-running command", timeout, min_timeout)
-        timeout = min_timeout
-    timeout = max(1, min(timeout, 300))  # re-clamp after auto-raise
+    timeout = _effective_timeout(command, timeout)
 
     # Redact sudo -S from log output to avoid leaking password plumbing
     sudo_pw = _get_sudo_password()
@@ -313,12 +379,7 @@ async def execute_shell(
     logger.info(f"Executing: {log_cmd} (timeout={timeout}s)")
 
     # Filter sensitive environment variables before passing to subprocess
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in _SENSITIVE_ENV_VARS
-        and not any(k.endswith(s) for s in _SENSITIVE_SUFFIXES)
-    }
+    env = _filtered_env()
     env["LC_ALL"] = "C"  # Consistent output for parsing
 
     try:
@@ -337,21 +398,10 @@ async def execute_shell(
         else:
             run_kwargs["start_new_session"] = True
 
-        # If we have a cached sudo password and the command invokes sudo
-        # at a command position (not inside string arguments), add -S so
-        # sudo reads the password from stdin.  Uses _inject_sudo_dash_s()
-        # to avoid matching "sudo" inside quoted text — prevents password
-        # leakage to stdin-reading commands.
-        # Sudo is not applicable on Windows (UAC is a different paradigm).
-        if not is_windows() and sudo_pw and _has_sudo_invocation(command):
-            command, sudo_count = _inject_sudo_dash_s(command)
-            stdin_data = (sudo_pw + "\n") * sudo_count
-            # Append trailing "y\n" only for package manager commands that
-            # may prompt "Do you want to continue? [Y/n]".  Not appended
-            # for other commands to avoid feeding "y" to interactive programs
-            # (fdisk, mysql, python, etc.) that read from stdin.
-            if _PKG_MANAGER_RE.search(command):
-                stdin_data += "y\n" * 3
+        # Sudo password injection (see _prepare_sudo for the rules; it is
+        # shared with stream_execute_shell so the two paths stay in lockstep).
+        command, stdin_data = _prepare_sudo(command)
+        if stdin_data is not None:
             run_kwargs["input"] = stdin_data
         else:
             run_kwargs["stdin"] = subprocess.DEVNULL
@@ -376,12 +426,7 @@ async def execute_shell(
         stderr, stderr_truncated = _truncate_output(result.stderr)
 
         # sudo -S echoes a password prompt to stderr — strip it
-        if sudo_pw and not is_windows():
-            stderr = "\n".join(
-                line
-                for line in stderr.splitlines()
-                if not line.startswith("[sudo] password for")
-            ).strip()
+        stderr = _scrub_sudo_prompt(stderr, sudo_pw)
 
         return ToolResult(
             output=stdout,
@@ -409,3 +454,226 @@ async def execute_shell(
             error=f"Failed to execute command: {type(e).__name__}: {e}",
             exit_code=1,
         )
+
+
+async def stream_execute_shell(
+    command: str,
+    on_chunk: Callable[[str], None],
+    timeout: int = 60,
+) -> ToolResult:
+    """Execute a shell command the same way as :func:`execute_shell`, but
+    forward each stdout chunk to ``on_chunk`` as it arrives (R2-4).
+
+    This is *not* a looser re-implementation: it reuses the very same helpers
+    the blocking path uses — :func:`_effective_timeout`, :func:`_filtered_env`,
+    :func:`_prepare_sudo` and :func:`_scrub_sudo_prompt` — so timeout
+    behaviour, env filtering, sudo ``-S`` injection and the ``y\\n`` rule, and
+    stderr scrubbing are byte-identical to :func:`execute_shell`.
+
+    The process runs via ``asyncio.create_subprocess_exec`` (invoking
+    ``bash -c`` on POSIX, or ``powershell -Command`` on Windows — the same
+    argv the blocking path builds).  stdout is pumped in 4 KiB chunks to
+    ``on_chunk``; stderr is drained to a buffer in the background (so a
+    full stderr pipe can never dead-lock the run); on timeout the child's
+    whole session is killed and the classic exit-124 shape is returned.
+
+    Args:
+        command:  The bash command to execute.
+        timeout:  Maximum seconds (clamped/auto-raised exactly as the
+            blocking path).
+        on_chunk: Synchronous callback invoked for each stdout chunk as it
+            arrives.  It must be safe to call from the running event loop
+            and must not await; it is invoked before the final
+            :class:`ToolResult` is built.
+
+    Returns:
+        A :class:`ToolResult` with stdout/stderr truncated, scrubbed and
+        capped exactly the way :func:`execute_shell` would produce them.
+    """
+    timeout = _effective_timeout(command, timeout)
+
+    # Redact sudo -S from log output to avoid leaking password plumbing
+    sudo_pw = _get_sudo_password()
+    log_cmd = command
+    if sudo_pw and _has_sudo_invocation(command):
+        log_cmd, _ = _inject_sudo_dash_s(command)
+    logger.info(f"Streaming: {log_cmd} (timeout={timeout}s)")
+
+    env = _filtered_env()
+    env["LC_ALL"] = "C"  # Consistent output for parsing
+
+    command, stdin_data = _prepare_sudo(command)
+
+    # Build the shell command list based on platform (mirrors execute_shell)
+    if is_windows():
+        shell_cmd = [
+            "powershell", "-NoProfile", "-NonInteractive",
+            "-Command", command,
+        ]
+    else:
+        shell_cmd = ["bash", "-c", command]
+
+    stdin_arg: Any
+    if stdin_data is not None:
+        # The child will read the sudo password / package-manager answers
+        # from stdin (exactly what the blocking path's ``input=`` supplied).
+        stdin_arg = asyncio.subprocess.PIPE
+    else:
+        # Same as the blocking path: no password injection → stdin /dev/null.
+        stdin_arg = subprocess.DEVNULL
+
+    try:
+        if is_windows():
+            proc = await asyncio.create_subprocess_exec(
+                *shell_cmd,
+                env=env,
+                cwd=os.getcwd(),
+                stdin=stdin_arg,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=getattr(
+                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+                ),
+            )
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                *shell_cmd,
+                env=env,
+                cwd=os.getcwd(),
+                stdin=stdin_arg,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+    except FileNotFoundError:
+        shell_name = "PowerShell" if is_windows() else "bash"
+        return ToolResult(
+            output="",
+            error=f"{shell_name} not found. Is it installed?",
+            exit_code=127,
+        )
+
+    # stderr must be drained concurrently with stdout — a child that fills
+    # its stderr pipe while we're reading stdout would deadlock otherwise.
+    assert proc.stderr is not None
+    stderr_task = asyncio.create_task(_read_to_end(proc.stderr))
+
+    stdout = bytearray()
+    exit_code: int | None = None
+    timed_out = False
+    try:
+        # Hand the sudo password / ``y\n`` answers to the child right after
+        # spawn so ``sudo -S`` and the package-manager prompt both see them
+        # before we drain stdout.  The payload is a handful of lines and is
+        # buffered in the pipe, so the write can never block.
+        if proc.stdin is not None and stdin_data is not None:
+            try:
+                proc.stdin.write(stdin_data.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+
+        # Pump stdout in chunks, forwarding each as it arrives.
+        assert proc.stdout is not None
+        try:
+            async with asyncio.timeout(timeout):
+                while True:
+                    chunk = await proc.stdout.read(4096)
+                    if not chunk:
+                        break
+                    stdout.extend(chunk)
+                    on_chunk(chunk.decode("utf-8", errors="replace"))
+                exit_code = await proc.wait()
+        except TimeoutError:
+            timed_out = True
+    except Exception as e:
+        _kill_tree(proc)
+        stderr_bytes = await _collect_stderr(stderr_task)
+        return ToolResult(
+            output="",
+            error=f"Failed to execute command: {type(e).__name__}: {e}",
+            exit_code=1,
+        )
+
+    if timed_out:
+        # Kill the whole session so child-of-child survives nothing, then
+        # mirror the blocking path's timeout shape exactly.
+        _kill_tree(proc)
+        try:
+            async with asyncio.timeout(5):
+                await proc.wait()
+        except (TimeoutError, ProcessLookupError):
+            pass
+    stderr_bytes = await _collect_stderr(stderr_task)
+    if timed_out:
+        return ToolResult(
+            output="",
+            error=f"Command timed out after {timeout} seconds.",
+            exit_code=124,
+        )
+
+    # Same post-processing as execute_shell: truncate head+tail, scrub the
+    # sudo password prompt from stderr, report the truncated flag.
+    out = stdout.decode("utf-8", errors="replace")
+    err = stderr_bytes.decode("utf-8", errors="replace")
+
+    out_text, stdout_truncated = _truncate_output(out)
+    err_text, stderr_truncated = _truncate_output(err)
+    err_text = _scrub_sudo_prompt(err_text, sudo_pw)
+
+    return ToolResult(
+        output=out_text,
+        error=err_text,
+        exit_code=exit_code if exit_code is not None else 0,
+        truncated=stdout_truncated or stderr_truncated,
+    )
+
+
+# ── Streaming-path process helpers (R2-4) ────────────────────────────────────
+
+
+async def _read_to_end(stream: asyncio.StreamReader) -> bytes:
+    """Read a subprocess pipe to EOF, returning everything it contained.
+
+    Run as a task so stderr never blocks on us reading stdout (a child that
+    fills its stderr pipe first would otherwise deadlock the run).
+    """
+    data = await stream.read()
+    return data or b""
+
+
+async def _collect_stderr(stderr_task: asyncio.Task) -> bytes:
+    """Await a stderr-drain task, tolerating a dead child on the way out."""
+    try:
+        return await stderr_task
+    except (
+        asyncio.CancelledError,
+        ProcessLookupError,
+        OSError,
+        subprocess.SubprocessError,
+    ):
+        return b""
+
+
+def _kill_tree(proc: asyncio.subprocess.Process) -> None:
+    """Best-effort termination of a spawned process (and its job on Windows).
+
+    POSIX children run in their own session (``start_new_session=True``, the
+    same isolation the blocking path gets via ``subprocess.run``), so killing
+    the process group on timeout mirrors ``subprocess.run``'s kill — which
+    only ever kills the direct child but does so as far as its pipes are
+    concerned.  We keep it simple and robust: SIGKILL the process, then the
+    process group, swallowing "already dead" noise.
+    """
+    if proc is None:
+        return
+    try:
+        proc.kill()
+    except (ProcessLookupError, OSError):
+        return
+    if not is_windows():
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError, TypeError):
+            pass

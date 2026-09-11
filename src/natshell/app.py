@@ -406,6 +406,21 @@ class NatShellApp(App):
                 block.id = f"cmd-{event.tool_call.id}"
                 conversation.mount(block)
 
+            case EventType.TOOL_OUTPUT:
+                # Live stdout chunk for a streaming tool (R2-4).  Route to the
+                # CommandBlock this event's tool_call belongs to; if the block
+                # isn't mounted yet (edge case / non-shell tool) there is
+                # nothing to update and we skip it.
+                if event.tool_call is None:
+                    return
+                block_id = f"cmd-{event.tool_call.id}"
+                try:
+                    self.query_one(f"#{block_id}", CommandBlock).set_partial(
+                        event.data if isinstance(event.data, str) else str(event.data)
+                    )
+                except Exception:
+                    pass
+
             case EventType.TOOL_RESULT:
                 block_id = f"cmd-{event.tool_call.id}"
                 try:
@@ -472,6 +487,7 @@ class NatShellApp(App):
                 user_text,
                 confirm_callback=confirm_cb,
                 password_callback=password_callback,
+                stream_output=True,
             ):
                 self._render_agent_event(event, conversation, thinking_ref, elapsed_ref)
 
@@ -872,6 +888,7 @@ class NatShellApp(App):
                         prompt,
                         confirm_callback=confirm_cb,
                         password_callback=password_callback,
+                        stream_output=True,
                     ):
                         self._render_agent_event(event, conversation, thinking_ref, elapsed_ref)
 

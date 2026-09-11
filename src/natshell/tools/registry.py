@@ -84,6 +84,9 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolHandler] = {}
         self._definitions: dict[str, ToolDefinition] = {}
+        self._stream_handlers: dict[
+            str, Callable[[dict[str, Any], Callable[[str], None]], Awaitable[ToolResult]]
+        ] = {}
         self.limits: ToolLimits = ToolLimits()
 
     def register(self, definition: ToolDefinition, handler: ToolHandler) -> None:
@@ -91,6 +94,53 @@ class ToolRegistry:
         self._tools[definition.name] = handler
         self._definitions[definition.name] = definition
         logger.debug(f"Registered tool: {definition.name}")
+
+    # ── Streaming tools (R2-4) ──────────────────────────────────────────────
+    #
+    # A streaming tool (``execute_shell``) can forward its stdout chunk-by-
+    # chunk to an ``on_chunk`` callback while it runs, and the agent loop
+    # surfaces each chunk as a TOOL_OUTPUT event so the TUI renders it live.
+    # The registry owns *which* tools stream; the dispatcher just asks.
+    # Tools without a streaming handler take the blocking ``execute`` path
+    # (byte-identical to pre-R2-4 behaviour).
+
+    def register_streaming(
+        self,
+        name: str,
+        handler: Callable[[dict[str, Any], Callable[[str], None]], Awaitable[ToolResult]],
+    ) -> None:
+        """Register a streaming execution path for ``name`` (see
+        :meth:`execute_streaming`).  The handler receives the normalized
+        argument dict and an ``on_chunk(text)`` callback, and returns the
+        terminal :class:`ToolResult`."""
+        self._stream_handlers[name] = handler
+
+    async def execute_streaming(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        on_chunk: Callable[[str], None],
+    ) -> ToolResult | None:
+        """Execute a streaming-capable tool, forwarding each stdout chunk to
+        ``on_chunk`` as it arrives.
+
+        Returns ``None`` for tools that have no streaming handler — the
+        caller must then fall back to :meth:`execute`.  A handler that raises
+        becomes a ``ToolResult`` error (exit 1), the same contract as
+        :meth:`execute`.
+        """
+        handler = self._stream_handlers.get(name)
+        if handler is None:
+            return None
+        try:
+            return await handler(arguments, on_chunk)
+        except Exception as e:
+            logger.exception("Tool %s (streaming) raised an exception", name)
+            return ToolResult(
+                output="",
+                error=f"Tool error: {type(e).__name__}: {e}",
+                exit_code=1,
+            )
 
     def get_tool_schemas(self, allowed: set[str] | None = None) -> list[dict[str, Any]]:
         """Generate OpenAI-compatible tool schemas for the LLM.
@@ -278,8 +328,13 @@ def create_default_registry() -> ToolRegistry:
     """Create a registry with all built-in tools registered."""
     from natshell.tools.edit_file import DEFINITION as EDIT_DEF
     from natshell.tools.edit_file import edit_file
-    from natshell.tools.execute_shell import DEFINITION as EXEC_DEF
-    from natshell.tools.execute_shell import execute_shell
+    from natshell.tools.execute_shell import (
+        DEFINITION as EXEC_DEF,
+    )
+    from natshell.tools.execute_shell import (
+        execute_shell,
+        stream_execute_shell,
+    )
     from natshell.tools.fetch_url import DEFINITION as FETCH_URL_DEF
     from natshell.tools.fetch_url import fetch_url
     from natshell.tools.git_tool import DEFINITION as GIT_DEF
@@ -317,4 +372,17 @@ def create_default_registry() -> ToolRegistry:
     registry.register(CONFIG_DEF, update_config)
     registry.register(KIWIX_DEF, kiwix_search)
     registry.register(SKILL_DEF, skill)
+
+    # execute_shell is the one streaming tool (R2-4): the dispatcher routes
+    # it through stream_execute_shell and forwards each stdout chunk to the
+    # loop's on_chunk (→ TOOL_OUTPUT).  Every other tool has no streaming
+    # handler here, so it takes the blocking execute path, unchanged.
+    registry.register_streaming(
+        "execute_shell",
+        lambda args, on_chunk: stream_execute_shell(
+            args.get("command", ""),
+            on_chunk,
+            timeout=args.get("timeout", 60),
+        ),
+    )
     return registry

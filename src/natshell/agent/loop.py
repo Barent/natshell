@@ -453,6 +453,7 @@ class AgentLoop:
         password_callback=None,
         tool_filter: set[str] | None = None,
         skip_intent_detection: bool = False,
+        stream_output: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         """
         Process a user message through the full agent loop.
@@ -470,6 +471,15 @@ class AgentLoop:
             skip_intent_detection: If True, skip plan/analysis intent injection.
                             Used by /plan generation to prevent the planning-mode
                             system message from conflicting with the plan prompt.
+            stream_output: (R2-4) If True, streaming-capable tools (execute_shell)
+                            forward their stdout chunk-by-chunk as TOOL_OUTPUT
+                            events between EXECUTING and TOOL_RESULT, and the
+                            call runs through the registry's streaming handler.
+                            Defaults to False so every existing caller (headless,
+                            plans, and the test suite's mocked ``tools.execute``)
+                            keeps the historical single-result path unchanged;
+                            the interactive TUI is the one that opts in, because
+                            it is what renders the live chunks.
         """
         self.messages.append({"role": "user", "content": user_input})
 
@@ -631,6 +641,7 @@ class AgentLoop:
                     steps_used=steps_used,
                     max_steps=max_steps,
                     append_exchange=self._append_tool_exchange,
+                    stream_output=stream_output,
                 )
                 for ev in dispatch.events:
                     yield ev

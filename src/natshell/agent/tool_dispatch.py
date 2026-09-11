@@ -151,12 +151,22 @@ async def dispatch_tool_call(
     steps_used: int = 1,
     max_steps: int = 15,
     append_exchange: Callable[[ToolCall, str], None],
+    stream_output: bool = False,
 ) -> DispatchOutcome:
     """Run exactly one tool call through classify → confirm → execute → observe.
 
     Message mutation stays in the loop: the loop passes ``append_exchange``
     (bound to ``AgentLoop._append_tool_exchange``) and it is invoked in the
     same places the inline code called it.
+
+    ``stream_output`` (R2-4): when True *and* the tool has a streaming
+    handler registered on the registry (only ``execute_shell`` does), the
+    tool runs through its streaming executor and each stdout chunk is
+    surface as a TOOL_OUTPUT event, in arrival order, between the EXECUTING
+    and TOOL_RESULT events.  When False — or the tool isn't streaming-capable
+    — the historical blocking ``tools.execute`` path is taken, and no
+    TOOL_OUTPUT events are emitted.  That keeps the pre-R2-4 event sequence
+    byte-identical for every caller that doesn't opt in.
     """
     events: list[AgentEvent] = []
 
@@ -203,7 +213,30 @@ async def dispatch_tool_call(
     # Execute the tool
     events.append(AgentEvent(type=EventType.EXECUTING, tool_call=tool_call))
 
-    tool_result: ToolResult = await tools.execute(tool_call.name, tool_call.arguments)
+    tool_result: ToolResult | None = None
+    _streamer = getattr(tools, "execute_streaming", None)
+    if stream_output and _streamer is not None:
+
+        def _chunk(text: str) -> None:
+            """Surface one live stdout chunk as a TOOL_OUTPUT event.
+
+            The dispatcher is a synchronous collector from the streaming
+            executor's point of view, so we append in arrival order — the
+            loop's eventual ``for ev in outcome.events: yield ev`` preserves
+            that ordering exactly, interleaved between EXECUTING and
+            TOOL_RESULT.
+            """
+            events.append(
+                AgentEvent(type=EventType.TOOL_OUTPUT, tool_call=tool_call, data=text)
+            )
+
+        streamed = await _streamer(
+            tool_call.name, tool_call.arguments, on_chunk=_chunk
+        )
+        if streamed is not None:
+            tool_result = streamed
+    if tool_result is None:
+        tool_result = await tools.execute(tool_call.name, tool_call.arguments)
     logger.debug(
         "Tool %s → exit_code=%s, output_len=%d",
         tool_call.name,
@@ -308,6 +341,7 @@ async def dispatch_tool_batch(
     steps_used: int = 1,
     max_steps: int = 15,
     append_exchange: Callable[[ToolCall, str], None],
+    stream_output: bool = False,
 ) -> DispatchOutcome:
     """Dispatch a batch of tool calls (R2-2).
 
@@ -352,6 +386,7 @@ async def dispatch_tool_batch(
             steps_used=steps_used,
             max_steps=max_steps,
             append_exchange=append_exchange,
+            stream_output=stream_output,
         )
         return only
 
@@ -381,6 +416,7 @@ async def dispatch_tool_batch(
             steps_used=steps_used,
             max_steps=max_steps,
             append_exchange=append_exchange,
+            stream_output=stream_output,
         )
 
     outcomes: list[DispatchOutcome] = []
