@@ -438,6 +438,15 @@ def main() -> None:
 
     tools = create_default_registry()
 
+    # Sweep stale background-shell handles/log files left by prior sessions
+    # (launch/detached children that outlived NatShell). Cheap file scan; runs
+    # before any model loading so a fresh start sees a clean handle dir.
+    from natshell.tools.shell_bg import clean_orphans
+
+    _swept = clean_orphans()
+    if _swept:
+        print(f"Cleaned up {_swept} stale background process handle(s).")
+
     # Load skills (subsumes the old plugin system)
     from natshell.skills import load_skills
     from natshell.tools.skill import set_skill_registry

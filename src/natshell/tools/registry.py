@@ -351,6 +351,8 @@ def create_default_registry() -> ToolRegistry:
     from natshell.tools.run_code import run_code
     from natshell.tools.search_files import DEFINITION as SEARCH_DEF
     from natshell.tools.search_files import search_files
+    from natshell.tools.shell_bg import DEFINITION as SHELL_BG_DEF
+    from natshell.tools.shell_bg import shell_bg
     from natshell.tools.skill import DEFINITION as SKILL_DEF
     from natshell.tools.skill import skill
     from natshell.tools.update_config import DEFINITION as CONFIG_DEF
@@ -365,6 +367,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(EDIT_DEF, edit_file)
     registry.register(LIST_DEF, list_directory)
     registry.register(SEARCH_DEF, search_files)
+    registry.register(SHELL_BG_DEF, shell_bg)
     registry.register(RUN_CODE_DEF, run_code)
     registry.register(GIT_DEF, git_tool)
     registry.register(HELP_DEF, natshell_help)
