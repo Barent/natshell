@@ -20,6 +20,7 @@ class EventType(Enum):
     THINKING = "thinking"
     PLANNING = "planning"  # Model's text before tool calls
     EXECUTING = "executing"  # About to run a tool
+    TOOL_OUTPUT = "tool_output"  # Live output chunk from a streaming tool (R2-4)
     TOOL_RESULT = "tool_result"  # Result from a tool
     CONFIRM_NEEDED = "confirm_needed"  # Awaiting user confirmation
     BLOCKED = "blocked"  # Command was blocked
