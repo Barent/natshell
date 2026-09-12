@@ -46,7 +46,7 @@ push. **Verify the seam R1 created before building on it.**
 
 | # | Unit | Review | Status | Verification seam / notes |
 |---|------|--------|--------|---------------------------|
-| R2-1 | **Streaming**: `InferenceEngine.stream_completion(...) -> AsyncIterator[Chunk]` (llama-cpp `stream=True`), route tokens into the existing `THINKING` event; parser still runs on *final* buffered content via `grammar.parse`. Add to `engine.py` protocol + `local.py` + TUI/headless render. | R2§1 | ✅ CORE DONE | Engine-level streaming shipped (`9fcb768`): `StreamChunk` + `StreamingEngine` protocol (feature-detect), `LocalEngine.stream_completion` async generator (one `to_thread` hop; terminal `CompletionResult` via the *same* `_parse_response` pipeline — tool parse/think-strip/degenerate/overflow all identical). 7 tests in `tests/test_streaming_local.py`. **Follow-up remaining:** route chunks into the TUI `THINKING` widget / headless render (loop.py/app.py) — small, needs an event-thread hop in the Textual app. |
+| R2-1 | **Streaming**: `InferenceEngine.stream_completion(...) -> AsyncIterator[Chunk]` (llama-cpp `stream=True`), route tokens into the existing `THINKING` event; parser still runs on *final* buffered content via `grammar.parse`. Add to `engine.py` protocol + `local.py` + TUI/headless render. | R2§1 | ✅ DONE | Engine-level streaming (`9fcb768`) + TUI/headless token routing (`26c32a8`): `THINKING_TOKEN` event drained by the loop between THINKING and the first outcome (stream-failure → blocking fallback → recovery ladder), `ThinkingBlock` promotes the indicator on first token and is superseded by the terminal PLANNING/RESPONSE message (no duplication), headless no-ops the type. 16 new tests in `tests/test_r21_tui_streaming.py`. |
 | R2-2 | **Parallel read-only tool execution**: group SAFE/read-only `_READ_ONLY_TOOLS` calls → `asyncio.gather`; keep SAME-PATH + mutating calls serial. `classifier.py:_READ_ONLY_TOOLS` is the source of the safe set. | R2§2 | ✅ DONE | `tool_dispatch.dispatch_tool_batch` ships segment-aware batching: runs of `PARALLEL_SAFE_TOOLS` (= `_READ_ONLY_TOOLS`, all 5 verified concurrency-free) go via `asyncio.gather`; mutating/guard-stateful calls keep the serial path. Event/exchange order = in-batch concatenation (byte-identical to serial). Guard stop halts later segments like the old `break`; guard still fires under concurrency (observe() is sync per-coroutine). 12 new tests; suite 1667 green. |
 | R2-3 | **Cache-stable tool prefix**: freeze the rendered tool-definition block once per engine (keyed by tool-filter); append conversation as pure suffix. | R2§3 | ✅ DONE | `_inject_tools` memoizes the rendered block per (family, compact-tier, sha256 of canonical tool JSON) in a 32-entry LRU on the engine. Byte-identical output (pinned vs `grammar.render_tools`); 6 new tests in tests/test_tool_prefix_cache.py; suite 1673 green. |
 | R2-4 | `execute_shell`: **stream** stdout to the TUI as it arrives + **background** handle/`tail`. | R2§6 | ✅ DONE | **Streaming half shipped (`8348e46` + `6d4c03d`, 2026-09-10):** `stream_execute_shell` (asyncio subprocess, 4 KiB stdout pump, concurrent stderr drain, `asyncio.timeout` → kill + exit-124 parity, missing-shell 127 parity) reuses the *same* `_effective_timeout` / `_filtered_env` / `_prepare_sudo` / `_scrub_sudo_prompt` helpers the blocking path now uses (refactored onto them, no behaviour change). `ToolRegistry.register_streaming`/`execute_streaming` own "which tools stream"; `dispatch_tool_call/batch` gained a `stream_output` switch (default **False** ⇒ every existing caller, headless, plans and the mocked `tools.execute` tests keep the historical path) that surfaces each chunk as `EventType.TOOL_OUTPUT` in arrival order between EXECUTING and TOOL_RESULT. TUI: `run_agent`/`run_plan` opt in; `app.py` routes TOOL_OUTPUT → `CommandBlock.set_partial` (new `set_partial`/final-`set_result` pair, copyable mid-stream), verified end-to-end via a Textual pilot. Headless: TOOL_OUTPUT is a documented no-op. 16 new tests (`tests/test_stream_execute_shell.py`): chunk order, byte-parity (truncation + sudo scrub), timeout-124 shape, sudo stdin transport + pkg `y\n`, 127, loop event ordering + default-off, TUI partial→final. **Background half shipped (`bd6865e`, 2026-09-11):** `shell_bg` tool (`tools/shell_bg.py`) — three SAFE-ish actions over a `0o700` `data_dir()/bg` handle dir: `launch` (detached `start_new_session` child, stdout+stderr → `<id>.log`, 16-hex atomic handle JSON, daemon reaper, session-scoped Popen registry, post-restart pid fallback, `killpg` SIGTERM→SIGKILL, `clean_orphans()` >24h at startup). `_RW_LOCK` serializes reaper/kill read-modify-write (found+fixed a real clobber race in testing). Classifier: launch classifies exactly like execute_shell (BLOCKED stays BLOCKED even "detached"); tail/kill CONFIRM→SAFE-in-danger. Out of `SMALL_CONTEXT_TOOLS`+`PLAN_SAFE_TOOLS`. 33 new tests (`tests/test_shell_bg.py`). Suite **1722 green** (was 1689). |
@@ -56,6 +56,24 @@ push. **Verify the seam R1 created before building on it.**
 
 ## Changelog (newest first)
 
+- **2026-09-12** R2-1 TUI-TOKEN FOLLOW-UP DONE (`26c32a8`) — streamed model
+  tokens now reach the TUI. The loop drains `StreamingEngine` conformers via
+  a new `_stream_response()` helper: every delta surfaces as a
+  `THINKING_TOKEN` event between THINKING and the first outcome, the
+  terminal `CompletionResult` (same parse pipeline as the blocking call)
+  feeds every downstream branch unchanged; a failing stream falls back to
+  `chat_completion` *before* the recovery ladder is consulted, and a
+  failure surviving both paths still reaches that ladder. The TUI's
+  `_render_agent_event` grows a new `ThinkingBlock` on the first token
+  (promoting the `ThinkingIndicator` with its running clock so the timer
+  doesn't reset), keeps the partial text copyable, and removes the
+  placeholder when the terminal PLANNING/RESPONSE/… event mounts the
+  canonical message — no duplication. Headless documents
+  `THINKING_TOKEN` as a no-op (no per-token stderr spam). 16 new tests in
+  `tests/test_r21_tui_streaming.py` (loop ordering, both-fail → recovery,
+  mid-stream crash, non-streaming engines, widget body/elapsed/copy, TUI
+  promotion + supersession via a Textual pilot, headless no-op). Suite
+  **1738 green** (was 1722), ruff clean. R2-1 is now fully DONE.
 - **2026-09-11** R2-4 BACKGROUND HALF DONE (`bd6865e`) — the `shell_bg`
   background-process tool lands, completing R2-4. `launch` spawns a detached
   `bash -c` child (`start_new_session`, so `killpg` takes the whole tree),
