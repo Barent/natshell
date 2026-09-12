@@ -241,7 +241,7 @@ theme = "dark"
 # [kiwix]
 # url = "http://localhost:8080"  # URL of your kiwix-serve instance
 
-# ─── Skills ─────────────────────────────────────────────────────────
+# ─── Skills ─────────────────────────────────────────────────────────────────
 # Skills bundle model instructions, reference docs, and optional tools.
 # The agent automatically selects skills based on task context.
 #
@@ -249,3 +249,16 @@ theme = "dark"
 enabled = true
 disabled = []
 inject_in_compact = false
+
+# ─── LLM Compaction Tier ───────────────────────────────────────────────────
+# When the context window fills up, the dropped conversation is replaced by
+# a summary.  By default that summary is "extractive" (pure heuristics built
+# from the file paths/commands in the dropped window).  Enabling the LLM
+# tier asks the local model to write a one-shot prose summary of the dropped
+# window first; on timeout or engine failure the extractive summary is used
+# instead (silent fallback, no user-visible error).
+#
+# [compaction]
+# llm = false              # Enable the LLM summarizer tier for /compact + auto-compaction
+# max_messages = 30        # Max history messages sent to the summarizer per call
+# timeout = 30             # Seconds allowed before falling back to the extractive summary

@@ -117,6 +117,22 @@ class SafetyConfig:
 
 
 @dataclass
+class CompactionConfig:
+    """Controls the LLM compaction tier (R2-5).
+
+    When ``llm`` is enabled, dropping/compacting a window of conversation
+    history first asks the local model for a one-shot summary; on timeout
+    or engine failure it transparently falls back to the extractive
+    summary that has always been produced (and after enough consecutive
+    failures skips the LLM tier until the next run).
+    """
+
+    llm: bool = False                 # Enable the LLM summarizer tier
+    max_messages: int = 30            # Max history messages summarized per call
+    timeout: float = 30.0             # Seconds allowed before falling back
+
+
+@dataclass
 class UIConfig:
     theme: str = "dark"
 
@@ -196,6 +212,7 @@ class NatShellConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)
 
 
 # ── Valid config keys (section → {key: type_string}) ─────────────────────
@@ -263,6 +280,11 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
         "enabled": "bool",
         "disabled": "list",
         "inject_in_compact": "bool",
+    },
+    "compaction": {
+        "llm": "bool",
+        "max_messages": "int",
+        "timeout": "float",
     },
 }
 
@@ -394,6 +416,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
 _SECTIONS = (
     "model", "remote", "ollama", "agent", "safety",
     "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory", "skills",
+    "compaction",
 )
 
 

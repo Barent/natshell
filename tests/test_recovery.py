@@ -51,7 +51,7 @@ def _make_coordinator(
     engine_box: dict[str, Any] = {"engine": engine}
     compact_stats = compact_stats or {"compacted": False}
 
-    def compact() -> dict[str, Any]:
+    async def compact(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         calls["compact"] += 1
         return compact_stats
 

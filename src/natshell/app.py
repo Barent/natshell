@@ -544,7 +544,7 @@ class NatShellApp(App):
             case "/clear":
                 self.action_clear_chat()
             case "/compact":
-                self._compact_chat(conversation)
+                await compact_chat(self.agent, conversation)
             case "/cmd":
                 if not args:
                     conversation.mount(SystemMessage("Usage: /cmd <command>"))
@@ -1609,7 +1609,3 @@ class NatShellApp(App):
         conversation.mount(Static("[dim]Chat cleared. Type a new request.[/]\n"))
         self.agent.clear_history()
         self.query_one("#user-input", HistoryInput).clear_history()
-
-    def _compact_chat(self, conversation: ScrollableContainer) -> None:
-        """Compact conversation context, keeping key facts."""
-        compact_chat(self.agent, conversation)

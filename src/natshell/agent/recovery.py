@@ -63,7 +63,7 @@ class RecoveryCoordinator:
         *,
         engine_ref: Callable[[], Any],
         fallback_config: Any,
-        compact: Callable[[], dict[str, Any]],
+        compact: Callable[..., Any],
         effective_max_tokens: Callable[[int], int],
         context_reserve: int,
         messages_ref: Callable[[], list[dict[str, Any]]],
@@ -113,7 +113,7 @@ class RecoveryCoordinator:
                     )
                 )
                 return RecoveryOutcome.STOP, events
-            stats = self._compact_history()
+            stats = await self._compact_history()
             if stats.get("compacted"):
                 self.attempted = True
                 events.append(
@@ -143,7 +143,7 @@ class RecoveryCoordinator:
 
                 server_alive = await ping_server(engine.base_url)
                 if server_alive:
-                    stats = self._compact_history()
+                    stats = await self._compact_history()
                     if stats.get("compacted"):
                         self.attempted = True
                         reason = describe_remote_error(error)
@@ -159,7 +159,7 @@ class RecoveryCoordinator:
             # --- Phase 2: fallback with preserved context ---
             # Compact if not already done, then save non-system messages.
             if not self.attempted and len(self._messages()) > 3:
-                self._compact_history()
+                await self._compact_history()
             msgs = self._messages()
             preserved = msgs[1:] if len(msgs) > 1 else []
 

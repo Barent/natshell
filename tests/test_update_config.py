@@ -31,9 +31,14 @@ class TestValidConfigKeys:
         expected = {
             "model", "remote", "ollama", "agent", "safety",
             "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory",
-            "skills",
+            "skills", "compaction",
         }
         assert set(VALID_CONFIG_KEYS.keys()) == expected
+
+    def test_compaction_keys(self):
+        """R2-5: the LLM compaction tier is a first-class config section."""
+        keys = VALID_CONFIG_KEYS["compaction"]
+        assert keys == {"llm": "bool", "max_messages": "int", "timeout": "float"}
 
     def test_model_keys(self):
         keys = VALID_CONFIG_KEYS["model"]

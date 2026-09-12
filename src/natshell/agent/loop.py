@@ -27,9 +27,19 @@ from natshell.agent.step_metrics import (
 from natshell.agent.step_metrics import (
     handle_token_limit as _handle_token_limit,
 )
+from natshell.agent.summarizer import (
+    FailureTracker,
+    llm_summarize,
+)
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.agent.tool_dispatch import dispatch_tool_batch
-from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
+from natshell.config import (
+    AgentConfig,
+    CompactionConfig,
+    MemoryConfig,
+    ModelConfig,
+    PromptConfig,
+)
 from natshell.inference.engine import (
     CompletionResult,
     InferenceEngine,
@@ -88,6 +98,7 @@ class AgentLoop:
         memory_config: MemoryConfig | None = None,
         skills: list | None = None,
         inject_skills_in_compact: bool = False,
+        compaction: CompactionConfig | None = None,
     ) -> None:
         self.engine = engine
         self.tools = tools
@@ -95,6 +106,9 @@ class AgentLoop:
         self.config = config
         self.fallback_config = fallback_config
         self._prompt_config = prompt_config
+        # R2-5: LLM compaction tier (off by default → extractive only)
+        self._compaction = compaction or CompactionConfig()
+        self._sum_failure_tracker = FailureTracker()
         self._memory_config = memory_config or MemoryConfig()
         self._skills = skills or []
         self._inject_skills_in_compact = inject_skills_in_compact
@@ -116,7 +130,7 @@ class AgentLoop:
         self._recovery = RecoveryCoordinator(
             engine_ref=lambda: self.engine,
             fallback_config=fallback_config,
-            compact=self.compact_history,
+            compact=self.compact_now,
             effective_max_tokens=self._effective_max_tokens,
             context_reserve=config.context_reserve or 800,
             messages_ref=lambda: self.messages,
@@ -294,7 +308,7 @@ class AgentLoop:
                 ),
             })
 
-    def _preflight_compaction(self) -> AgentEvent | None:
+    async def _preflight_compaction(self) -> AgentEvent | None:
         """Pre-flight context-pressure check.
 
         Returns a banner event (to be yielded) if compaction was forced,
@@ -311,7 +325,7 @@ class AgentLoop:
                 estimated + self._max_tokens > n_ctx_pf
                 or estimated / n_ctx_pf > self._CONTEXT_PRESSURE_THRESHOLD
             ):
-                stats = self.compact_history()
+                stats = await self.compact_now()
                 if stats.get("compacted"):
                     self.messages = self._context_manager.trim_messages(self.messages)
                     event = AgentEvent(
@@ -371,7 +385,7 @@ class AgentLoop:
             # this if the fallback itself fails too.
             return await self.engine.chat_completion(**kwargs)
 
-    def _apply_inference_feedback(self, result: CompletionResult) -> AgentEvent | None:
+    async def _apply_inference_feedback(self, result: CompletionResult) -> AgentEvent | None:
         """Calibrate the token budget from actual usage and proactively compact
         when context pressure is high.
 
@@ -394,7 +408,7 @@ class AgentLoop:
             and result.prompt_tokens > 0
             and result.prompt_tokens / n_ctx > self._CONTEXT_PRESSURE_THRESHOLD
         ):
-            compact_stats = self.compact_history()
+            compact_stats = await self.compact_now()
             if compact_stats.get("compacted"):
                 event = AgentEvent(
                     type=EventType.ERROR,
@@ -555,6 +569,10 @@ class AgentLoop:
         # natshell.agent.repetition_guard — thresholds & state in one place)
         self._repetition_guard.reset()
         self._recovery.reset()
+        # Reset the LLM-compaction-tier failure breaker for this run
+        # (R2-5: after N consecutive failures the tier is skipped within a
+        # run, but resumes on the next run).
+        self._sum_failure_tracker.reset()
 
         # Cumulative stats for this run (RunStats lives in
         # natshell.agent.step_metrics — thresholds & bookkeeping in one place)
@@ -593,7 +611,7 @@ class AgentLoop:
                 self.messages = self._context_manager.trim_messages(self.messages)
 
             # Pre-flight check: force compaction if context pressure is high
-            event = self._preflight_compaction()
+            event = await self._preflight_compaction()
             if event is not None:
                 yield event
 
@@ -644,7 +662,7 @@ class AgentLoop:
                 yield ev
 
             # Calibrate budget + proactive compaction (may yield event)
-            event = self._apply_inference_feedback(result)
+            event = await self._apply_inference_feedback(result)
             if event is not None:
                 yield event
 
@@ -654,7 +672,7 @@ class AgentLoop:
             # code; TestDegenerateAgentLoop pins both branches).
             if result.degenerate:
                 outcome = _handle_degenerate_output(
-                    result, compact_stats=self.compact_history()
+                    result, compact_stats=await self.compact_now()
                 )
                 for ev in outcome.events:
                     yield ev
@@ -875,13 +893,25 @@ class AgentLoop:
             except asyncio.QueueEmpty:
                 break
 
-    def compact_history(self, dry_run: bool = False) -> dict[str, Any]:
-        """Compact conversation history, keeping system prompt and last 2 messages.
+    # ------------------------------------------------------------------
+    # Compaction (R2-5: LLM summarizer tier over the extractive glue)
+    # ------------------------------------------------------------------
 
-        Args:
-            dry_run: If True, compute and return stats without mutating messages.
+    @property
+    def compaction_tier_enabled(self) -> bool:
+        """True when the LLM compaction tier ([compaction] llm) is active."""
+        return bool(getattr(self, "_compaction", None) and self._compaction.llm)
 
-        Returns a stats dict with compaction results.
+    async def compact_now(self, dry_run: bool = False) -> dict[str, Any]:
+        """Compact conversation history (async — the LLM tier awaits the engine).
+
+        Keeps the system prompt and the last 2 messages, replacing everything
+        in between with a summary marker built by :meth:`ContextManager.
+        context_marker`.  When the :mod:`R2-5 <natshell.agent.summarizer>` LLM
+        tier is enabled, the summary starts from the local model's one-shot
+        pass and falls back to the extractive summary on any failure, so
+        compaction always produces marker text.  Honours the synchronous
+        ``ContextManager.summarizer`` seam unchanged.
         """
         if len(self.messages) <= 3:
             return {"compacted": False}
@@ -897,26 +927,25 @@ class AgentLoop:
         last_2 = rest[-2:]
         dropped = rest[:-2]
 
-        # Build extractive (or LLM-tier) summary — the marker shape is
-        # shared with budget trimming via ContextManager.context_marker
-        summary_msg: dict[str, Any]
+        # Resolve the summary text (LLM tier → extractive fallback); the
+        # marker shape is shared with budget trimming via context_marker.
+        summary: str
         if cm and dropped:
-            summary = cm.summarize(dropped)
-            summary_msg = cm.context_marker(
-                dropped,
-                f"Context compacted: {len(dropped)} messages replaced with summary.",
-                summary=summary,
-            )
+            summary = await self._resolve_summary(cm, dropped)
         else:
             summary = ""
-            summary_msg = {
-                "role": "system",
-                "content": (
-                    f"[Context compacted: {len(dropped)} messages replaced with summary.\n"
-                    f"{summary}\n"
-                    "Recent context follows.]"
-                ),
-            }
+        summary_msg = cm.context_marker(
+            dropped,
+            f"Context compacted: {len(dropped)} messages replaced with summary.",
+            summary=summary,
+        ) if cm else {
+            "role": "system",
+            "content": (
+                f"[Context compacted: {len(dropped)} messages replaced with summary.\n"
+                f"{summary}\n"
+                "Recent context follows.]"
+            ),
+        }
 
         new_messages = [system, summary_msg] + last_2
         after_msgs = len(new_messages)
@@ -933,3 +962,59 @@ class AgentLoop:
             "after_tokens": after_tokens,
             "summary": summary,
         }
+
+    async def _resolve_summary(self, cm: ContextManager, dropped: list[dict[str, Any]]) -> str:
+        """Resolve the summary text for compaction (R2-5 LLM tier).
+
+        Precedence (most explicit wins):
+        1. ``cm.summarizer`` if explicitly set — the R2-5a sync seam; its
+           return (including the built-in extractive fallback when it
+           raises / returns empty) is taken as-is.
+        2. The engine-backed LLM tier (``[compaction] llm`` enabled) —
+           with timeout and per-run failure tripping — falls back to the
+           extractive summary on any failure so compaction never produces
+           garbage.
+        3. The extractive :meth:`ContextManager.build_summary` (historical).
+        """
+        if cm.summarizer is not None:
+            return cm.summarize(dropped)
+        if self.compaction_tier_enabled:
+            result = await llm_summarize(
+                self.engine,
+                dropped,
+                max_messages=self._compaction.max_messages,
+                timeout=self._compaction.timeout,
+                tracker=self._sum_failure_tracker,
+            )
+            if result:
+                return result
+        return cm.build_summary(dropped)
+
+    def compact_history(self, dry_run: bool = False) -> dict[str, Any]:
+        """Sync convenience over :meth:`compact_now` (historical API).
+
+        Runs the async core on a fresh event loop when called from outside
+        asyncio; inside a running loop it cannot be awaited here, so that
+        path delegates to :meth:`compact_now` via the sync seam — call
+        sites on the agent loop use ``await agent.compact_now()``
+        directly, and this synchronous surface is reserved for callers
+        without a running loop (the ``/compact`` handler and tests).
+
+        Args:
+            dry_run: If True, compute and return stats without mutating messages.
+
+        Returns a stats dict with compaction results.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.compact_now(dry_run=dry_run))
+        # Inside a running loop: run blocking on the current loop's thread
+        # in a new thread — safe because it runs on its own thread+loop.
+        import concurrent.futures
+
+        def _runner() -> dict[str, Any]:
+            return asyncio.run(self.compact_now(dry_run=dry_run))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_runner).result()
