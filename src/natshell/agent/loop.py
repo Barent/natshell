@@ -897,19 +897,26 @@ class AgentLoop:
         last_2 = rest[-2:]
         dropped = rest[:-2]
 
-        # Build extractive summary
-        summary = ""
+        # Build extractive (or LLM-tier) summary — the marker shape is
+        # shared with budget trimming via ContextManager.context_marker
+        summary_msg: dict[str, Any]
         if cm and dropped:
-            summary = cm.build_summary(dropped)
-
-        summary_msg: dict[str, Any] = {
-            "role": "system",
-            "content": (
-                f"[Context compacted: {len(dropped)} messages replaced with summary.\n"
-                f"{summary}\n"
-                "Recent context follows.]"
-            ),
-        }
+            summary = cm.summarize(dropped)
+            summary_msg = cm.context_marker(
+                dropped,
+                f"Context compacted: {len(dropped)} messages replaced with summary.",
+                summary=summary,
+            )
+        else:
+            summary = ""
+            summary_msg = {
+                "role": "system",
+                "content": (
+                    f"[Context compacted: {len(dropped)} messages replaced with summary.\n"
+                    f"{summary}\n"
+                    "Recent context follows.]"
+                ),
+            }
 
         new_messages = [system, summary_msg] + last_2
         after_msgs = len(new_messages)
