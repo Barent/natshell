@@ -154,6 +154,31 @@ PlanningMessage {
     color: #7a7a9a;
 }
 
+/* Live model output while it streams in (R2-1 token streaming) */
+ThinkingBlock {
+    margin: 0 1 1 1;
+    padding: 0 1;
+    border: round #30304a;
+    background: #0d1b2a;
+    height: auto;
+}
+
+.thinking-header {
+    height: auto;
+    width: 100%;
+}
+
+.thinking-body {
+    width: 100%;
+    height: auto;
+    max-height: 24;
+}
+
+.thinking-footer {
+    height: auto;
+    align: right middle;
+}
+
 /* Command execution blocks */
 CommandBlock {
     margin: 0 1;

@@ -18,6 +18,7 @@ from natshell.tools.registry import ToolResult
 
 class EventType(Enum):
     THINKING = "thinking"
+    THINKING_TOKEN = "thinking_token"  # Live model text delta (R2-1 token streaming)
     PLANNING = "planning"  # Model's text before tool calls
     EXECUTING = "executing"  # About to run a tool
     TOOL_OUTPUT = "tool_output"  # Live output chunk from a streaming tool (R2-4)

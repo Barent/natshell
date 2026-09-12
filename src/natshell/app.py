@@ -80,6 +80,7 @@ from natshell.ui.widgets import (
     RunStatsMessage,
     SudoPasswordScreen,
     SystemMessage,
+    ThinkingBlock,
     ThinkingIndicator,
     UserMessage,
     _escape,
@@ -362,20 +363,24 @@ class NatShellApp(App):
         self,
         event: AgentEvent,
         conversation: ScrollableContainer,
-        thinking_ref: list[ThinkingIndicator | None],
+        thinking_ref: list[ThinkingIndicator | ThinkingBlock | None],
         elapsed_ref: list[int] | None = None,
     ) -> None:
         """Render a single agent event into the conversation. Shared by run_agent and run_plan.
 
-        thinking_ref is a single-element list holding the current ThinkingIndicator
-        (or None), used as a mutable reference so callers can track it.
-        elapsed_ref carries the accumulated thinking time across indicator replacements.
+        thinking_ref is a single-element list holding the current thinking
+        placeholder — a ThinkingIndicator (spinner only) or a ThinkingBlock
+        (spinner + live token body, R2-1) — or None.
+        elapsed_ref carries the accumulated thinking time across placeholder
+        hand-offs (the timer must not visibly reset between them).
         """
         if elapsed_ref is None:
             elapsed_ref = [0]
         thinking = thinking_ref[0]
 
-        # Remove thinking indicator when we get a real event
+        # Remove the thinking placeholder when a real outcome arrives.
+        # Works whether the placeholder is a ThinkingIndicator or the
+        # upgraded ThinkingBlock that token streaming promoted it into.
         if thinking and event.type in (
             EventType.PLANNING,
             EventType.TOOL_RESULT,
@@ -396,6 +401,29 @@ class NatShellApp(App):
                     conversation.mount(indicator)
                     thinking_ref[0] = indicator
                     self.query_one(LogoBanner).start_animation()
+
+            case EventType.THINKING_TOKEN:
+                # Live model text delta (R2-1 token streaming): grow the
+                # placeholder in place.  The first delta promotes a plain
+                # ThinkingIndicator into a ThinkingBlock, carrying the
+                # running elapsed clock so the timer doesn't reset.
+                chunk = event.data if isinstance(event.data, str) else str(event.data)
+                current = thinking_ref[0]
+                if isinstance(current, ThinkingIndicator):
+                    indicator = current
+                    elapsed = max(indicator._elapsed, elapsed_ref[0])
+                    indicator.remove()
+                    block = ThinkingBlock(elapsed=elapsed)
+                    conversation.mount(block)
+                    thinking_ref[0] = block
+                elif isinstance(current, ThinkingBlock):
+                    block = current
+                else:
+                    block = ThinkingBlock(elapsed=elapsed_ref[0])
+                    conversation.mount(block)
+                    thinking_ref[0] = block
+                    self.query_one(LogoBanner).start_animation()
+                block.append(chunk)
 
             case EventType.PLANNING:
                 conversation.mount(PlanningMessage(event.data))
@@ -476,7 +504,7 @@ class NatShellApp(App):
     async def run_agent(self, user_text: str) -> None:
         """Run the agent loop in a background worker."""
         conversation = self.query_one("#conversation", ScrollableContainer)
-        thinking_ref: list[ThinkingIndicator | None] = [None]
+        thinking_ref: list[ThinkingIndicator | ThinkingBlock | None] = [None]
         elapsed_ref: list[int] = [0]
 
         confirm_cb = self._gated_confirm_callback()
@@ -666,7 +694,7 @@ class NatShellApp(App):
     async def run_plan_generation(self, description: str) -> None:
         """Run the agent loop with a plan generation prompt."""
         conversation = self.query_one("#conversation", ScrollableContainer)
-        thinking_ref: list[ThinkingIndicator | None] = [None]
+        thinking_ref: list[ThinkingIndicator | ThinkingBlock | None] = [None]
         elapsed_ref: list[int] = [0]
         self._busy = True
 
@@ -878,7 +906,7 @@ class NatShellApp(App):
                 )
 
                 # Run the agent loop for this step
-                thinking_ref: list[ThinkingIndicator | None] = [None]
+                thinking_ref: list[ThinkingIndicator | ThinkingBlock | None] = [None]
                 elapsed_ref: list[int] = [0]
                 hit_max_steps = False
                 step_files: list[str] = []

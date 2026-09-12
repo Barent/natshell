@@ -30,7 +30,13 @@ from natshell.agent.step_metrics import (
 from natshell.agent.system_prompt import build_system_prompt
 from natshell.agent.tool_dispatch import dispatch_tool_batch
 from natshell.config import AgentConfig, MemoryConfig, ModelConfig, PromptConfig
-from natshell.inference.engine import CompletionResult, InferenceEngine, ToolCall
+from natshell.inference.engine import (
+    CompletionResult,
+    InferenceEngine,
+    StreamChunk,
+    StreamingEngine,
+    ToolCall,
+)
 from natshell.safety.classifier import SafetyClassifier
 from natshell.scaling import (
     MAX_OUTPUT_CHARS_TABLE,
@@ -314,6 +320,57 @@ class AgentLoop:
                     )
         return event
 
+    async def _stream_response(
+        self,
+        tool_schemas: list[dict[str, Any]],
+        token_events: list[AgentEvent],
+    ) -> CompletionResult:
+        """Drain the streaming engine for one model response (R2-1).
+
+        Consumes ``engine.stream_completion`` and collects each token delta
+        as a :class:`AgentEvent` of type ``THINKING_TOKEN`` (appended to
+        *token_events* by the caller, in arrival order).  Returns the
+        terminal :class:`CompletionResult` — the same object the engine's
+        parse pipeline would have produced for a blocking call, so every
+        downstream branch in the loop sees an identical result.
+
+        If the stream fails (``stream_completion`` raising before yielding,
+        or the underlying thread crashing), falls back to the blocking
+        ``chat_completion`` with the same arguments — a degraded engine
+        that advertises streaming but only speaks the blocking protocol
+        still works.  Only a failure that survives both paths propagates
+        to the caller's recovery ladder.
+        """
+        # The caller feature-detects this path (isinstance(self.engine,
+        # StreamingEngine)); bind through Any for type-checkers (the call
+        # returns an async generator at runtime).
+        streamer: Any = self.engine
+        kwargs = {
+            "messages": self.messages,
+            "tools": tool_schemas,
+            "temperature": self.config.temperature,
+            "max_tokens": self._max_tokens,
+        }
+        try:
+            agen = streamer.stream_completion(**kwargs)
+            result: CompletionResult | None = None
+            async for item in agen:
+                if isinstance(item, StreamChunk):
+                    if item.text:
+                        token_events.append(
+                            AgentEvent(type=EventType.THINKING_TOKEN, data=item.text)
+                        )
+                elif isinstance(item, CompletionResult):
+                    result = item
+            if result is None:
+                raise RuntimeError("stream_completion did not yield a terminal result")
+            return result
+        except Exception:
+            # A streaming engine that cannot honor its contract falls back
+            # to the blocking call — the caller's recovery ladder only sees
+            # this if the fallback itself fails too.
+            return await self.engine.chat_completion(**kwargs)
+
     def _apply_inference_feedback(self, result: CompletionResult) -> AgentEvent | None:
         """Calibrate the token budget from actual usage and proactively compact
         when context pressure is high.
@@ -540,22 +597,32 @@ class AgentLoop:
             if event is not None:
                 yield event
 
-            # Get model response
+            # Get model response.  R2-1 token streaming: when the engine
+            # conforms to the StreamingEngine protocol, the response is
+            # drained from stream_completion() inline — each token delta is
+            # surfaced (between THINKING and the first outcome, in arrival
+            # order) as a THINKING_TOKEN event, and the terminal
+            # CompletionResult (produced by the engine's *same* parse
+            # pipeline as the blocking call) lands in `result` exactly
+            # where the blocking call used to put it, so every downstream
+            # branch is unchanged.  Engines without streaming (Remote
+            # fallbacks, plain mock engines) keep the historical blocking
+            # call; a stream that fails falls back to it before the
+            # recovery ladder is consulted, and a failure that survives the
+            # fallback propagates to that same ladder.
+            token_events: list[AgentEvent] = []
             try:
                 t0 = time.monotonic()
-                result = await self.engine.chat_completion(
-                    messages=self.messages,
-                    tools=self.tools.get_tool_schemas(allowed=effective_filter),
-                    temperature=self.config.temperature,
-                    max_tokens=self._max_tokens,
-                )
-                elapsed_ms = int((time.monotonic() - t0) * 1000)
-                stats.accumulate(result, elapsed_ms)
-
-                # Calibrate budget + proactive compaction (may yield event)
-                event = self._apply_inference_feedback(result)
-                if event is not None:
-                    yield event
+                tool_schemas = self.tools.get_tool_schemas(allowed=effective_filter)
+                if isinstance(self.engine, StreamingEngine):
+                    result = await self._stream_response(tool_schemas, token_events)
+                else:
+                    result = await self.engine.chat_completion(
+                        messages=self.messages,
+                        tools=tool_schemas,
+                        temperature=self.config.temperature,
+                        max_tokens=self._max_tokens,
+                    )
             except Exception as e:
                 logger.exception("Inference error")
                 # Context overflow / connectivity failure / raw errors are
@@ -567,6 +634,19 @@ class AgentLoop:
                 if outcome is RecoveryOutcome.RETRY:
                     continue  # retry this step (compacted context / same engine)
                 return
+
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            stats.accumulate(result, elapsed_ms)
+
+            # Live token deltas (if the engine speaks streaming) go next —
+            # after THINKING, before the first outcome of this step.
+            for ev in token_events:
+                yield ev
+
+            # Calibrate budget + proactive compaction (may yield event)
+            event = self._apply_inference_feedback(result)
+            if event is not None:
+                yield event
 
             # Handle degenerate output (repetitive garbage from local models).
             # Event text + retry/stop control live in
