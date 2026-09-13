@@ -1,4 +1,11 @@
-"""Execute shell commands — the primary tool for system interaction."""
+"""Execute shell commands — the primary tool for system interaction.
+
+Sudo plumbing (password cache, ``sudo -S`` injection, prompt scrubbing) lives
+in :mod:`natshell.tools.sudo`; the historical ``execute_shell`` names are
+re-exposed below so existing imports — ``execute_shell.set_sudo_password``,
+``execute_shell._has_sudo_invocation``, ``execute_shell.needs_sudo_password``,
+etc. — keep working unchanged.
+"""
 
 from __future__ import annotations
 
@@ -8,11 +15,10 @@ import os
 import re
 import signal
 import subprocess
-import time
 from typing import Any, Callable
 
 from natshell.platform import is_windows
-from natshell.safety.command_split import split_with_delimiters
+from natshell.tools import sudo
 from natshell.tools.registry import ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -76,58 +82,29 @@ def configure_step_scaling(step: int, max_steps: int) -> None:
     scale = max(0.3, 1.0 - 0.7 * (step / max_steps))
     _apply_limits(int(_base_max_output_chars * scale))
 
-# ── Sudo password support ───────────────────────────────────────────────────
-
-_sudo_password: str | None = None
-_sudo_password_time: float = 0.0
-_SUDO_PW_TIMEOUT = 300  # 5 minutes
-
-_SUDO_RE = re.compile(r"\bsudo\b")
-
-# Package manager commands that may prompt "Do you want to continue? [Y/n]"
-_PKG_MANAGER_RE = re.compile(
-    r"\b(?:apt|apt-get|dnf|yum|pacman|zypper|apk|emerge)\b"
-)
-
-
-def _inject_sudo_dash_s(command: str) -> tuple[str, int]:
-    """Replace ``sudo`` with ``sudo -S`` only at command-invocation positions.
-
-    Returns ``(modified_command, replacement_count)``.  Uses the shared
-    tokenizer from ``natshell.safety.command_split`` (same as the classifier)
-    so that splitting logic is identical between classify and execute paths.
-    """
-    parts = split_with_delimiters(command)
-    count = 0
-    result_parts: list[str] = []
-    for i_part, part in enumerate(parts):
-        # Odd indices are delimiters — pass through unchanged
-        if i_part % 2 == 1:
-            result_parts.append(part)
-            continue
-        # Even indices are tokens — check for sudo at start of position
-        stripped = part.lstrip()
-        if re.match(r"sudo(?:\s|$)", stripped):
-            idx = part.index("sudo")
-            part = part[:idx] + "sudo -S" + part[idx + 4:]
-            count += 1
-        result_parts.append(part)
-    return "".join(result_parts), count
-
-
-def _has_sudo_invocation(command: str) -> bool:
-    """Return True if the command contains ``sudo`` at a command-invocation position."""
-    _, count = _inject_sudo_dash_s(command)
-    return count > 0
-
-
-# stderr patterns that mean "sudo wanted a password but couldn't get one"
-_SUDO_NEEDS_PW = [
-    "sudo: a terminal is required to read the password",
-    "sudo: a password is required",
-    "sudo: no tty present and no askpass program specified",
-    "sudo: no password was provided",
-]
+# ── Sudo plumbing ──────────────────────────────────────────────────────────
+#
+# The helpers that used to live in this module (password cache, ``sudo -S``
+# injection, needs-password detection, prompt scrub) moved to
+# :mod:`natshell.tools.sudo` (R1 "SudoHandler" unit).  The aliases below keep
+# every historical ``execute_shell`` import path working — callers such as
+# ``agent/sudo_retry.py``, ``app.py`` and the test-suite reach for
+# ``execute_shell.set_sudo_password`` and friends — while the two shell
+# run-paths here call the shared implementations directly via ``sudo.*`` so
+# blocking and streaming can never drift.
+SUDO = sudo.SUDO
+SudoHandler = sudo.SudoHandler  # re-export for historical import paths
+set_sudo_password = sudo.set_password
+clear_sudo_password = sudo.clear_password
+needs_sudo_password = sudo.needs_password
+_SUDO_NEEDS_PW = sudo._SUDO_NEEDS_PW
+_PKG_MANAGER_RE = sudo._PKG_MANAGER_RE
+_SUDO_PW_TIMEOUT = sudo._SUDO_PW_TIMEOUT
+_get_sudo_password = sudo.get_password
+_has_sudo_invocation = sudo.has_invocation
+_inject_sudo_dash_s = sudo.inject_dash_s
+_prepare_sudo = sudo.prepare_for_run
+_scrub_sudo_prompt = sudo.scrub_prompt
 
 # Environment variables that should not be exposed to LLM-executed commands
 _SENSITIVE_ENV_VARS = {
@@ -161,48 +138,6 @@ def _filtered_env() -> dict[str, str]:
         if k not in _SENSITIVE_ENV_VARS
         and not any(k.endswith(s) for s in _SENSITIVE_SUFFIXES)
     }
-
-
-def _get_sudo_password() -> str | None:
-    """Return the cached sudo password, or None if expired."""
-    global _sudo_password, _sudo_password_time
-    if _sudo_password and (time.monotonic() - _sudo_password_time) > _SUDO_PW_TIMEOUT:
-        _sudo_password = None
-    return _sudo_password
-
-
-def set_sudo_password(password: str) -> None:
-    """Cache the sudo password for subsequent execute_shell calls."""
-    global _sudo_password, _sudo_password_time
-    _sudo_password = password
-    _sudo_password_time = time.monotonic()
-
-
-def clear_sudo_password() -> None:
-    """Clear the cached sudo password."""
-    global _sudo_password
-    _sudo_password = None
-
-
-def needs_sudo_password(result: ToolResult) -> bool:
-    """Return True if the result indicates sudo needed a password it didn't get.
-
-    Scans both stderr and stdout, and does not gate on the exit code. Models
-    frequently rewrite commands in ways that hide the sudo failure from a
-    stderr-and-exit-code-only check:
-
-    * ``... 2>&1`` redirects sudo's error message into stdout, leaving
-      ``result.error`` empty.
-    * ``...; echo "Exit: $?"`` (or any trailing command) makes the overall
-      exit code ``0`` even though sudo itself failed.
-
-    Either rewrite alone would suppress the password prompt. Because the sudo
-    signatures in ``_SUDO_NEEDS_PW`` are highly specific, matching them
-    anywhere in the combined output is a reliable signal regardless of how the
-    command was wrapped.
-    """
-    haystack = f"{result.error}\n{result.output}"
-    return any(msg in haystack for msg in _SUDO_NEEDS_PW)
 
 
 # ── Tool definition ─────────────────────────────────────────────────────────
@@ -301,46 +236,6 @@ def _effective_timeout(command: str, timeout: int) -> int:
         )
         timeout = min_timeout
     return max(1, min(timeout, 300))  # re-clamp after auto-raise
-
-
-def _prepare_sudo(command: str) -> tuple[str, str | None]:
-    """Return ``(final_command, stdin_text_or_None)`` for a sudo-aware run.
-
-    When a sudo password is cached and ``command`` invokes sudo at a command
-    position, sudo is rewritten to ``sudo -S`` (via :func:`_inject_sudo_dash_s`,
-    so matches inside quoted strings are *not* rewritten) and the password —
-    one line per sudo occurrence — is returned as the stdin payload.  A
-    trailing ``y\\n`` x3 is appended for package-manager prompts *only*, so
-    interactive programs (fdisk, mysql, …) never receive a stray ``y``.
-    Returns ``None`` stdin when no password injection applies, meaning the
-    caller should feed stdin from ``/dev/null``.
-    """
-    sudo_pw = _get_sudo_password()
-    if not is_windows() and sudo_pw and _has_sudo_invocation(command):
-        command, count = _inject_sudo_dash_s(command)
-        stdin_text = (sudo_pw + "\n") * count
-        if _PKG_MANAGER_RE.search(command):
-            stdin_text += "y\n" * 3
-        return command, stdin_text
-    return command, None
-
-
-def _scrub_sudo_prompt(stderr: str, sudo_pw: str | None) -> str:
-    """Remove sudo's ``[sudo] password for …`` prompt lines from stderr.
-
-    sudo -S echoes its prompt to stderr; it must not reach the model (and it
-    is a password-plumbing leak).  A no-op when no password is in play or on
-    Windows, so non-sudo runs keep their stderr untouched.
-    """
-    if sudo_pw and not is_windows():
-        return (
-            "\n".join(
-                line for line in stderr.splitlines()
-                if not line.startswith("[sudo] password for")
-            )
-            .strip()
-        )
-    return stderr
 
 
 def _truncate_output(text: str) -> tuple[str, bool]:
