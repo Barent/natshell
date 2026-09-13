@@ -36,7 +36,7 @@ the review's items are already done. The original two-part analysis lives in
 | R1-6 | Extraction of recovery state machine to `recovery.py` | R1§1.3 | ✅ DONE | `agent/recovery.py` owns the ordered ladder + per-run `attempted` latch; loop delegates via `RecoveryCoordinator.handle`; `_context_recovery_attempted` now a read-only property; 16 new tests in `tests/test_recovery.py`. Suite 1614 green. |
 | R1-7 | Slim `handle_user_message` to ~250 lines (orchestrator only) | R1§1 | ✅ DONE | `handle_user_message` 790 → **252 lines** (`0873256` → `920ece4` → `627d9fc`; loop.py file 1048 → 824 lines). Extracted: intent/pre-flight/feedback (method helpers), degenerate + length-truncation outcomes + run stats → `agent/step_metrics.py` (22 tests), tool-call dispatch lifecycle → `agent/tool_dispatch.py` (15 tests). Event order/side effects byte-identical throughout; the loop stays the sole owner of message mutation and flow (continue/return/break). |
 | R1-8 | `plan_executor.py`: split prompt-templates from pure helpers | R1§5 | ✅ DONE | `agent/plan_prompts.py` owns `_build_plan_prompt`/`_build_step_prompt`/`_build_verify_fix_prompt`/`VERIFY_FIX_BUDGET`/`_shallow_tree` (400 lines of greppable templates); `plan_executor.py` 429→75 lines keeps `_effective_plan_max_steps` + `validate_plan` and re-exports the moved names (`06381d6`). Prompts byte-identical vs pre-move snapshot; suite 1651 green. |
-| — | Small: group `execute_shell` sudo helpers into one `SudoHandler` | R1§5 | ⏳ OPTIONAL | `_inject_sudo_dash_s`/`_has_sudo_invocation`/`needs_sudo_password`/`configure_limits`. |
+| — | Small: group `execute_shell` sudo helpers into one `SudoHandler` | R1§5 | ✅ DONE | `tools/sudo.py` (224 lines) owns the 5-min password cache, position-aware `sudo -S` injection, needs-password detection and prompt scrubbing; `SudoHandler` facade + shared `SUDO` instance; `execute_shell` re-exports every historical name (32 insertions / 137 deletions, 798→574 lines); both shell run-paths and `agent/sudo_retry.py` share one password state. 7 new tests (`tests/test_sudo_handler.py`); suite 1832 green. |
 
 ## Review 2 — performance additions (the real remaining plan)
 
@@ -55,6 +55,34 @@ push. **Verify the seam R1 created before building on it.**
 | — | R2§4 "real tokenizer in budget" | R2§4 | ✅ DONE | `tokenizer_fn = self.engine.count_tokens` already wired into `ContextManager`. |
 
 ## Changelog (newest first)
+
+- **2026-09-13** SUDO-HANDLER UNIT DONE (`0791d86`) — the last remaining
+  ⏳ item. `src/natshell/tools/sudo.py` (224 lines) is now the single home
+  for the four helpers that were scattered through `execute_shell.py`: the
+  5-minute sudo password cache (`get/set/clear_password`), the
+  position-aware `sudo` → `sudo -S` rewrite (`inject_dash_s`, same
+  `split_with_delimiters` tokenizer as the classifier), the needs-password
+  detector (`needs_password`, scans stderr *and* stdout), the
+  package-manager `y\n`×3 run-preparation (`prepare_for_run`) and the
+  `[sudo] password for …` prompt scrub (`scrub_prompt`). A thin
+  `SudoHandler` facade and shared `SUDO` instance sit over the same module
+  state, so the facade and the free-function API are interchangeable.
+  `execute_shell.py` re-exposes every historical name
+  (`set_sudo_password`, `needs_sudo_password`, `_inject_sudo_dash_s`,
+  `_prepare_sudo`, `_scrub_sudo_prompt`, `_SUDO_NEEDS_PW`,
+  `_PKG_MANAGER_RE`, `_SUDO_PW_TIMEOUT`, …) as aliases — 32 insertions /
+  137 deletions, 798 → 574 lines — so `agent/sudo_retry.py`, `app.py`,
+  `agent/tool_dispatch.py` and the test-suite import paths are untouched,
+  and both shell run-paths (blocking + streaming) now call `sudo.*`
+  directly so they can never drift. Behaviour byte-identical: all ~30
+  pre-existing sudo tests (`test_tools.py`, `test_stream_execute_shell.py`,
+  `test_agent.py`) pass unchanged. 7 new tests in
+  `tests/test_sudo_handler.py` pin the extraction: facade/method API
+  surface, shared state between facade and free-function API, both
+  `clear_*` spellings, behavioural delegation, `prepare_for_run` parity
+  (incl. pkg-manager tail), and the no-import-cycle invariant. Suite
+  **1832 green** (was 1825), ruff clean. **ALL PLAN UNITS NOW DONE** —
+  the next tick is free to start follow-up items or open the PR.
 
 - **2026-09-13** R2-6 FEEDBACK HALF SHIPPED (max_tokens autotune) —
   completing the record→feedback cycle for the token budget:
