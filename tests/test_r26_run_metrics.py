@@ -26,11 +26,11 @@ from natshell.agent.context import SystemContext
 from natshell.agent.loop import AgentLoop
 from natshell.agent.run_metrics import (
     FILENAME,
+    RunMetricsStore,
     get_run_metrics_store,
     reset_run_metrics_store,
-    RunMetricsStore,
 )
-from natshell.config import AutotuneConfig, AgentConfig, SafetyConfig
+from natshell.config import AgentConfig, AutotuneConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo
 from natshell.safety.classifier import SafetyClassifier
 from natshell.scaling import advise_max_tokens
@@ -92,7 +92,7 @@ def _reset_store_singleton() -> None:
 class TestStoreBootstrap:
     def test_creates_dir_0700(self, tmp_path: Path):
         d = tmp_path / "metrics"
-        store = RunMetricsStore(d)
+        RunMetricsStore(d)
         assert d.is_dir()
         assert d.stat().st_mode & 0o777 == 0o700
 
@@ -499,7 +499,7 @@ class TestLoopAutotuneIntegration:
                 responses=[CompletionResult(content="ok")],
                 autotune=autotune,
             )
-            scaled = 4096 // 4  # 1024 for n_ctx=4096
+            # scaled = 4096 // 4 = 1024 for n_ctx=4096
             # min(1024*1.4=1433, 1024+1000=2024, 65536) → 1433
             assert agent._max_tokens == 1433
         finally:
