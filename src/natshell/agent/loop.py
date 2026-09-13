@@ -579,242 +579,290 @@ class AgentLoop:
         stats = RunStats(t0=time.monotonic())
         steps_used = 0
 
-        max_steps = getattr(self, "_max_steps", self.config.max_steps)
-        for step in range(max_steps):
-            steps_used = step + 1
+        try:
+            max_steps = getattr(self, "_max_steps", self.config.max_steps)
+            for step in range(max_steps):
+                steps_used = step + 1
 
-            # Drain queued messages from the user
-            queued = self._drain_queued_messages()
-            if queued:
-                combined = "\n\n".join(queued)
-                guidance_msg = (
-                    "[IMPORTANT — USER GUIDANCE RECEIVED MID-TASK]\n"
-                    "The user has sent the following message while you were "
-                    "working. Read it carefully and adjust your approach "
-                    "accordingly. This takes priority over your current plan.\n\n"
-                    f"{combined}"
-                )
-                self.messages.append({"role": "user", "content": guidance_msg})
-                for queued_text in queued:
-                    yield AgentEvent(type=EventType.QUEUED_MESSAGE, data=queued_text)
-
-            # Signal that the model is thinking
-            yield AgentEvent(type=EventType.THINKING)
-
-            # Progressively tighten output truncation as steps are consumed
-            _exec_shell_mod.configure_step_scaling(step, max_steps)
-
-            # Compress old tool exchanges every 3 steps, then trim context
-            if step % 3 == 0:
-                self._compress_old_messages()
-            if self._context_manager:
-                self.messages = self._context_manager.trim_messages(self.messages)
-
-            # Pre-flight check: force compaction if context pressure is high
-            event = await self._preflight_compaction()
-            if event is not None:
-                yield event
-
-            # Get model response.  R2-1 token streaming: when the engine
-            # conforms to the StreamingEngine protocol, the response is
-            # drained from stream_completion() inline — each token delta is
-            # surfaced (between THINKING and the first outcome, in arrival
-            # order) as a THINKING_TOKEN event, and the terminal
-            # CompletionResult (produced by the engine's *same* parse
-            # pipeline as the blocking call) lands in `result` exactly
-            # where the blocking call used to put it, so every downstream
-            # branch is unchanged.  Engines without streaming (Remote
-            # fallbacks, plain mock engines) keep the historical blocking
-            # call; a stream that fails falls back to it before the
-            # recovery ladder is consulted, and a failure that survives the
-            # fallback propagates to that same ladder.
-            token_events: list[AgentEvent] = []
-            try:
-                t0 = time.monotonic()
-                tool_schemas = self.tools.get_tool_schemas(allowed=effective_filter)
-                if isinstance(self.engine, StreamingEngine):
-                    result = await self._stream_response(tool_schemas, token_events)
-                else:
-                    result = await self.engine.chat_completion(
-                        messages=self.messages,
-                        tools=tool_schemas,
-                        temperature=self.config.temperature,
-                        max_tokens=self._max_tokens,
+                # Drain queued messages from the user
+                queued = self._drain_queued_messages()
+                if queued:
+                    combined = "\n\n".join(queued)
+                    guidance_msg = (
+                        "[IMPORTANT — USER GUIDANCE RECEIVED MID-TASK]\n"
+                        "The user has sent the following message while you were "
+                        "working. Read it carefully and adjust your approach "
+                        "accordingly. This takes priority over your current plan.\n\n"
+                        f"{combined}"
                     )
-            except Exception as e:
-                logger.exception("Inference error")
-                # Context overflow / connectivity failure / raw errors are
-                # handled by the ordered recovery ladder in
-                # natshell.agent.recovery — see RecoveryCoordinator.handle.
-                outcome, banner_events = await self._recovery.handle(e)
-                for event in banner_events:
+                    self.messages.append({"role": "user", "content": guidance_msg})
+                    for queued_text in queued:
+                        yield AgentEvent(type=EventType.QUEUED_MESSAGE, data=queued_text)
+
+                # Signal that the model is thinking
+                yield AgentEvent(type=EventType.THINKING)
+
+                # Progressively tighten output truncation as steps are consumed
+                _exec_shell_mod.configure_step_scaling(step, max_steps)
+
+                # Compress old tool exchanges every 3 steps, then trim context
+                if step % 3 == 0:
+                    self._compress_old_messages()
+                if self._context_manager:
+                    self.messages = self._context_manager.trim_messages(self.messages)
+
+                # Pre-flight check: force compaction if context pressure is high
+                event = await self._preflight_compaction()
+                if event is not None:
                     yield event
-                if outcome is RecoveryOutcome.RETRY:
-                    continue  # retry this step (compacted context / same engine)
-                return
 
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
-            stats.accumulate(result, elapsed_ms)
+                # Get model response.  R2-1 token streaming: when the engine
+                # conforms to the StreamingEngine protocol, the response is
+                # drained from stream_completion() inline — each token delta is
+                # surfaced (between THINKING and the first outcome, in arrival
+                # order) as a THINKING_TOKEN event, and the terminal
+                # CompletionResult (produced by the engine's *same* parse
+                # pipeline as the blocking call) lands in `result` exactly
+                # where the blocking call used to put it, so every downstream
+                # branch is unchanged.  Engines without streaming (Remote
+                # fallbacks, plain mock engines) keep the historical blocking
+                # call; a stream that fails falls back to it before the
+                # recovery ladder is consulted, and a failure that survives the
+                # fallback propagates to that same ladder.
+                token_events: list[AgentEvent] = []
+                try:
+                    t0 = time.monotonic()
+                    tool_schemas = self.tools.get_tool_schemas(allowed=effective_filter)
+                    if isinstance(self.engine, StreamingEngine):
+                        result = await self._stream_response(tool_schemas, token_events)
+                    else:
+                        result = await self.engine.chat_completion(
+                            messages=self.messages,
+                            tools=tool_schemas,
+                            temperature=self.config.temperature,
+                            max_tokens=self._max_tokens,
+                        )
+                except Exception as e:
+                    logger.exception("Inference error")
+                    # Context overflow / connectivity failure / raw errors are
+                    # handled by the ordered recovery ladder in
+                    # natshell.agent.recovery — see RecoveryCoordinator.handle.
+                    outcome, banner_events = await self._recovery.handle(e)
+                    for event in banner_events:
+                        yield event
+                    if outcome is RecoveryOutcome.RETRY:
+                        continue  # retry this step (compacted context / same engine)
+                    return
 
-            # Live token deltas (if the engine speaks streaming) go next —
-            # after THINKING, before the first outcome of this step.
-            for ev in token_events:
-                yield ev
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                stats.accumulate(result, elapsed_ms)
 
-            # Calibrate budget + proactive compaction (may yield event)
-            event = await self._apply_inference_feedback(result)
-            if event is not None:
-                yield event
-
-            # Handle degenerate output (repetitive garbage from local models).
-            # Event text + retry/stop control live in
-            # natshell.agent.step_metrics (byte-identical to the old inline
-            # code; TestDegenerateAgentLoop pins both branches).
-            if result.degenerate:
-                outcome = _handle_degenerate_output(
-                    result, compact_stats=await self.compact_now()
-                )
-                for ev in outcome.events:
+                # Live token deltas (if the engine speaks streaming) go next —
+                # after THINKING, before the first outcome of this step.
+                for ev in token_events:
                     yield ev
-                if outcome.control is StepControl.RETRY:
+
+                # Calibrate budget + proactive compaction (may yield event)
+                event = await self._apply_inference_feedback(result)
+                if event is not None:
+                    yield event
+
+                # Handle degenerate output (repetitive garbage from local models).
+                # Event text + retry/stop control live in
+                # natshell.agent.step_metrics (byte-identical to the old inline
+                # code; TestDegenerateAgentLoop pins both branches).
+                if result.degenerate:
+                    outcome = _handle_degenerate_output(
+                        result, compact_stats=await self.compact_now()
+                    )
+                    for ev in outcome.events:
+                        yield ev
+                    if outcome.control is StepControl.RETRY:
+                        continue
+                    return
+
+                # Handle truncated responses (thinking consumed all tokens)
+                if result.finish_reason == "length" and not result.tool_calls:
+                    # Strip the thinking residue, warn the user, and — when a
+                    # partial answer survived — surface it.  Event text, the
+                    # think-strip, and the RUN_STATS epilogue live in
+                    # natshell.agent.step_metrics (byte-identical to the old
+                    # inline code; TestTruncatedResponse pins all three branches).
+                    # Message mutation (remembering the partial answer) stays
+                    # in the loop.
+                    outcome = _handle_token_limit(
+                        result,
+                        steps_used=steps_used,
+                        stats=stats,
+                        now=time.monotonic(),
+                    )
+                    if outcome.partial is not None:
+                        self.messages.append(
+                            {"role": "assistant", "content": outcome.partial}
+                        )
+                    for ev in outcome.events:
+                        yield ev
+                    return
+
+                # Case 1: Model wants to call tools
+                if result.tool_calls:
+                    logger.debug(
+                        "Step %d: tool calls = %s",
+                        steps_used,
+                        [tc.name for tc in result.tool_calls],
+                    )
+                    # If the model also provided text (planning/reasoning), emit it
+                    if result.content:
+                        yield AgentEvent(type=EventType.PLANNING, data=result.content)
+
+                    # One dispatch batch's whole lifecycle — per-call normalize,
+                    # classify, confirm, execute, optional sudo retry,
+                    # repetition-guard observation, step-budget hint, exchange
+                    # append — lives in natshell.agent.tool_dispatch.  Consecutive
+                    # PARALLEL_SAFE_TOOLS calls (list_directory, natshell_help,
+                    # skill, fetch_url, kiwix_search) run concurrently (R2-2);
+                    # everything else keeps the historical one-at-a-time path.
+                    # Event ordering is the in-batch concatenation each call
+                    # produced serially (the tool-execution, sudo-retry and
+                    # repetition tests pin it).  A guard ``stop`` halts the
+                    # remaining batch segments exactly as the old inline loop's
+                    # ``break`` did (its regression is pinned in
+                    # tests/test_tool_dispatch.py), and the run then continues
+                    # to the next LLM step so the model sees the CRITICAL
+                    # suffix and stops repeating.
+                    dispatch = await dispatch_tool_batch(
+                        result.tool_calls,
+                        tools=self.tools,
+                        safety=self.safety,
+                        guard=self._repetition_guard,
+                        confirm_callback=confirm_callback,
+                        password_callback=password_callback,
+                        steps_used=steps_used,
+                        max_steps=max_steps,
+                        append_exchange=self._append_tool_exchange,
+                        stream_output=stream_output,
+                    )
+                    for ev in dispatch.events:
+                        yield ev
+
+                    # Continue the loop — model will see tool results and decide next step
                     continue
-                return
 
-            # Handle truncated responses (thinking consumed all tokens)
-            if result.finish_reason == "length" and not result.tool_calls:
-                # Strip the thinking residue, warn the user, and — when a
-                # partial answer survived — surface it.  Event text, the
-                # think-strip, and the RUN_STATS epilogue live in
-                # natshell.agent.step_metrics (byte-identical to the old
-                # inline code; TestTruncatedResponse pins all three branches).
-                # Message mutation (remembering the partial answer) stays
-                # in the loop.
-                outcome = _handle_token_limit(
-                    result,
-                    steps_used=steps_used,
-                    stats=stats,
-                    now=time.monotonic(),
-                )
-                if outcome.partial is not None:
-                    self.messages.append(
-                        {"role": "assistant", "content": outcome.partial}
-                    )
-                for ev in outcome.events:
-                    yield ev
-                return
-
-            # Case 1: Model wants to call tools
-            if result.tool_calls:
-                logger.debug(
-                    "Step %d: tool calls = %s",
-                    steps_used,
-                    [tc.name for tc in result.tool_calls],
-                )
-                # If the model also provided text (planning/reasoning), emit it
+                # Case 2: Model responded with text only (task complete or needs info)
                 if result.content:
-                    yield AgentEvent(type=EventType.PLANNING, data=result.content)
+                    # Completion guard: warn if all edits failed (state now lives
+                    # in the repetition guard)
+                    if self._repetition_guard.completion_guard_due:
+                        self._repetition_guard.mark_completion_guard_sent()
+                        self.messages.append(
+                            {"role": "assistant", "content": result.content}
+                        )
+                        self.messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[SYSTEM] Warning: All edit_file calls failed. "
+                                    "Verify changes were applied before declaring "
+                                    "the task complete."
+                                ),
+                            }
+                        )
+                        continue
 
-                # One dispatch batch's whole lifecycle — per-call normalize,
-                # classify, confirm, execute, optional sudo retry,
-                # repetition-guard observation, step-budget hint, exchange
-                # append — lives in natshell.agent.tool_dispatch.  Consecutive
-                # PARALLEL_SAFE_TOOLS calls (list_directory, natshell_help,
-                # skill, fetch_url, kiwix_search) run concurrently (R2-2);
-                # everything else keeps the historical one-at-a-time path.
-                # Event ordering is the in-batch concatenation each call
-                # produced serially (the tool-execution, sudo-retry and
-                # repetition tests pin it).  A guard ``stop`` halts the
-                # remaining batch segments exactly as the old inline loop's
-                # ``break`` did (its regression is pinned in
-                # tests/test_tool_dispatch.py), and the run then continues
-                # to the next LLM step so the model sees the CRITICAL
-                # suffix and stops repeating.
-                dispatch = await dispatch_tool_batch(
-                    result.tool_calls,
-                    tools=self.tools,
-                    safety=self.safety,
-                    guard=self._repetition_guard,
-                    confirm_callback=confirm_callback,
-                    password_callback=password_callback,
-                    steps_used=steps_used,
-                    max_steps=max_steps,
-                    append_exchange=self._append_tool_exchange,
-                    stream_output=stream_output,
-                )
-                for ev in dispatch.events:
-                    yield ev
-
-                # Continue the loop — model will see tool results and decide next step
-                continue
-
-            # Case 2: Model responded with text only (task complete or needs info)
-            if result.content:
-                # Completion guard: warn if all edits failed (state now lives
-                # in the repetition guard)
-                if self._repetition_guard.completion_guard_due:
-                    self._repetition_guard.mark_completion_guard_sent()
-                    self.messages.append(
-                        {"role": "assistant", "content": result.content}
-                    )
                     self.messages.append(
                         {
-                            "role": "user",
-                            "content": (
-                                "[SYSTEM] Warning: All edit_file calls failed. "
-                                "Verify changes were applied before declaring "
-                                "the task complete."
-                            ),
+                            "role": "assistant",
+                            "content": result.content,
                         }
                     )
-                    continue
+                    yield AgentEvent(
+                        type=EventType.RESPONSE,
+                        data=result.content,
+                        metrics=_build_metrics(result, elapsed_ms),
+                    )
+                    if steps_used > 1:
+                        yield AgentEvent(
+                            type=EventType.RUN_STATS,
+                            metrics=stats.run_stats(steps_used, time.monotonic()),
+                        )
+                    return
 
-                self.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": result.content,
-                    }
+                # Case 3: Empty response (shouldn't happen, but handle gracefully)
+                logger.warning(
+                    "Empty response from model: finish_reason=%s, "
+                    "prompt_tokens=%s, completion_tokens=%s",
+                    result.finish_reason, result.prompt_tokens,
+                    result.completion_tokens,
                 )
                 yield AgentEvent(
-                    type=EventType.RESPONSE,
-                    data=result.content,
-                    metrics=_build_metrics(result, elapsed_ms),
+                    type=EventType.ERROR,
+                    data="Model returned an empty response.",
                 )
-                if steps_used > 1:
-                    yield AgentEvent(
-                        type=EventType.RUN_STATS,
-                        metrics=stats.run_stats(steps_used, time.monotonic()),
-                    )
                 return
 
-            # Case 3: Empty response (shouldn't happen, but handle gracefully)
-            logger.warning(
-                "Empty response from model: finish_reason=%s, "
-                "prompt_tokens=%s, completion_tokens=%s",
-                result.finish_reason, result.prompt_tokens,
-                result.completion_tokens,
+            # Hit max steps
+            yield AgentEvent(
+                type=EventType.RESPONSE,
+                data=f"I've reached the maximum number of steps ({max_steps}). "
+                f"Here's what I've done so far. You can continue with a follow-up request.",
             )
             yield AgentEvent(
-                type=EventType.ERROR,
-                data="Model returned an empty response.",
+                type=EventType.RUN_STATS,
+                metrics=stats.run_stats(steps_used, time.monotonic()),
             )
-            return
-
-        # Hit max steps
-        yield AgentEvent(
-            type=EventType.RESPONSE,
-            data=f"I've reached the maximum number of steps ({max_steps}). "
-            f"Here's what I've done so far. You can continue with a follow-up request.",
-        )
-        yield AgentEvent(
-            type=EventType.RUN_STATS,
-            metrics=stats.run_stats(steps_used, time.monotonic()),
-        )
+        finally:
+            # R2-6 (recording half): persist cumulative run stats exactly
+            # once per run, on every terminal path (response, error,
+            # max-steps, degenerate, truncated, or an escaping
+            # exception).  Best-effort — the store swallows all I/O
+            # errors and is a no-op when disabled (or
+            # NATSHELL_DISABLE_METRICS is set), so recording can never
+            # change agent behaviour.
+            self._record_run(stats, steps_used)
 
     def _describe_remote_error(self, error: Exception) -> str:
         """Build a short user-facing label for a remote inference failure."""
         from natshell.agent.fallback import describe_remote_error
 
         return describe_remote_error(error)
+
+    def _record_run(self, stats: Any, steps_used: int) -> None:
+        """Persist one run's cumulative stats (R2-6 recording half).
+
+        Best-effort by design: the store swallows every I/O error, returns
+        ``None`` when disabled (or when ``NATSHELL_DISABLE_METRICS`` is
+        set), and never raises.  Recording can therefore never change agent
+        behaviour or break a run.
+
+        Engine metadata is attached in a lightweight, defensive way — the
+        feedback half (a follow-up) will want the model identity and context
+        window alongside the token/step/time totals when it tunes
+        :mod:`natshell.scaling` decisions, but anything the engine doesn't
+        report is simply omitted.
+        """
+        try:
+            from natshell.agent.run_metrics import get_run_metrics_store
+
+            stats_dict = stats.run_stats(steps_used, time.monotonic()) if stats else {}
+            if not stats_dict:
+                return
+            context: dict[str, Any] = {}
+            try:
+                info = self.engine.engine_info()
+                engine_type = getattr(info, "engine_type", None)
+                model_name = getattr(info, "model_name", None)
+                n_ctx = getattr(info, "n_ctx", None)
+                if engine_type:
+                    context["engine_type"] = engine_type
+                if model_name:
+                    context["model"] = model_name
+                if n_ctx:
+                    context["n_ctx"] = n_ctx
+            except (AttributeError, TypeError):
+                pass
+            get_run_metrics_store().record(stats_dict, **context)
+        except Exception:  # pragma: no cover — belt-and-suspenders, see above
+            logger.debug("Run-metrics recording failed", exc_info=True)
 
     @property
     def _context_recovery_attempted(self) -> bool:
