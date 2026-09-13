@@ -56,6 +56,25 @@ push. **Verify the seam R1 created before building on it.**
 
 ## Changelog (newest first)
 
+- **2026-09-13** CI LINT GATE FIXED (`a05a958`) — PR #47
+  (https://github.com/Barent/natshell/pull/47, open, mergeable, created
+  2026-09-09, already tracking `refactor/simplify-core`) has been
+  failing its own CI since the R2-6 test work: the `ruff check
+  src/ tests/` step was red on every run because
+  `tests/test_r26_run_metrics.py` carried I001 (unsorted imports) and
+  2× F841 (dead locals `store`, `scaled`). Every earlier "ruff clean"
+  claim (R2-1…R2-4) is verified accurate at its own sha — re-linted
+  each commit in a temporary worktree; only this file was ever dirty.
+  Fix: ruff `--fix` import sort, drop the dead `store = ` in
+  `test_creates_dir_0700`, replace the dead `scaled = 4096 // 4` with
+  the comment that already explains the asserted `1433`. No assertion
+  or behaviour changed anywhere: pytest **1832 passed** (unchanged),
+  `ruff check src/ tests/` → **All checks passed**. Push re-triggers
+  PR #47 CI; the lint step should now pass. (The full-matrix pytest
+  steps on 3.11/3.12/3.13 have never actually run yet on this branch —
+  every prior run was cancelled at the lint step; worth confirming
+  green next.)
+
 - **2026-09-13** SUDO-HANDLER UNIT DONE (`0791d86`) — the last remaining
   ⏳ item. `src/natshell/tools/sudo.py` (224 lines) is now the single home
   for the four helpers that were scattered through `execute_shell.py`: the
@@ -81,8 +100,17 @@ push. **Verify the seam R1 created before building on it.**
   surface, shared state between facade and free-function API, both
   `clear_*` spellings, behavioural delegation, `prepare_for_run` parity
   (incl. pkg-manager tail), and the no-import-cycle invariant. Suite
-  **1832 green** (was 1825), ruff clean. **ALL PLAN UNITS NOW DONE** —
-  the next tick is free to start follow-up items or open the PR.
+  **1832 green** (was 1825). **Correction from this tick:** the "ruff
+  clean" claim in the 2026-09-13 R2-6 changelog entries above (and in
+  this entry) is void — the tree carries 3 ruff findings in
+  `tests/test_r26_run_metrics.py` (I001 import order, 2× F841 unused
+  locals) introduced with the R2-6 test work, which is why CI's lint
+  gate (`.github/workflows/ci.yml`) has been **red on every
+  `refactor/simplify-core` run since `98bc276`** (2026-09-13). Verified
+  by linting each recorded commit in a temp worktree: every earlier
+  "ruff clean" claim (R2-1/R2-2/R2-3/R2-4) is accurate at its own sha;
+  only this entry's claim was wrong. Fixed this tick in **`a05a958`**
+  (see the newest changelog entry for the fix + PR #47 status).
 
 - **2026-09-13** R2-6 FEEDBACK HALF SHIPPED (max_tokens autotune) —
   completing the record→feedback cycle for the token budget:
