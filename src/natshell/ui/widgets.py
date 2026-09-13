@@ -403,6 +403,8 @@ class CommandBlock(Vertical):
         self._command = command
         self._output = output
         self._exit_code = exit_code
+        self._stream = ""  # accumulated live chunks (R2-4), until set_result
+        self._final = bool(output)
 
     def compose(self) -> ComposeResult:
         color = "green" if self._exit_code == 0 else "red"
@@ -415,10 +417,36 @@ class CommandBlock(Vertical):
         if self._output:
             yield Static(_escape(self._output), classes="cmd-output")
 
+    def _update_output(self, text: str) -> None:
+        """Render ``text`` into the single ``.cmd-output`` area (create or
+        replace).  Used by both :meth:`set_partial` and :meth:`set_result`."""
+        existing = self.query(".cmd-output")
+        if existing:
+            existing.first().update(_escape(text))
+        elif text:
+            self.mount(Static(_escape(text), classes="cmd-output"))
+
+    def set_partial(self, text: str) -> None:
+        """Append a live stdout chunk (R2-4).
+
+        Accumulates into ``self._stream`` and re-renders the output area with
+        everything received so far.  :meth:`set_result` (on the terminal
+        TOOL_RESULT) supersedes this with the authoritative final text.
+        """
+        self._stream += text
+        self._update_output(self._stream)
+
     def set_result(self, output: str, exit_code: int) -> None:
-        """Update the block with command output after execution."""
+        """Finalize the block with command output after execution.
+
+        Replaces any accumulated live chunks (``set_partial``) with the
+        authoritative (possibly truncated) final text and sets the header
+        colour from the real exit code.
+        """
         self._output = output
         self._exit_code = exit_code
+        self._final = True
+        self._stream = ""
         color = "green" if exit_code == 0 else "red"
         try:
             self.query_one(".cmd-text", Static).update(
@@ -426,18 +454,16 @@ class CommandBlock(Vertical):
             )
         except Exception:
             pass
-        escaped_output = _escape(output)
-        existing = self.query(".cmd-output")
-        if existing:
-            existing.first().update(escaped_output)
-        elif output:
-            self.mount(Static(escaped_output, classes="cmd-output"))
+        self._update_output(output)
 
     @property
     def copyable_text(self) -> str:
         text = f"$ {self._command}"
-        if self._output:
-            text += f"\n{self._output}"
+        # Prefer the finalized text; fall back to whatever has streamed in so
+        # far (a mid-run copy still gets the live output).
+        body = self._output if self._final else (self._stream or self._output)
+        if body:
+            text += f"\n{body}"
         return text
 
     @on(Button.Pressed, ".copy-btn")
@@ -455,6 +481,97 @@ class BlockedMessage(CopyableMessage):
 
     def __init__(self, command: str) -> None:
         super().__init__(f"⛔ BLOCKED: {_escape(command)}", f"BLOCKED: {command}")
+
+
+class ThinkingBlock(Vertical):
+    """Live view of the model output as it streams in (R2-1 token streaming).
+
+    The first ``THINKING_TOKEN`` promotes the plain :class:`ThinkingIndicator`
+    into this widget — ``elapsed`` carries the indicator's running clock so
+    the timer never visibly resets — and the body grows as further deltas
+    arrive via :meth:`append`.  When the terminal outcome event arrives the
+    app removes this block and mounts the canonical message in its place,
+    so it never duplicates anything.  Whatever has arrived so far is
+    copyable — a mid-stream copy gets the partial text.
+    """
+
+    def __init__(self, elapsed: int = 0) -> None:
+        super().__init__()
+        self._body = ""
+        self._frame = 0
+        self._elapsed = elapsed  # tenths of a second, like ThinkingIndicator
+        self._timer: Any = None
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._header_markup(), classes="thinking-header")
+        yield Static("", classes="thinking-body")
+        with Horizontal(classes="thinking-footer"):
+            yield Button("Copy", classes="thinking-copy-btn")
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(0.3, self._tick)
+
+    def on_unmount(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+    # ── header / timer (mirrors ThinkingIndicator's cadence) ────────────
+
+    @staticmethod
+    def _elapsed_markup(elapsed: int) -> str:
+        total_secs = elapsed // 10
+        if total_secs >= 60:
+            return f"  [dim #5588aa]{total_secs // 60}m {total_secs % 60:02d}s[/]"
+        if total_secs >= 1:
+            return f"  [dim #5588aa]{total_secs}s[/]"
+        return ""
+
+    def _header_markup(self) -> str:
+        label = "is typing…" if self._body else "is thinking"
+        if not self._body:
+            label += "\u2026" if self._frame else ""
+        return f"[bold cyan]NatShell[/] [dim]{label}[/]" + self._elapsed_markup(self._elapsed)
+
+    def _tick(self) -> None:
+        self._elapsed += 3  # 0.3s per tick = 3 tenths
+        self._frame = (self._frame + 1) % 2
+        try:
+            self.query_one(".thinking-header", Static).update(self._header_markup())
+        except Exception:
+            pass
+
+    # ── body ─────────────────────────────────────────────────────────────
+
+    def append(self, chunk: str) -> None:
+        """Append a streamed token delta and grow the body in place."""
+        if not chunk:
+            return
+        self._body += chunk
+        try:
+            self.query_one(".thinking-header", Static).update(self._header_markup())
+            self.query_one(".thinking-body", Static).update(self._format_body(self._body))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _format_body(text: str) -> str | RenderableType:
+        if "\n" in text or "```" in text:
+            return render_segments(parse_code_fences(text), text_style="dim italic")
+        return _escape(text)
+
+    @property
+    def copyable_text(self) -> str:
+        return self._body
+
+    @on(Button.Pressed, ".thinking-copy-btn")
+    def on_copy_pressed(self) -> None:
+        from natshell.ui import clipboard
+
+        if self._body and clipboard.copy(self._body, self.app):
+            self.app.notify("Copied!", timeout=2)
+        else:
+            self.app.notify("Copy failed or nothing to copy", severity="error", timeout=3)
 
 
 class SystemMessage(CopyableMessage):

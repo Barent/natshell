@@ -1,5 +1,6 @@
 Agent tools available during operation:
   execute_shell  — Run a bash command and return output (with safety classification)
+  shell_bg       — Manage long-running background processes: launch (start detached), tail (status + recent output), kill (stop)
   read_file      — Read file contents (line limit scales with context window)
   write_file     — Write/append to a file (always requires confirmation)
   edit_file      — Search-and-replace edit in an existing file (requires confirmation, unique match)
