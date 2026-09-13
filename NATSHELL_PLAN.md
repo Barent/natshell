@@ -69,11 +69,13 @@ push. **Verify the seam R1 created before building on it.**
   `test_creates_dir_0700`, replace the dead `scaled = 4096 // 4` with
   the comment that already explains the asserted `1433`. No assertion
   or behaviour changed anywhere: pytest **1832 passed** (unchanged),
-  `ruff check src/ tests/` → **All checks passed**. Push re-triggers
-  PR #47 CI; the lint step should now pass. (The full-matrix pytest
-  steps on 3.11/3.12/3.13 have never actually run yet on this branch —
-  every prior run was cancelled at the lint step; worth confirming
-  green next.)
+  `ruff check src/ tests/` → **All checks passed**. Push re-triggered
+  PR #47 CI — **confirmed green** (run
+  https://github.com/Barent/natshell/actions/runs/34789559902, 2026-09-13):
+  lint + pytest both success on 3.11, 3.12 *and* 3.13 — the full
+  matrix had never run before (every prior attempt died at the lint
+  step). **PR #47 is now the only open item:** review + merge at
+  Barent's discretion.
 
 - **2026-09-13** SUDO-HANDLER UNIT DONE (`0791d86`) — the last remaining
   ⏳ item. `src/natshell/tools/sudo.py` (224 lines) is now the single home
