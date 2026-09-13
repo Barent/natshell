@@ -31,7 +31,7 @@ class TestValidConfigKeys:
         expected = {
             "model", "remote", "ollama", "agent", "safety",
             "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory",
-            "skills", "compaction",
+            "skills", "compaction", "autotune",
         }
         assert set(VALID_CONFIG_KEYS.keys()) == expected
 
@@ -39,6 +39,18 @@ class TestValidConfigKeys:
         """R2-5: the LLM compaction tier is a first-class config section."""
         keys = VALID_CONFIG_KEYS["compaction"]
         assert keys == {"llm": "bool", "max_messages": "int", "timeout": "float"}
+
+    def test_autotune_keys(self):
+        """R2-6 (feedback half): run-history autotune config section."""
+        keys = VALID_CONFIG_KEYS["autotune"]
+        assert keys == {
+            "max_tokens": "bool",
+            "window": "int",
+            "min_truncated": "int",
+            "max_multiplier": "float",
+            "min_increase": "int",
+            "max_value": "int",
+        }
 
     def test_model_keys(self):
         keys = VALID_CONFIG_KEYS["model"]

@@ -505,6 +505,7 @@ def main() -> None:
         skills=skill_registry.enabled(),
         inject_skills_in_compact=config.skills.inject_in_compact,
         compaction=config.compaction,
+        autotune=config.autotune,
     )
 
     # Gather system context and initialize agent

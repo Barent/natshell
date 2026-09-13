@@ -1,12 +1,20 @@
-"""Tests for R2-6 (recording half) — run-metrics persistence.
+"""Tests for R2-6 — run-metrics persistence (recording half) + autotune (feedback half).
 
 Covers:
 - ``agent/run_metrics.py``: store bootstrap + 0o700 dir, append/load_roundtrip,
   ``max_lines`` truncation, malformed-line tolerance, ``stats()`` summary,
   disable semantics, and the ``NATSHELL_DISABLE_METRICS`` kill switch.
 - ``AgentLoop`` integration: one record per run (success path), no write
-  when disabled, engine metadata (model/n_ctx) attached, and the guarantee
-  that a broken metrics path never breaks the agent run.
+  when disabled, engine metadata (model/n_ctx) attached, the guarantee
+  that a broken metrics path never breaks the agent run, and the
+  run-level ``truncated`` stamp on length-limited responses.
+- ``scaling.advise_max_tokens``: the pure policy used by the feedback
+  half (grow max_tokens when recent runs hit the output budget),
+  including every bound (multiplier, min increase, max value, window,
+  min_truncated) and the empty/zero edge cases.
+- ``AgentLoop`` feedback integration: the loop grows ``_max_tokens`` for
+  the next run when autotune is enabled and recent runs truncated, and
+  leaves it alone when autotune is off (zero default behaviour change).
 """
 
 from __future__ import annotations
@@ -22,18 +30,18 @@ from natshell.agent.run_metrics import (
     reset_run_metrics_store,
     RunMetricsStore,
 )
-from natshell.config import AgentConfig, SafetyConfig
+from natshell.config import AutotuneConfig, AgentConfig, SafetyConfig
 from natshell.inference.engine import CompletionResult, EngineInfo
 from natshell.safety.classifier import SafetyClassifier
+from natshell.scaling import advise_max_tokens
 from natshell.tools.registry import create_default_registry
 
 
 def _make_agent(
     responses: list[CompletionResult] | None = None,
     engine_info: EngineInfo | None = None,
+    autotune: AutotuneConfig | None = None,
 ) -> AgentLoop:
-    from unittest.mock import MagicMock
-
     engine = AsyncMock()
     if responses is not None:
         engine.chat_completion = AsyncMock(side_effect=responses)
@@ -59,6 +67,7 @@ def _make_agent(
         tools=tools,
         safety=safety,
         config=AgentConfig(max_steps=15, temperature=0.3, max_tokens=2048),
+        autotune=autotune,
     )
     agent.initialize(
         SystemContext(hostname="h", distro="Debian", kernel="6.12", username="u")
@@ -318,6 +327,220 @@ class TestLoopIntegration:
         finally:
             _reset_store_singleton()
 
+    async def test_truncated_run_stamps_flag(self, tmp_path: Path):
+        """A run that hit the output budget must set ``truncated: true``."""
+        from natshell.agent import run_metrics as _rm
 
-def store_path_exists(base: Path) -> bool:
-    return (base / FILENAME).exists()
+        _reset_store_singleton()
+        store = RunMetricsStore(tmp_path)
+        _rm._store = store  # type: ignore
+        try:
+            # finish_reason == "length" with no tool calls → truncation path
+            agent = _make_agent(
+                responses=[
+                    CompletionResult(
+                        content="partial answer",
+                        finish_reason="length",
+                        prompt_tokens=10,
+                        completion_tokens=500,
+                    )
+                ],
+            )
+            await _run(agent)
+            recs = store.load_recent()
+            assert len(recs) == 1
+            assert recs[0]["truncated"] is True
+        finally:
+            _reset_store_singleton()
+
+    async def test_successful_run_flag_false(self, tmp_path: Path):
+        from natshell.agent import run_metrics as _rm
+
+        _reset_store_singleton()
+        store = RunMetricsStore(tmp_path)
+        _rm._store = store  # type: ignore
+        try:
+            agent = _make_agent(
+                responses=[
+                    CompletionResult(content="ok", finish_reason="stop", prompt_tokens=5)
+                ],
+            )
+            await _run(agent)
+            recs = store.load_recent()
+            assert len(recs) == 1
+            assert recs[0]["truncated"] is False
+        finally:
+            _reset_store_singleton()
+
+
+# ─── Feedback half — advise_max_tokens pure policy ──────────────────────────
+
+
+class TestAdviseMaxTokens:
+    def test_no_records_returns_current(self):
+        assert advise_max_tokens(4096, []) == 4096
+
+    def test_zero_or_negative_current_returns_current(self):
+        assert advise_max_tokens(0, [{"truncated": True}]) == 0
+        assert advise_max_tokens(-1, [{"truncated": True}]) == -1
+
+    def test_none_current_returns_zero(self):
+        assert advise_max_tokens(None, [{"truncated": True}]) == 0
+
+    def test_no_truncated_runs_returns_current(self):
+        recs = [{"truncated": False}] * 4
+        assert advise_max_tokens(4096, recs) == 4096
+
+    def test_empty_record_dicts_counted_as_not_truncated(self):
+        recs = [{}, {"steps": 1}]
+        assert advise_max_tokens(4096, recs) == 4096
+
+    def test_grows_when_truncated(self):
+        recs = [{"truncated": True}]
+        # 4096 * 1.4 = 5734.4 → 5734, min(5734, 4096 + 1000=5096) → 5096
+        assert advise_max_tokens(4096, recs) == 5096
+
+    def test_at_ceiling_no_growth_possible(self):
+        # current already above the ceiling → cannot grow past it
+        recs = [{"truncated": True}]
+        assert advise_max_tokens(65536, recs) == 65536
+        assert advise_max_tokens(100000, recs) == 100000
+
+    def test_respects_max_value_ceiling(self):
+        recs = [{"truncated": True}]
+        # 60000 grows by +1000 (min_increase binds) → 61000, still under 65536
+        assert advise_max_tokens(60000, recs) == 61000
+        # 65000: min(91000, 66000, 65536) → 65536 (ceiling binds)
+        assert advise_max_tokens(65000, recs) == 65536
+
+    def test_min_increase_binds_for_small_current(self):
+        # current * 1.4 = 5638; current + min_increase = 4096 + 1000 = 5096
+        # min → 5096 (min_increase binds)
+        recs = [{"truncated": True}]
+        assert advise_max_tokens(4096, recs) == 5096
+
+    def test_custom_max_multiplier(self):
+        recs = [{"truncated": True}]
+        # 4096 * 2.0 = 8192; current + 1000 = 5096 → 5096 still binds
+        assert advise_max_tokens(4096, recs, max_multiplier=2.0) == 5096
+        # 20000 * 2.0 = 40000; 20000 + 1000 = 21000 → 21000 (min_increase binds)
+        assert advise_max_tokens(20000, recs, max_multiplier=2.0) == 21000
+
+    def test_custom_min_increase(self):
+        recs = [{"truncated": True}]
+        # 4096 * 1.4 = 5734; 4096 + 50000 = 54096 → min(54096, 65536) = 54096, min with 5734 → 5734
+        assert advise_max_tokens(4096, recs, min_increase=50000) == 5734
+
+    def test_custom_max_value(self):
+        recs = [{"truncated": True}]
+        assert advise_max_tokens(4096, recs, max_value=4500) == 4500
+
+    def test_window_limits_lookback(self):
+        # Only the last `window` records count; older truncated ones are ignored
+        recs = [{"truncated": True}] + [{"truncated": False}] * 10
+        assert advise_max_tokens(4096, recs, window=2) == 4096  # last 2 are false
+        assert advise_max_tokens(4096, recs, window=11) == 5096  # includes the True
+        assert advise_max_tokens(4096, recs, window=100) == 5096  # all count
+
+    def test_window_zero_means_all(self):
+        recs = [{"truncated": True}] + [{"truncated": False}] * 10
+        assert advise_max_tokens(4096, recs, window=0) == 5096
+
+    def test_min_truncated_gates(self):
+        # 2 truncated, 2 not; min_truncated=3 → not enough → no grow
+        recs = [{"truncated": True}, {"truncated": True},
+                {"truncated": False}, {"truncated": False}]
+        assert advise_max_tokens(4096, recs, min_truncated=3) == 4096
+        # min_truncated=2 → enough → grow
+        assert advise_max_tokens(4096, recs, min_truncated=2) == 5096
+
+    def test_never_shrinks(self):
+        recs = [{"truncated": True}]
+        # Even with small current, result must be >= current (no shrink)
+        result = advise_max_tokens(100, recs)
+        assert result >= 100
+
+
+# ─── Feedback half — AgentLoop wiring ───────────────────────────────────────
+
+
+class TestLoopAutotuneIntegration:
+    async def test_off_by_default_no_grow(self, tmp_path: Path):
+        """Default AutotuneConfig.max_tokens=False → no behaviour change."""
+        from natshell.agent import run_metrics as _rm
+
+        _reset_store_singleton()
+        store = RunMetricsStore(tmp_path)
+        _rm._store = store  # type: ignore
+        try:
+            # Seed truncated history
+            for _ in range(3):
+                store.record({"truncated": True})
+
+            # autotune off (default) → max_tokens stays at scaled value
+            agent = _make_agent(responses=[CompletionResult(content="ok")])
+            scaled = 4096 // 4  # _effective_max_tokens(4096) with max_tokens=2048
+            assert agent._max_tokens == scaled
+        finally:
+            _reset_store_singleton()
+
+    async def test_on_with_truncated_history_grows(self, tmp_path: Path):
+        from natshell.agent import run_metrics as _rm
+
+        _reset_store_singleton()
+        store = RunMetricsStore(tmp_path)
+        _rm._store = store  # type: ignore
+        try:
+            for _ in range(3):
+                store.record({"truncated": True})
+
+            autotune = AutotuneConfig(max_tokens=True)
+            agent = _make_agent(
+                responses=[CompletionResult(content="ok")],
+                autotune=autotune,
+            )
+            scaled = 4096 // 4  # 1024 for n_ctx=4096
+            # min(1024*1.4=1433, 1024+1000=2024, 65536) → 1433
+            assert agent._max_tokens == 1433
+        finally:
+            _reset_store_singleton()
+
+    async def test_on_with_clean_history_no_grow(self, tmp_path: Path):
+        from natshell.agent import run_metrics as _rm
+
+        _reset_store_singleton()
+        store = RunMetricsStore(tmp_path)
+        _rm._store = store  # type: ignore
+        try:
+            for _ in range(3):
+                store.record({"truncated": False})
+
+            autotune = AutotuneConfig(max_tokens=True)
+            agent = _make_agent(
+                responses=[CompletionResult(content="ok")],
+                autotune=autotune,
+            )
+            assert agent._max_tokens == (4096 // 4)  # scaled, unchanged
+        finally:
+            _reset_store_singleton()
+
+    async def test_on_with_broken_store_still_works(self, tmp_path: Path):
+        """A raising store must not break the loop's setup (best-effort)."""
+        from natshell.agent import run_metrics as _rm
+
+        class BrokenStore:
+            enabled = True
+
+            def load_recent(self, *a, **k):
+                raise RuntimeError("disk on fire")
+
+        _reset_store_singleton()
+        _rm._store = BrokenStore()  # type: ignore
+        try:
+            autotune = AutotuneConfig(max_tokens=True)
+            agent = _make_agent(responses=[CompletionResult(content="ok")],
+                                autotune=autotune)
+            # Loop still works; growth just didn't happen (stays scaled)
+            assert agent._max_tokens == (4096 // 4)
+        finally:
+            _reset_store_singleton()

@@ -91,6 +91,10 @@ class RunStats:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     inference_ms: int = 0
+    # True when any step of this run hit the output budget
+    # (finish_reason == "length") — the R2-6 feedback half uses this to
+    # decide whether to grow max_tokens for the next run.
+    saw_truncation: bool = False
     # Wall-clock ms of the most recent inference (set by the loop so the
     # outcome handlers can attach metrics, as ``elapsed_ms`` did inline.)
     last_elapsed_ms: int = 0
@@ -104,13 +108,17 @@ class RunStats:
 
     def run_stats(self, steps_used: int, now: float) -> dict[str, Any]:
         """End-of-run cumulative stats (wall time measured against ``t0``)."""
-        return build_run_stats(
+        stats = build_run_stats(
             steps_used,
             int((now - self.t0) * 1000),
             self.inference_ms,
             self.prompt_tokens,
             self.completion_tokens,
         )
+        # R2-6 feedback half: stamp the run-level truncation flag so the
+        # persisted record can be used to grow max_tokens next time.
+        stats["truncated"] = self.saw_truncation
+        return stats
 
 
 # ─────────────────────────────────────────────────────────────────────────────

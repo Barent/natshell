@@ -35,6 +35,7 @@ from natshell.agent.system_prompt import build_system_prompt
 from natshell.agent.tool_dispatch import dispatch_tool_batch
 from natshell.config import (
     AgentConfig,
+    AutotuneConfig,
     CompactionConfig,
     MemoryConfig,
     ModelConfig,
@@ -52,6 +53,7 @@ from natshell.scaling import (
     MAX_OUTPUT_CHARS_TABLE,
     MAX_STEPS_TABLE,
     READ_FILE_LINES_TABLE,
+    advise_max_tokens,
     scale_for_context,
 )
 from natshell.tools import edit_file as _edit_file_mod
@@ -99,6 +101,7 @@ class AgentLoop:
         skills: list | None = None,
         inject_skills_in_compact: bool = False,
         compaction: CompactionConfig | None = None,
+        autotune: AutotuneConfig | None = None,
     ) -> None:
         self.engine = engine
         self.tools = tools
@@ -108,6 +111,8 @@ class AgentLoop:
         self._prompt_config = prompt_config
         # R2-5: LLM compaction tier (off by default → extractive only)
         self._compaction = compaction or CompactionConfig()
+        # R2-6 feedback half: run-history autotune (off by default → no-op)
+        self._autotune = autotune or AutotuneConfig()
         self._sum_failure_tracker = FailureTracker()
         self._memory_config = memory_config or MemoryConfig()
         self._skills = skills or []
@@ -443,6 +448,42 @@ class AgentLoop:
         self._max_tokens = self._effective_max_tokens(n_ctx)
         self._max_steps = self._effective_max_steps(n_ctx)
 
+        # R2-6 feedback half: when [autotune] is enabled, consult the
+        # persisted run history.  If recent runs hit the output budget,
+        # grow the budget a bounded amount for this run — so the model has
+        # more room to finish long answers.  Best-effort: any failure
+        # (no history, unreadable file, …) just keeps the scaled value.
+        # Off by default → zero behaviour change.
+        if self._autotune.max_tokens:
+            try:
+                from natshell.agent.run_metrics import get_run_metrics_store
+
+                store = get_run_metrics_store()
+                if store.enabled:
+                    recs = store.load_recent(self._autotune.window)
+                    advised = advise_max_tokens(
+                        self._max_tokens,
+                        recs,
+                        window=self._autotune.window,
+                        min_truncated=self._autotune.min_truncated,
+                        max_multiplier=self._autotune.max_multiplier,
+                        min_increase=self._autotune.min_increase,
+                        max_value=self._autotune.max_value,
+                    )
+                    if advised > self._max_tokens:
+                        logger.info(
+                            "Autotune: growing max_tokens %d → %d "
+                            "(recent runs hit the output budget)",
+                            self._max_tokens,
+                            advised,
+                        )
+                        self._max_tokens = advised
+            except Exception:  # pragma: no cover — defensive, see above
+                logger.debug(
+                    "Autotune consult failed — using scaled max_tokens",
+                    exc_info=True,
+                )
+
         # Limit tool set for small context windows to reduce token overhead
         # and improve tool selection accuracy for smaller models
         if n_ctx <= 8192:
@@ -683,6 +724,10 @@ class AgentLoop:
 
                 # Handle truncated responses (thinking consumed all tokens)
                 if result.finish_reason == "length" and not result.tool_calls:
+                    # R2-6 feedback half: remember that this run hit the
+                    # output budget so the next run's max_tokens can grow
+                    # (only if [autotune] is enabled — off by default).
+                    stats.saw_truncation = True
                     # Strip the thinking residue, warn the user, and — when a
                     # partial answer survived — surface it.  Event text, the
                     # think-strip, and the RUN_STATS epilogue live in
