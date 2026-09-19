@@ -55,16 +55,17 @@ def show_help(conversation: ScrollableContainer) -> None:
     conversation.mount(HelpMessage(help_text))
 
 
-def compact_chat(agent: AgentLoop, conversation: ScrollableContainer) -> None:
+async def compact_chat(agent: AgentLoop, conversation: ScrollableContainer) -> None:
     """Compact conversation context, keeping key facts."""
     # Dry-run to preview what will happen
-    preview = agent.compact_history(dry_run=True)
+    preview = await agent.compact_now(dry_run=True)
     if not preview["compacted"]:
         conversation.mount(SystemMessage("Nothing to compact — conversation is too short."))
         return
 
-    # Actually compact
-    stats = agent.compact_history()
+    # Actually compact (may invoke the LLM summarizer tier when enabled —
+    # R2-5 — and falls back to the extractive summary on failure)
+    stats = await agent.compact_now()
 
     conversation.remove_children()
     saved_tokens = stats["before_tokens"] - stats["after_tokens"]

@@ -263,6 +263,52 @@ class TestSummary:
 
 
 # ---------------------------------------------------------------------------
+# Summarizer seam (R2-5) — optional LLM tier over the extractive glue
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizerSeam:
+    def test_default_is_extractive(self):
+        """With no summarizer configured, summarize() == build_summary()."""
+        cm = ContextManager(context_budget=10000)
+        dropped = [_user("What is the weather like today?")]
+        assert cm.summarize(dropped) == cm.build_summary(dropped)
+
+    def test_custom_summarizer_is_used(self):
+        """A supplied summarizer replaces the extractive summary in the marker."""
+        cm = ContextManager(context_budget=10000, summarizer=lambda msgs: "LLM summary of 3 turns")
+        marker = cm.context_marker([_user("x")], preamble="Context note: 1 trimmed.")
+        assert "LLM summary of 3 turns" in marker["content"]
+        assert "User asked:" not in marker["content"]
+        assert marker["content"].startswith("[Context note: 1 trimmed.")
+        assert marker["content"].endswith("Recent context follows.]")
+
+    def test_summarizer_failure_falls_back_to_extractive(self):
+        """A raising summarizer must not break (or empty) the summary."""
+
+        def _boom(msgs):
+            raise RuntimeError("summarizer blew up")
+
+        cm = ContextManager(context_budget=10000, summarizer=_boom)
+        dropped = [_user("What is the weather like today?")]
+        assert cm.summarize(dropped) == cm.build_summary(dropped)
+
+    def test_summarizer_empty_falls_back_to_extractive(self):
+        """An empty return falls back to the extractive summary."""
+        cm = ContextManager(context_budget=10000, summarizer=lambda msgs: "   ")
+        dropped = [_user("What is the weather like today?")]
+        assert "User asked:" in cm.summarize(dropped)
+
+    def test_custom_applies_during_budget_trimming(self):
+        """The custom summarizer is honoured on the trim_messages path too."""
+        cm = ContextManager(context_budget=100, summarizer=lambda msgs: "trimmed by LLM tier")
+        msgs = [_sys("s")] + [_user(f"message number {i} " * 10) for i in range(24)]
+        result = cm.trim_messages(msgs)
+        assert "trimmed by LLM tier" in result[1]["content"]
+        assert "[Context note:" in result[1]["content"]
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 

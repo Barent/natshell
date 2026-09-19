@@ -276,6 +276,22 @@ class SafetyClassifier:
                 return Risk.SAFE
             return risk
 
+        if tool_name == "shell_bg":
+            # launch runs a real command, so classify its `command` *exactly*
+            # like execute_shell — a BLOCKED command ("rm -rf /") must stay
+            # BLOCKED even though it's "detached"/background.  tail is a
+            # read-only status check; kill is a mutation.  Both are CONFIRM by
+            # default, downgraded to SAFE in danger mode.
+            action = arguments.get("action", "")
+            if action == "launch":
+                risk = self.classify_command(arguments.get("command", ""))
+                if self.mode == "danger" and risk == Risk.CONFIRM:
+                    return Risk.SAFE
+                return risk
+            if self.mode == "danger":
+                return Risk.SAFE
+            return Risk.CONFIRM
+
         if tool_name == "write_file":
             if _is_sensitive_path(arguments.get("path", "")):
                 return Risk.CONFIRM

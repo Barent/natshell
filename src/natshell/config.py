@@ -117,6 +117,43 @@ class SafetyConfig:
 
 
 @dataclass
+class CompactionConfig:
+    """Controls the LLM compaction tier (R2-5).
+
+    When ``llm`` is enabled, dropping/compacting a window of conversation
+    history first asks the local model for a one-shot summary; on timeout
+    or engine failure it transparently falls back to the extractive
+    summary that has always been produced (and after enough consecutive
+    failures skips the LLM tier until the next run).
+    """
+
+    llm: bool = False                 # Enable the LLM summarizer tier
+    max_messages: int = 30            # Max history messages summarized per call
+    timeout: float = 30.0             # Seconds allowed before falling back
+
+
+@dataclass
+class AutotuneConfig:
+    """Controls the run-history feedback half of R2-6.
+
+    When ``max_tokens`` is enabled and the last recorded runs for this
+    engine's model hit the output budget (``finish_reason == "length"``),
+    the next run requests a larger ``max_tokens`` so the model is more
+    likely to complete long answers.  Never applied when it would exceed
+    :attr:`max_multiplier` times the current value, grow below
+    :attr:`min_increase`, or push ``max_tokens`` above
+    :attr:`max_value`.  Off by default — zero behaviour change.
+    """
+
+    max_tokens: bool = False          # Grow max_tokens from run history (opt-in)
+    window: int = 8                   # Look back over at most this many runs
+    min_truncated: int = 1            # ...at least this many of which truncated
+    max_multiplier: float = 1.4       # ...but never more than ×1.4 in one step
+    min_increase: int = 1000          # ...nor a growth smaller than 1000 tokens
+    max_value: int = 65536            # ...nor above the hard 64K ceiling
+
+
+@dataclass
 class UIConfig:
     theme: str = "dark"
 
@@ -196,6 +233,8 @@ class NatShellConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     profiles: dict[str, ProfileConfig] = field(default_factory=dict)
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    autotune: AutotuneConfig = field(default_factory=AutotuneConfig)
 
 
 # ── Valid config keys (section → {key: type_string}) ─────────────────────
@@ -263,6 +302,19 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
         "enabled": "bool",
         "disabled": "list",
         "inject_in_compact": "bool",
+    },
+    "compaction": {
+        "llm": "bool",
+        "max_messages": "int",
+        "timeout": "float",
+    },
+    "autotune": {
+        "max_tokens": "bool",
+        "window": "int",
+        "min_truncated": "int",
+        "max_multiplier": "float",
+        "min_increase": "int",
+        "max_value": "int",
     },
 }
 
@@ -394,6 +446,7 @@ def load_config(config_path: str | Path | None = None) -> NatShellConfig:
 _SECTIONS = (
     "model", "remote", "ollama", "agent", "safety",
     "ui", "backup", "engine", "mcp", "kiwix", "prompt", "memory", "skills",
+    "compaction", "autotune",
 )
 
 

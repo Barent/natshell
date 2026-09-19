@@ -70,3 +70,61 @@ PLAN_MAX_STEPS_TABLE: ScaleTable = (
     (16384, 35),
     (8192, 30),
 )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# R2-6 feedback half — run-history driven autotuning (pure policy, no I/O).
+# Consumers supply *records* (from
+# :meth:`natshell.agent.run_metrics.RunMetricsStore.load_recent`); we only
+# decide whether ``max_tokens`` should grow for the next run.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def advise_max_tokens(
+    current: int | None,
+    records: list[dict],
+    *,
+    window: int = 8,
+    min_truncated: int = 1,
+    max_multiplier: float = 1.4,
+    min_increase: int = 1000,
+    max_value: int = 65536,
+) -> int | None:
+    """Return the ``max_tokens`` to use for the next run.
+
+    Reads the *most recent* ``window`` runs and, when at least
+    *min_truncated* of them were cut off mid-generation (the recording half
+    stamps ``truncated: true`` on a run when any step hit
+    ``finish_reason == "length"``), grow the budget by a bounded factor so
+    the model has more room to complete its answer next time.
+
+    The growth is bounded in three independent ways — each an independent
+    gate that can veto it:
+
+    1.  *max_multiplier* caps the per-run growth (default ``×1.4``);
+    2.  *min_increase* caps the absolute increase (default ``+1000`` tokens);
+    3.  *max_value* caps the absolute ceiling (default ``65536`` — the same
+        hard cap the loop's :meth:`AgentLoop._effective_max_tokens` already
+        applies).
+
+    ``None`` / 0 ``current`` returns unchanged; an empty ``records`` returns
+    unchanged.  Pure: no I/O, no log noise, no state mutation.
+    """
+    if not records or current is None or current <= 0:
+        return current if current is not None else 0
+    recent = records[-window:] if window > 0 else records
+    truncated = 0
+    for rec in recent:
+        # ``truncated`` is stamped by the loop onto the run-metrics record.
+        # ``finish_reason`` is not recorded (varies per step, not run) so we
+        # rely on the aggregate flag.
+        if rec.get("truncated"):
+            truncated += 1
+    if truncated < max(1, min_truncated):
+        return current
+    candidate = int(current * max_multiplier)
+    candidate = min(candidate, current + min_increase)
+    candidate = min(candidate, max_value)
+    if candidate <= current:
+        return current
+    return candidate

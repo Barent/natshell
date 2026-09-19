@@ -65,6 +65,9 @@ LLM_WRITABLE_KEYS: dict[str, dict[str, str]] = {
     "prompt": {
         "extra_instructions": "str",
     },
+    "compaction": {
+        "llm": "bool",
+    },
 }
 
 # ── Live config injection ───────────────────────────────────────────────

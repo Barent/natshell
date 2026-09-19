@@ -34,10 +34,15 @@ class ContextManager:
         self,
         context_budget: int,
         tokenizer_fn: Callable[[str], int] | None = None,
+        summarizer: Callable[[list[dict[str, Any]]], str] | None = None,
     ) -> None:
         self.context_budget = context_budget
         self._initial_budget = context_budget
         self._tokenizer_fn = tokenizer_fn
+        # Optional compact summarizer (R2-5 LLM tier).  Called with the
+        # dropped messages; a non-empty return replaces the extractive
+        # summary.  Defaults to None → pure extractive (historical).
+        self.summarizer: Callable[[list[dict[str, Any]]], str] | None = summarizer
         self.trimmed_count: int = 0  # total messages trimmed across all calls
 
     # ------------------------------------------------------------------
@@ -189,19 +194,58 @@ class ContextManager:
         self.trimmed_count += n_dropped
         logger.info("Context trimming: dropped %d messages to fit budget", n_dropped)
 
-        # Build summary marker
-        summary_text = self.build_summary(dropped)
-        summary_msg: dict[str, Any] = {
-            "role": "system",
-            "content": (
-                f"[Context note: {n_dropped} earlier messages were trimmed"
-                " to fit the context window.\n"
-                f"{summary_text}\n"
-                "Recent context follows.]"
-            ),
-        }
+        # Build summary marker (shared marker shape — see context_marker)
+        summary_msg: dict[str, Any] = self.context_marker(
+            dropped,
+            f"Context note: {n_dropped} earlier messages were trimmed to fit the context window.",
+        )
 
         return [system, summary_msg] + kept + recent
+
+    # ------------------------------------------------------------------
+    # Compaction summary marker (shared shape)
+    # ------------------------------------------------------------------
+
+    def context_marker(
+        self,
+        dropped_messages: list[dict[str, Any]],
+        preamble: str = "Context compacted.",
+        summary: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the system-role summary message replacing dropped messages.
+
+        One shared shape for both compaction paths (budget trimming and
+        manual/forced compaction): ``[<preamble>\\n<summary>\\nRecent
+        context follows.]``.  ``summary`` defaults to :meth:`summarize`;
+        pass it when the caller already resolved it (e.g. to reuse the
+        same text in stats) so the summarizer is invoked exactly once.
+        """
+        if summary is None:
+            summary = self.summarize(dropped_messages)
+        return {
+            "role": "system",
+            "content": f"[{preamble}\n{summary}\nRecent context follows.]",
+        }
+
+    def summarize(self, dropped_messages: list[dict[str, Any]]) -> str:
+        """Choose the summary text for a compaction marker (R2-5 seam).
+
+        ``self.summarizer`` (if configured) is tried first; a failed or
+        empty result falls back to :meth:`build_summary` — exactly the
+        historical extractive behaviour.
+        """
+        if self.summarizer is not None:
+            try:
+                custom = self.summarizer(dropped_messages)
+            except Exception:
+                logger.warning(
+                    "Compaction summarizer raised — using extractive summary",
+                    exc_info=True,
+                )
+                custom = None
+            if custom and str(custom).strip():
+                return str(custom)
+        return self.build_summary(dropped_messages)
 
     # ------------------------------------------------------------------
     # Extractive summary
@@ -268,3 +312,77 @@ class ContextManager:
         if len(summary) > 800:
             summary = summary[:800] + "..."
         return summary
+
+    # ------------------------------------------------------------------
+    # Artifact elision (cheap in-place compression, no summarizer)
+    # ------------------------------------------------------------------
+
+    #: Most-recent non-system messages to leave untouched by
+    #: :meth:`compress_artifacts`. Mirrors the "3 tool exchanges" intuition
+    #: that used to live in ``agent.loop._compress_old_messages``.
+    COMPRESS_PRESERVE_RECENT = 6
+
+    def compress_artifacts(
+        self, messages: list[dict[str, Any]]
+    ) -> bool:
+        """Elide big write_file contents and truncate long tool results
+        for the *older* half of the conversation.
+
+        Unlike :meth:`trim_messages`, this does **not** drop messages or
+        insert a summary — it just rewrites the most expensive bytes in
+        place.  Safe (and cheap) to run frequently because the model has
+        already processed the affected messages and the elided content is
+        still available if the model re-reads the file.
+
+        Returns True if any message was modified, False otherwise.
+        """
+        import json as _json
+
+        if len(messages) <= self.COMPRESS_PRESERVE_RECENT + 1:
+            return False
+
+        cutoff = len(messages) - self.COMPRESS_PRESERVE_RECENT
+        changed = False
+
+        for i in range(1, cutoff):  # skip system prompt
+            msg = messages[i]
+
+            # Compress write_file arguments (elide full file content)
+            if msg.get("tool_calls"):
+                new_tool_calls = []
+                modified_in_msg = False
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
+                    name = func.get("name", "")
+                    args_str = func.get("arguments", "")
+                    if name == "write_file" and len(args_str) > 300:
+                        try:
+                            args = _json.loads(args_str)
+                            content = args.get("content", "")
+                            if len(content) > 100:
+                                args["content"] = f"[{len(content)} chars elided]"
+                                func["arguments"] = _json.dumps(args)
+                                modified_in_msg = True
+                        except (_json.JSONDecodeError, TypeError):
+                            pass
+                    new_tool_calls.append(tc)
+                if modified_in_msg:
+                    msg["tool_calls"] = new_tool_calls
+                    changed = True
+
+            # Compress long tool results
+            if msg.get("role") == "tool":
+                content = msg.get("content", "")
+                if len(content) > 800:
+                    lines = content.split("\n")
+                    if len(lines) > 8:
+                        head = "\n".join(lines[:4])
+                        tail = "\n".join(lines[-3:])
+                        msg["content"] = (
+                            f"{head}\n"
+                            f"... [{len(lines) - 7} lines elided] ...\n"
+                            f"{tail}"
+                        )
+                        changed = True
+
+        return changed

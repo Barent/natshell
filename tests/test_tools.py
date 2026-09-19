@@ -450,7 +450,7 @@ class TestRegistry:
     def test_get_tool_schemas(self):
         registry = create_default_registry()
         schemas = registry.get_tool_schemas()
-        assert len(schemas) == 13  # 12 original + skill tool
+        assert len(schemas) == 14  # 13 base tools + skill tool
         for schema in schemas:
             assert schema["type"] == "function"
             assert "function" in schema

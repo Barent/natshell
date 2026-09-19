@@ -1,133 +1,80 @@
-"""Local inference backend using llama-cpp-python."""
+"""Local inference backend using llama-cpp-python.
+
+The model family's tool-call wire format (prompt rendering, native parsing,
+bare-JSON recovery, message normalization) lives in the
+``natshell.inference.grammars`` package — one module per family (``qwen``,
+``mistral``, ``gemma``) sharing the pipeline primitives in
+``grammars.common``.  This module owns only the engine: model loading, GPU
+selection, context sizing, chat completion, and the thin delegations that
+keep the historical API surface intact (tests and ``agent/loop.py`` import
+the underscored helpers from here).
+"""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
-import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from natshell.inference.engine import CompletionResult, EngineInfo, ToolCall
+from natshell.inference.engine import (
+    CompletionResult,
+    EngineInfo,
+    StreamChunk,
+)
 
-logger = logging.getLogger(__name__)
+# ---------------------------------------------------------------------------
+# Per-family modules
+# ---------------------------------------------------------------------------
+from natshell.inference.grammars import gemma, mistral, qwen  # noqa: E402
 
-# Regex to match <tool_call>{"name": ..., "arguments": ...}</tool_call> blocks
-_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
-# Regex to match [TOOL_CALLS] JSON array (Mistral style)
-_MISTRAL_TOOL_CALLS_RE = re.compile(r"\[TOOL_CALLS\]\s*(\[.*?\])", re.DOTALL)
-# Regex to extract JSON from markdown code fences (Mistral sometimes wraps tool calls)
-_CODE_FENCE_JSON_RE = re.compile(
-    r"```(?:json)?\s*\n?\s*(\{.*?\}|\[.*?\])\s*\n?\s*```", re.DOTALL
+# ---------------------------------------------------------------------------
+# Family-agnostic helpers (shared pipeline primitives)
+# ---------------------------------------------------------------------------
+# Re-exported here so the historical import surface
+# (``from natshell.inference.local import _THINK_RE, ...``) keeps working.
+from natshell.inference.grammars.common import (  # noqa: E402
+    CODE_FENCE_JSON_RE,
+    THINK_RE,
+    THINK_UNCLOSED_RE,
+    is_degenerate_output,
 )
-# Regex to match <think>...</think> blocks (including empty ones)
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
-# Regex to match unclosed <think> blocks (truncated responses)
-_THINK_UNCLOSED_RE = re.compile(r"<think>(?:(?!</think>).)*$", re.DOTALL)
-# Gemma 4 tool call: <|tool_call>call:NAME{...}<tool_call|>
-# NAME may contain hyphens (skills like "web-research" are invoked by name).
-_GEMMA_TOOL_CALL_RE = re.compile(
-    r"<\|tool_call>call:([\w-]+)\{(.*?)\}<tool_call\|>", re.DOTALL
-)
-# Gemma 4 think blocks: <|channel>thought...<channel|>
-_GEMMA_THINK_RE = re.compile(r"<\|channel>.*?<channel\|>", re.DOTALL)
-_GEMMA_THINK_UNCLOSED_RE = re.compile(
-    r"<\|channel>(?:(?!<channel\|>).)*$", re.DOTALL
-)
-# Gemma special tokens that leak into text output
-_GEMMA_SPECIAL_TOKEN_RE = re.compile(
-    r"<\|tool_response>.*?<tool_response\|>"  # tool response markers
-    r"|<\|tool_response>"                      # unclosed tool response
-    r"|<eos>"                                  # end-of-sequence
-    r"|<unused\d+>"                            # unused vocabulary tokens
-    r"|<\|eos\|>"                              # alternate EOS format
-    r"|<\|eot\|>",                             # end-of-turn
-    re.DOTALL,
-)
+
+# ---------------------------------------------------------------------------
+# Backwards-compatible aliases (historical names, now implemented in grammars/)
+# ---------------------------------------------------------------------------
+
+# Qwen family (the default wire format)
+_TOOL_CALL_RE = qwen.TOOL_CALL_RE
+_format_tools_for_prompt = qwen.format_tools_for_prompt
+
+# Mistral family
+_MISTRAL_TOOL_CALLS_RE = mistral.MISTRAL_TOOL_CALLS_RE
+_format_tools_for_prompt_mistral = mistral.format_tools_for_prompt_mistral
+
+# Gemma family
+_GEMMA_TOOL_CALL_RE = gemma.GEMMA_TOOL_CALL_RE
+_GEMMA_THINK_RE = gemma.GEMMA_THINK_RE
+_GEMMA_THINK_UNCLOSED_RE = gemma.GEMMA_THINK_UNCLOSED_RE
+_GEMMA_SPECIAL_TOKEN_RE = gemma.GEMMA_SPECIAL_TOKEN_RE
+_parse_gemma_tool_args = gemma.parse_gemma_tool_args
+_format_gemma_tool_call_text = gemma.format_gemma_tool_call_text
+_format_tools_for_prompt_gemma = gemma.format_tools_for_prompt_gemma
+
+# Shared regexes
+_CODE_FENCE_JSON_RE = CODE_FENCE_JSON_RE
+_THINK_RE = THINK_RE
+_THINK_UNCLOSED_RE = THINK_UNCLOSED_RE
 
 
 def _is_degenerate_output(text: str) -> bool:
-    """Detect degenerate repetitive output from local models.
-
-    Returns True when the output is dominated by a single repeated
-    character, which indicates context exhaustion or model collapse.
-    Only triggers on outputs longer than 100 characters to avoid
-    false positives on short valid responses.
-    """
-    if len(text) < 100:
-        return False
-    non_ws = text.replace(" ", "").replace("\n", "").replace("\t", "")
-    if not non_ws:
-        return False
-    from collections import Counter
-
-    counts = Counter(non_ws)
-    _char, top_count = counts.most_common(1)[0]
-    return top_count / len(non_ws) > 0.5
-
-
-def _gemma_escape(value: str) -> str:
-    """Wrap a string value with Gemma's <|"|> delimiter."""
-    return f'<|"|>{value}<|"|>'
-
-
-def _parse_gemma_tool_args(text: str) -> dict[str, Any]:
-    """Parse Gemma 4 tool call arguments from ``key:<|"|>val<|"|>,key2:num`` format.
-
-    String values are wrapped with ``<|"|>``; numeric and boolean values are bare.
-    """
-    args: dict[str, Any] = {}
-    if not text.strip():
-        return args
-
-    # Split on top-level commas that are outside <|"|>...<|"|> delimiters
-    parts: list[str] = []
-    current: list[str] = []
-    inside_string = False
-    i = 0
-    while i < len(text):
-        if text[i:].startswith('<|"|>'):
-            inside_string = not inside_string
-            current.append('<|"|>')
-            i += 5
-        elif text[i] == "," and not inside_string:
-            parts.append("".join(current))
-            current = []
-            i += 1
-        else:
-            current.append(text[i])
-            i += 1
-    if current:
-        parts.append("".join(current))
-
-    for part in parts:
-        colon = part.find(":")
-        if colon == -1:
-            continue
-        key = part[:colon].strip()
-        val_raw = part[colon + 1:].strip()
-
-        # String value: strip <|"|> delimiters
-        if '<|"|>' in val_raw:
-            args[key] = val_raw.replace('<|"|>', '')
-        else:
-            # Numeric or boolean
-            if val_raw.lower() == "true":
-                args[key] = True
-            elif val_raw.lower() == "false":
-                args[key] = False
-            else:
-                try:
-                    args[key] = int(val_raw)
-                except ValueError:
-                    try:
-                        args[key] = float(val_raw)
-                    except ValueError:
-                        args[key] = val_raw
-    return args
+    """Detect degenerate repetitive output (re-export, see grammars.common)."""
+    return is_degenerate_output(text)
 
 
 def _detect_model_family(model_path: str) -> str:
@@ -142,6 +89,7 @@ def _detect_model_family(model_path: str) -> str:
     if "gemma" in name:
         return "gemma"
     if "qwen" not in name:
+        logger = logging.getLogger(__name__)
         logger.warning(
             "Unknown model family for %r — defaulting to qwen tool format. "
             "If tool calls fail, the model may need a custom parser.",
@@ -187,227 +135,7 @@ def _infer_context_size(model_path: str) -> int:
     return 4096
 
 
-def _format_tool_entries(
-    tools: list[dict[str, Any]], *, compact: bool = False
-) -> list[str]:
-    """Format tool entries (shared by Qwen and Mistral formatters).
-
-    Returns a list of lines describing each tool's name, description,
-    and parameters. The caller provides the header.
-    """
-    lines: list[str] = []
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {})
-
-        lines.append(f"## {name}")
-        if compact:
-            first_sentence = desc.split(". ")[0]
-            if not first_sentence.endswith("."):
-                first_sentence += "."
-            lines.append(first_sentence)
-        else:
-            lines.append(desc)
-
-        props = params.get("properties", {})
-        required = params.get("required", [])
-        if props:
-            if not compact:
-                lines.append("Parameters:")
-            for pname, pdef in props.items():
-                req = ", required" if pname in required else ""
-                ptype = pdef.get("type", "")
-                if compact:
-                    enum_vals = pdef.get("enum")
-                    if enum_vals:
-                        enum_str = "|".join(str(v) for v in enum_vals)
-                        lines.append(f"- {pname} ({enum_str}{req})")
-                    else:
-                        lines.append(f"- {pname} ({ptype}{req})")
-                else:
-                    pdesc = pdef.get("description", "")
-                    lines.append(f"- {pname} ({ptype}{req}): {pdesc}")
-        lines.append("")
-    return lines
-
-
-def _format_tools_for_prompt(
-    tools: list[dict[str, Any]], *, compact: bool = False
-) -> str:
-    """Format tool schemas as plain text for injection into the system prompt.
-
-    This is used instead of llama-cpp-python's built-in tool handling because
-    Qwen3 models don't follow the chatml-function-calling response format.
-
-    Args:
-        tools: Tool schemas in OpenAI-compatible format.
-        compact: When True, use abbreviated descriptions and parameter lists
-            to reduce token usage on small context windows (≤16K).
-    """
-    if compact:
-        header = [
-            "# Available Tools",
-            "You MUST use the <tool_call> format to call tools.",
-            "NEVER substitute pseudocode or Python scripts for tool calls.",
-            '<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>',
-            "",
-        ]
-    else:
-        header = [
-            "# Available Tools",
-            "",
-            "You MUST use tools to perform actions. To call a tool, output:",
-            "",
-            "<tool_call>",
-            '{"name": "tool_name", "arguments": {"param": "value"}}',
-            "</tool_call>",
-            "",
-        ]
-    return "\n".join(header + _format_tool_entries(tools, compact=compact))
-
-
-def _format_tools_for_prompt_mistral(
-    tools: list[dict[str, Any]], *, compact: bool = False
-) -> str:
-    """Format tool schemas for Mistral models.
-
-    Mistral models use [TOOL_CALLS] followed by a JSON array instead of XML tags.
-
-    Args:
-        tools: Tool schemas in OpenAI-compatible format.
-        compact: When True, use abbreviated descriptions and parameter lists.
-    """
-    if compact:
-        header = [
-            "# Available Tools",
-            "You MUST call tools using the exact format below.",
-            "Do NOT describe commands in prose — call the tool directly.",
-            "NEVER wrap tool calls in markdown code fences.",
-            '[TOOL_CALLS] [{"name": "tool_name", "arguments": {...}}]',
-            "",
-        ]
-    else:
-        header = [
-            "# Available Tools",
-            "",
-            "You MUST use tools to perform actions. To call a tool, output:",
-            "",
-            '[TOOL_CALLS] [{"name": "tool_name", "arguments": {"param": "value"}}]',
-            "",
-            "Do NOT describe commands in prose — call the tool directly.",
-            "NEVER wrap tool calls in markdown code fences.",
-            "You can call multiple tools at once by including multiple objects in the array.",
-            "",
-        ]
-    return "\n".join(header + _format_tool_entries(tools, compact=compact))
-
-
-def _format_gemma_tool_call_text(name: str, arguments: dict[str, Any]) -> str:
-    """Format a tool call as Gemma-native text for message history.
-
-    Converts ``{"command": "ls -la", "timeout": 60}`` into
-    ``<|tool_call>call:execute_shell{command:<|"|>ls -la<|"|>,timeout:60}<tool_call|>``.
-    """
-    parts: list[str] = []
-    for key, value in arguments.items():
-        if isinstance(value, str):
-            parts.append(f"{key}:{_gemma_escape(value)}")
-        elif isinstance(value, bool):
-            parts.append(f"{key}:{'true' if value else 'false'}")
-        elif isinstance(value, (int, float)):
-            parts.append(f"{key}:{value}")
-        else:
-            # Fallback: serialize as escaped string
-            parts.append(f"{key}:{_gemma_escape(str(value))}")
-    args_str = ",".join(parts)
-    return f"<|tool_call>call:{name}{{{args_str}}}<tool_call|>"
-
-
-def _format_tools_for_prompt_gemma(
-    tools: list[dict[str, Any]], *, compact: bool = False
-) -> str:
-    """Format tool schemas for Gemma 4 models.
-
-    Gemma 4 uses ``<|tool>declaration:NAME{...}<tool|>`` blocks with
-    ``<|"|>`` string delimiters instead of JSON.
-
-    Args:
-        tools: Tool schemas in OpenAI-compatible format.
-        compact: When True, use abbreviated descriptions.
-    """
-    esc = _gemma_escape
-
-    if compact:
-        header = [
-            "# Available Tools",
-            "You MUST call tools using the exact format below.",
-            "NEVER use JSON, Python dicts, or pseudocode for tool calls.",
-            "<|tool_call>call:tool_name{param:" + esc("value") + "}<tool_call|>",
-            "",
-        ]
-    else:
-        header = [
-            "# Available Tools",
-            "",
-            "You MUST use tools to perform actions. To call a tool, output:",
-            "",
-            "<|tool_call>call:tool_name{param:" + esc("value") + "}<tool_call|>",
-            "",
-            "String values MUST be wrapped with <|\"|> delimiters.",
-            "NEVER use JSON, Python dicts, or pseudocode for tool calls.",
-            "You can call multiple tools by outputting multiple <|tool_call> blocks.",
-            "",
-            "Example — run a shell command:",
-            "<|tool_call>call:execute_shell{command:" + esc("ls -la /tmp") + "}<tool_call|>",
-            "",
-        ]
-
-    lines: list[str] = list(header)
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {})
-
-        if compact:
-            first_sentence = desc.split(". ")[0]
-            if not first_sentence.endswith("."):
-                first_sentence += "."
-            desc = first_sentence
-
-        # Build the <|tool>declaration:...<tool|> block
-        props = params.get("properties", {})
-        required = params.get("required", [])
-
-        prop_parts: list[str] = []
-        for pname, pdef in props.items():
-            ptype = pdef.get("type", "string")
-            pdesc = pdef.get("description", "")
-            if compact:
-                prop_parts.append(
-                    f"{pname}:{{type:{esc(ptype)}}}"
-                )
-            else:
-                prop_parts.append(
-                    f"{pname}:{{type:{esc(ptype)},description:{esc(pdesc)}}}"
-                )
-
-        req_parts = ",".join(esc(r) for r in required)
-        props_str = ",".join(prop_parts)
-
-        decl = (
-            f"<|tool>declaration:{name}{{"
-            f"description:{esc(desc)},"
-            f"parameters:{{properties:{{{props_str}}},"
-            f"required:[{req_parts}],"
-            f"type:{esc('object')}}}"
-            f"}}<tool|>"
-        )
-        lines.append(decl)
-
-    return "\n".join(lines)
+logger = logging.getLogger(__name__)
 
 
 class LocalEngine:
@@ -484,6 +212,21 @@ class LocalEngine:
             model_path, n_ctx, n_threads, resolved_gpu,
         )
 
+    # ------------------------------------------------------------------
+    # Grammar access
+    # ------------------------------------------------------------------
+
+    @property
+    def grammar(self):
+        """This engine's tool-call grammar (chosen by model family)."""
+        from natshell.inference.grammars import get_grammar
+
+        return get_grammar(self.model_family)
+
+    # ------------------------------------------------------------------
+    # Counting / info
+    # ------------------------------------------------------------------
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text using the model's tokenizer."""
         return len(self.llm.tokenize(text.encode("utf-8")))
@@ -498,110 +241,38 @@ class LocalEngine:
             resolved_main_gpu=self.main_gpu,
         )
 
+    # ------------------------------------------------------------------
+    # Message normalization (delegated to the family grammar)
+    # ------------------------------------------------------------------
+
     def _convert_gemma_tool_messages(
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Convert OpenAI-format tool messages to Gemma-native text format.
 
-        The Gemma 4 chat template expects tool call arguments as dicts (to
-        format with ``<|"|>`` delimiters) and tool results via a
-        ``tool_responses`` key — neither of which matches the OpenAI format
-        NatShell uses internally.  Rather than fight the template, this method
-        converts both message types to plain text that preserves the Gemma
-        tool call syntax the model was trained on:
-
-        - Assistant messages with ``tool_calls`` → assistant messages with
-          Gemma-format ``<|tool_call>call:NAME{...}<tool_call|>`` text.
-        - ``role: "tool"`` result messages → ``role: "user"`` messages with
-          a labelled result block.
-
-        Must run **before** ``_normalize_messages_strict_alternation``.
+        Delegates to the Gemma grammar's message conversion stage (kept as a
+        method for the historical ``engine._convert_gemma_tool_messages``
+        call site in tests).  Deliberately does not route through
+        ``self.grammar`` so it works on a bare instance (no ``model_family``).
         """
-        result: list[dict[str, Any]] = []
-        for msg in messages:
-            if msg.get("tool_calls"):
-                # Convert assistant tool_calls to Gemma-native text
-                content_parts: list[str] = []
-                if msg.get("content"):
-                    content_parts.append(msg["content"])
-                for tc in msg["tool_calls"]:
-                    func = tc.get("function", {})
-                    name = func.get("name", "")
-                    raw_args = func.get("arguments", {})
-                    if isinstance(raw_args, str):
-                        try:
-                            raw_args = json.loads(raw_args)
-                        except (json.JSONDecodeError, TypeError):
-                            raw_args = {}
-                    content_parts.append(
-                        _format_gemma_tool_call_text(name, raw_args)
-                    )
-                result.append({
-                    "role": "assistant",
-                    "content": "\n".join(content_parts),
-                })
-            elif msg.get("role") == "tool":
-                # Convert tool result to a user message
-                content = msg.get("content", "")
-                tool_id = msg.get("tool_call_id", "")
-                # Include a clear label so the model knows this is a tool result
-                result.append({
-                    "role": "user",
-                    "content": f"[Tool result ({tool_id})]:\n{content}",
-                })
-            else:
-                result.append(msg)
-        return result
+        return gemma.GRAMMAR._convert_tool_messages(messages)
 
     def _normalize_messages_strict_alternation(
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Normalize messages for strict role-alternation (Mistral, Gemma 4).
 
-        These models' chat templates require: system? → (user → assistant)*.
-        Two passes fix violations:
-
-        Pass 1: Fold mid-conversation system messages into the initial system
-        message (the template only allows one system message at position 0).
-
-        Pass 2: Merge consecutive same-role messages. This happens when e.g.
-        /cmd appends a user message with command output and then the next user
-        input appends another user message. Never merge assistant messages that
-        carry tool_calls, and never merge or touch tool-role messages.
+        Delegates to the shared implementation in ``grammars.common``.
         """
-        # --- Pass 1: fold mid-conversation system messages ---
-        pass1: list[dict[str, Any]] = []
-        system_extras: list[str] = []
+        from natshell.inference.grammars.common import (
+            normalize_messages_strict_alternation,
+        )
 
-        for msg in messages:
-            if msg["role"] == "system" and pass1:
-                system_extras.append(msg["content"])
-            else:
-                pass1.append(msg)
+        return normalize_messages_strict_alternation(messages)
 
-        if system_extras and pass1 and pass1[0]["role"] == "system":
-            merged = pass1[0]["content"] + "\n\n" + "\n\n".join(system_extras)
-            pass1[0] = {**pass1[0], "content": merged}
-
-        # --- Pass 2: merge consecutive same-role messages ---
-        result: list[dict[str, Any]] = []
-        for msg in pass1:
-            role = msg["role"]
-            if (
-                result
-                and role == result[-1]["role"]
-                and role in ("user", "assistant")
-                and "tool_calls" not in msg
-                and "tool_calls" not in result[-1]
-            ):
-                result[-1] = {
-                    **result[-1],
-                    "content": result[-1]["content"] + "\n\n" + msg["content"],
-                }
-            else:
-                result.append(msg)
-
-        return result
+    # ------------------------------------------------------------------
+    # Chat completion
+    # ------------------------------------------------------------------
 
     async def chat_completion(
         self,
@@ -612,14 +283,15 @@ class LocalEngine:
     ) -> CompletionResult:
         """Run chat completion via llama.cpp. Runs in thread to avoid blocking.
 
-        Tool definitions are injected as plain text into the system prompt
-        rather than relying on llama-cpp-python's tool handling, which doesn't
-        work correctly with Qwen3 models.
+        Tool definitions are rendered by the model family's grammar and
+        injected as plain text into the system prompt.
         """
-        if self.model_family == "gemma":
-            messages = self._convert_gemma_tool_messages(messages)
-        if self.model_family in ("mistral", "gemma"):
-            messages = self._normalize_messages_strict_alternation(messages)
+        from natshell.inference.grammars import get_grammar
+
+        grammar = get_grammar(self.model_family)
+        # Family-specific message normalization (strict alternation for
+        # Mistral and Gemma; identity otherwise)
+        messages = grammar.normalize_messages(messages)
 
         if tools:
             messages = self._inject_tools(messages, tools)
@@ -646,23 +318,150 @@ class LocalEngine:
 
         return self._parse_response(response)
 
+    # ── Streaming (R2-1) ─────────────────────────────────────────────────
+    # The grammar's parse() pipeline runs once, over the *buffered* full
+    # content, exactly as _parse_response does for the blocking path —
+    # StreamChunks are only raw text deltas for the TUI to render live.
+
+    async def stream_completion(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ):
+        """Stream raw text deltas, then yield the parsed :class:`CompletionResult`.
+
+        llama-cpp-python's ``stream=True`` mode returns an iterator of
+        chunk dicts (``choices[0].delta.content`` per chunk); that iterator
+        is consumed inside a worker thread (synchronous, like the blocking
+        path) so the async generator only awaits one thread hop and yields
+        each chunk as it arrives.  The terminal result is produced by the
+        identical parse pipeline the blocking ``chat_completion`` uses, run
+        on the concatenated content — tool parsing, think-residue stripping
+        and degenerate-suppression all behave exactly as before.
+        """
+        from natshell.inference.grammars import get_grammar
+
+        grammar = get_grammar(self.model_family)
+        # Same message normalization + tool injection as chat_completion,
+        # so both paths see the same prompt.
+        messages = grammar.normalize_messages(messages)
+        if tools:
+            messages = self._inject_tools(messages, tools)
+
+        def _run_stream():
+            chunks: list[str] = []
+            finish_reason = "stop"
+            usage: dict[str, Any] = {}
+            # Bound through an Any-typed callable: the blocking-return
+            # TypedDict overload of create_chat_completion does not describe
+            # stream=True (a generator of chunk dicts), so annotate via Any
+            # to iterate it cleanly.
+            stream: Any = self.llm.create_chat_completion
+            for item in stream(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                repeat_penalty=1.1,
+                stream=True,
+            ):
+                if not isinstance(item, dict):
+                    continue
+                choice = (item.get("choices") or [{}])[0]
+                if not isinstance(choice, dict):
+                    continue
+                text = (choice.get("delta") or {}).get("content")
+                if text is None:
+                    delta = choice.get("message")
+                    if isinstance(delta, dict):
+                        text = delta.get("content")
+                if text:
+                    chunks.append(text)
+                fr = choice.get("finish_reason")
+                if fr:
+                    finish_reason = fr
+                if isinstance(item.get("usage"), dict) and item["usage"]:
+                    usage = item["usage"]
+            return chunks, finish_reason, usage
+
+        try:
+            chunks, finish_reason, usage = await asyncio.to_thread(_run_stream)
+        except ValueError as e:
+            err_str = str(e).lower()
+            if "context window" in err_str or "exceed" in err_str:
+                from natshell.inference.remote import ContextOverflowError
+
+                raise ContextOverflowError(
+                    f"Prompt exceeds local model context window ({self.n_ctx} tokens): {e}"
+                ) from e
+            raise
+
+        for text in chunks:
+            yield StreamChunk(text=text)
+        # Reuse the full parse pipeline over the buffered content so tool
+        # parsing, think-residue stripping and degenerate detection are
+        # identical to the non-streaming path.
+        yield self._parse_response(
+            {
+                "choices": [
+                    {
+                        "message": {"content": "".join(chunks)},
+                        "finish_reason": finish_reason,
+                    }
+                ],
+                "usage": usage,
+            }
+        )
+
     def _inject_tools(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Inject tool definitions into the system message as plain text."""
+        """Inject tool definitions into the system message as plain text.
+
+        R2-3: the rendered tool block is memoized per (family, compact,
+        tools-content), so the identical string is produced once and reused
+        for every subsequent call with the same tool set — a cache-stable
+        prefix that llama.cpp's RAM prompt cache can rely on (same bytes
+        at the same position, call after call).  Rendering itself is keyed
+        by the canonical serialization of the tool list, so equivalent
+        lists (regardless of argument order) share one entry.
+        """
+        from natshell.inference.grammars import get_grammar
+
         compact = self.n_ctx < 16384
-        if self.model_family == "mistral":
-            tool_text = _format_tools_for_prompt_mistral(tools, compact=compact)
-        elif self.model_family == "gemma":
-            tool_text = _format_tools_for_prompt_gemma(tools, compact=compact)
-        else:
-            tool_text = _format_tools_for_prompt(tools, compact=compact)
+        # Key on the canonical serialization of the tool list: two equal
+        # tool sets must share one cached string regardless of how they
+        # were constructed this call.
+        key_parts: tuple[Any, ...] = (
+            self.model_family,
+            compact,
+            hashlib.sha256(
+                json.dumps(tools, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest(),
+        )
+
+        if not hasattr(self, "_tool_text_cache"):
+            # Bounded LRU: tool blocks are largeish strings; 32 entries
+            # covers every realistic rotation of tool sets (full, small-
+            # context subset, skill-grown) plus per-family variants.
+            self._tool_text_cache: OrderedDict[tuple, str] = OrderedDict()
+
+        cache: "OrderedDict[tuple, str]" = self._tool_text_cache
+        text = cache.get(key_parts)
+        if text is None:
+            text = get_grammar(self.model_family).render_tools(
+                tools, compact=compact
+            )
+            cache[key_parts] = text
+            if len(cache) > 32:
+                cache.popitem(last=False)
 
         # Shallow-copy the list and deep-copy only the system message
         messages = list(messages)
         for i, msg in enumerate(messages):
             if msg["role"] == "system":
-                messages[i] = {**msg, "content": msg["content"] + "\n\n" + tool_text}
+                messages[i] = {**msg, "content": msg["content"] + "\n\n" + text}
                 break
 
         return messages
@@ -670,244 +469,30 @@ class LocalEngine:
     def _parse_response(self, response: dict) -> CompletionResult:
         """Parse llama-cpp-python response into our CompletionResult.
 
-        Qwen3 models output <tool_call> XML tags in the content field rather
-        than using the structured tool_calls field. This method extracts those
-        tool calls and strips <think> blocks from content.
+        Delegates to the model family's grammar: structured tool calls first,
+        then this family's native syntax, then the family's bare-JSON
+        recovery.  Content is cleaned of every family's think blocks, special
+        tokens, and tool-call markers; recovered JSON blobs are scrubbed;
+        degenerate output (character-repetition collapse) is suppressed.
         """
         choice = response["choices"][0]
         message = choice["message"]
         finish_reason = choice.get("finish_reason", "stop")
 
         content = message.get("content") or ""
-        tool_calls: list[ToolCall] = []
+        from natshell.inference.grammars import get_grammar
 
-        # First, check for structured tool_calls (standard OpenAI format)
-        if message.get("tool_calls"):
-            for tc in message["tool_calls"]:
-                func = tc.get("function", {})
-                try:
-                    args = json.loads(func.get("arguments", "{}"))
-                except json.JSONDecodeError:
-                    args = {}
+        grammar = get_grammar(self.model_family)
 
-                tool_calls.append(
-                    ToolCall(
-                        id=tc.get("id", str(uuid.uuid4())[:9]),
-                        name=func.get("name", ""),
-                        arguments=args,
-                    )
-                )
-
-        # Parse <tool_call> XML tags from content (Qwen3 style)
-        if not tool_calls:
-            for match in _TOOL_CALL_RE.finditer(content):
-                try:
-                    parsed = json.loads(match.group(1))
-                    name = parsed.get("name", "")
-                    arguments = parsed.get("arguments", {})
-                    if isinstance(arguments, str):
-                        arguments = json.loads(arguments)
-                    tool_calls.append(
-                        ToolCall(
-                            id=str(uuid.uuid4())[:9],
-                            name=name,
-                            arguments=arguments,
-                        )
-                    )
-                except (json.JSONDecodeError, KeyError):
-                    logger.warning("Failed to parse tool_call from content: %s", match.group(0))
-
-        # Parse <|tool_call>call:NAME{...}<tool_call|> from content (Gemma 4 style)
-        if not tool_calls:
-            for match in _GEMMA_TOOL_CALL_RE.finditer(content):
-                name = match.group(1)
-                args_text = match.group(2)
-                try:
-                    arguments = _parse_gemma_tool_args(args_text)
-                except Exception:
-                    logger.warning(
-                        "Failed to parse Gemma tool_call args: %s", match.group(0)
-                    )
-                    arguments = {}
-                tool_calls.append(
-                    ToolCall(
-                        id=str(uuid.uuid4())[:9],
-                        name=name,
-                        arguments=arguments,
-                    )
-                )
-
-        # Parse [TOOL_CALLS] JSON array from content (Mistral style)
-        if not tool_calls:
-            mistral_match = _MISTRAL_TOOL_CALLS_RE.search(content)
-            if mistral_match:
-                try:
-                    calls = json.loads(mistral_match.group(1))
-                    for call in calls:
-                        name = call.get("name", "")
-                        if "arguments" in call:
-                            arguments = call.get("arguments", {})
-                            if isinstance(arguments, str):
-                                arguments = json.loads(arguments)
-                        else:
-                            # Flat format: args at top level alongside "name"
-                            arguments = {
-                                k: v for k, v in call.items() if k != "name"
-                            }
-                        tool_calls.append(
-                            ToolCall(
-                                id=str(uuid.uuid4())[:9],
-                                name=name,
-                                arguments=arguments,
-                            )
-                        )
-                except (json.JSONDecodeError, KeyError):
-                    logger.warning(
-                        "Failed to parse [TOOL_CALLS] from content: %s",
-                        mistral_match.group(0),
-                    )
-
-        # Fallback: Gemma emitted JSON instead of native tool call format.
-        # Recover {"name": "tool", "arguments": {...}} or flat {"name": ..., "command": ...}.
-        _gemma_json_recovered = False
-        if not tool_calls and self.model_family == "gemma":
-            json_text = None
-            # Strip Gemma special tokens before looking for JSON
-            cleaned = _GEMMA_SPECIAL_TOKEN_RE.sub("", content).strip()
-
-            if cleaned.startswith(("{", "[")):
-                json_text = cleaned
-            if json_text is None:
-                fence_match = _CODE_FENCE_JSON_RE.search(cleaned)
-                if fence_match:
-                    json_text = fence_match.group(1)
-
-            if json_text is not None:
-                try:
-                    parsed = json.loads(json_text)
-                    candidates = parsed if isinstance(parsed, list) else [parsed]
-                    if all(isinstance(c, dict) and "name" in c for c in candidates):
-                        for call in candidates:
-                            if "arguments" in call:
-                                arguments = call["arguments"]
-                                if isinstance(arguments, str):
-                                    arguments = json.loads(arguments)
-                            else:
-                                arguments = {
-                                    k: v for k, v in call.items() if k != "name"
-                                }
-                            tool_calls.append(
-                                ToolCall(
-                                    id=str(uuid.uuid4())[:9],
-                                    name=call["name"],
-                                    arguments=arguments,
-                                )
-                            )
-                        _gemma_json_recovered = True
-                        logger.debug(
-                            "Recovered %d bare-JSON Gemma tool call(s) "
-                            "(expected native format)",
-                            len(tool_calls),
-                        )
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-        # Fallback: Mistral forgot the [TOOL_CALLS] prefix but emitted valid JSON.
-        # Accept bare JSON at the start of content, or inside markdown code fences.
-        # Handles three Mistral variants:
-        #   1. {"name": "tool", "arguments": {"key": "val"}}  — standard
-        #   2. {"name": "tool"}                                — no arguments
-        #   3. {"name": "tool", "key": "val"}                  — flat (args at top level)
-        _bare_json_recovered = False
-        if not tool_calls and self.model_family == "mistral":
-            json_text = None
-
-            # Strategy A: bare JSON at start of content
-            stripped = content.strip()
-            if stripped.startswith(("{", "[")):
-                json_text = stripped
-
-            # Strategy B: JSON inside markdown code fences
-            if json_text is None:
-                fence_match = _CODE_FENCE_JSON_RE.search(content)
-                if fence_match:
-                    json_text = fence_match.group(1)
-
-            if json_text is not None:
-                try:
-                    parsed = json.loads(json_text)
-                    candidates = parsed if isinstance(parsed, list) else [parsed]
-                    if all(isinstance(c, dict) and "name" in c for c in candidates):
-                        for call in candidates:
-                            if "arguments" in call:
-                                # Standard format: {"name": ..., "arguments": {...}}
-                                arguments = call["arguments"]
-                                if isinstance(arguments, str):
-                                    arguments = json.loads(arguments)
-                            else:
-                                # Flat format: args at top level alongside "name"
-                                arguments = {
-                                    k: v for k, v in call.items() if k != "name"
-                                }
-                            tool_calls.append(
-                                ToolCall(
-                                    id=str(uuid.uuid4())[:9],
-                                    name=call["name"],
-                                    arguments=arguments,
-                                )
-                            )
-                        _bare_json_recovered = True
-                        logger.debug(
-                            "Recovered %d bare-JSON Mistral tool call(s) "
-                            "(missing [TOOL_CALLS] prefix)",
-                            len(tool_calls),
-                        )
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-        # Strip think blocks, tool call markers, and Gemma channel blocks from content
-        content = _THINK_RE.sub("", content)
-        content = _THINK_UNCLOSED_RE.sub("", content)  # handle truncated think blocks
-        content = _GEMMA_THINK_RE.sub("", content)
-        content = _GEMMA_THINK_UNCLOSED_RE.sub("", content)
-        content = _GEMMA_SPECIAL_TOKEN_RE.sub("", content)
-        content = _TOOL_CALL_RE.sub("", content)
-        content = _GEMMA_TOOL_CALL_RE.sub("", content)
-        content = _MISTRAL_TOOL_CALLS_RE.sub("", content)
-
-        # Strip recovered bare JSON / code-fenced JSON so it doesn't leak to UI
-        if _gemma_json_recovered:
-            content = _CODE_FENCE_JSON_RE.sub("", content)
-            remaining = content.strip()
-            if remaining.startswith(("{", "[")):
-                try:
-                    parsed = json.loads(remaining)
-                    candidates = parsed if isinstance(parsed, list) else [parsed]
-                    if all(isinstance(c, dict) and "name" in c for c in candidates):
-                        content = ""
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
-
-        if _bare_json_recovered:
-            content = _CODE_FENCE_JSON_RE.sub("", content)
-            # If remaining content is bare JSON matching a tool call, clear it
-            remaining = content.strip()
-            if remaining.startswith(("{", "[")):
-                try:
-                    parsed = json.loads(remaining)
-                    candidates = parsed if isinstance(parsed, list) else [parsed]
-                    if all(
-                        isinstance(c, dict) and "name" in c and "arguments" in c
-                        for c in candidates
-                    ):
-                        content = ""
-                except (json.JSONDecodeError, KeyError, TypeError):
-                    pass
+        tool_calls, content, _fired = grammar.parse(
+            content,
+            structured=message.get("tool_calls"),
+        )
 
         content = content.strip() or None
 
         degenerate = False
-        if content and _is_degenerate_output(content):
+        if content and is_degenerate_output(content):
             logger.warning(
                 "Degenerate output detected (%d chars, dominated by "
                 "repeated characters) — suppressing garbage output",

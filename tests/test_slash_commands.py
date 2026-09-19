@@ -374,6 +374,39 @@ class TestCompactHistory:
         assert "User asked:" in result["summary"]
         assert "weather" in result["summary"]
 
+    def test_compact_honours_summarizer_seam(self):
+        """R2-5: a custom summarizer on the context manager is honoured by
+        compact_history() in both the marker and the returned stats, and a
+        failing one falls back to the extractive summary."""
+        # Custom summarizer is picked up by the shared marker/seam.
+        agent = _make_agent()
+        agent.messages.append({"role": "user", "content": "what is the weather?"})
+        agent.messages.append({"role": "assistant", "content": "let me check"})
+        agent.messages.append({"role": "user", "content": "thanks"})
+        agent.messages.append({"role": "assistant", "content": "you're welcome"})
+        agent._context_manager.summarizer = lambda msgs: "LLM: 3 turns elided"
+        result = agent.compact_history()
+        assert result["summary"] == "LLM: 3 turns elided"
+        assert "LLM: 3 turns elided" in agent.messages[1]["content"]
+        assert "User asked:" not in agent.messages[1]["content"]
+
+    def test_compact_summarizer_failure_falls_back(self):
+        """A summarizer that raises still leaves a valid extractive summary."""
+        agent = _make_agent()
+        agent.messages.append({"role": "user", "content": "what is the weather?"})
+        agent.messages.append({"role": "assistant", "content": "let me check"})
+        agent.messages.append({"role": "user", "content": "thanks"})
+        agent.messages.append({"role": "assistant", "content": "you're welcome"})
+
+        def _boom(msgs):
+            raise RuntimeError("summarizer down")
+
+        agent._context_manager.summarizer = _boom
+        result = agent.compact_history()
+        assert result["summary"]
+        assert "User asked:" in result["summary"]
+        assert "User asked:" in agent.messages[1]["content"]
+
     def test_compact_preserves_system_prompt(self):
         """System prompt is unchanged after compaction."""
         agent = _make_agent()

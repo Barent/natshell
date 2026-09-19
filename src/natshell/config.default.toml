@@ -241,7 +241,7 @@ theme = "dark"
 # [kiwix]
 # url = "http://localhost:8080"  # URL of your kiwix-serve instance
 
-# ─── Skills ─────────────────────────────────────────────────────────
+# ─── Skills ─────────────────────────────────────────────────────────────────
 # Skills bundle model instructions, reference docs, and optional tools.
 # The agent automatically selects skills based on task context.
 #
@@ -249,3 +249,33 @@ theme = "dark"
 enabled = true
 disabled = []
 inject_in_compact = false
+
+# ─── LLM Compaction Tier ───────────────────────────────────────────────────
+# When the context window fills up, the dropped conversation is replaced by
+# a summary.  By default that summary is "extractive" (pure heuristics built
+# from the file paths/commands in the dropped window).  Enabling the LLM
+# tier asks the local model to write a one-shot prose summary of the dropped
+# window first; on timeout or engine failure the extractive summary is used
+# instead (silent fallback, no user-visible error).
+#
+# [compaction]
+# llm = false              # Enable the LLM summarizer tier for /compact + auto-compaction
+# max_messages = 30        # Max history messages sent to the summarizer per call
+# timeout = 30             # Seconds allowed before falling back to the extractive summary
+
+# ─── Run-History Autotune (R2-6 feedback half) ────────────────────────────
+# When enabled, each run consults the last few recorded runs (see
+# ~/.local/share/natshell/metrics/natshell.jsonl, written by run-metrics
+# recording).  If recent runs hit the output budget (finish_reason was
+# "length"), the next run bumps max_tokens a bounded amount so the model
+# has more room to finish long answers.  The bump is capped three ways
+# (max_multiplier, min_increase, max_value) so it never overshoots.
+# Off by default — zero behaviour change.
+#
+# [autotune]
+# max_tokens = false       # Grow max_tokens from run history (opt-in)
+# window = 8               # Look back over at most this many runs
+# min_truncated = 1        # ...at least this many of which were truncated
+# max_multiplier = 1.4     # ...but never more than ×1.4 in one step
+# min_increase = 1000      # ...nor a growth smaller than 1000 tokens
+# max_value = 65536        # ...nor above the hard 64K ceiling

@@ -69,6 +69,18 @@ async def consume_events(
                         on_executing(event)
                     else:
                         emit(f"[executing] {event.tool_call.name}")
+            case EventType.TOOL_OUTPUT:
+                # Live streaming chunk (R2-4).  Headless mode doesn't opt
+                # into streaming (it renders the terminal result on TOOL_RESULT),
+                # so this is a documented no-op — it keeps the line stream
+                # clean if a streaming-enabled caller ever runs through here.
+                pass
+            case EventType.THINKING_TOKEN:
+                # Live model text delta (R2-1).  Documented no-op: headless
+                # prints the canonical text on PLANNING/RESPONSE, and
+                # spitting every token delta onto stderr would just spam
+                # the line stream.
+                pass
             case EventType.BLOCKED:
                 if event.tool_call:
                     emit(f"[BLOCKED] {event.tool_call.name}: {event.tool_call.arguments}")

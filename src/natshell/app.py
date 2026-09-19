@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -80,6 +80,7 @@ from natshell.ui.widgets import (
     RunStatsMessage,
     SudoPasswordScreen,
     SystemMessage,
+    ThinkingBlock,
     ThinkingIndicator,
     UserMessage,
     _escape,
@@ -362,20 +363,24 @@ class NatShellApp(App):
         self,
         event: AgentEvent,
         conversation: ScrollableContainer,
-        thinking_ref: list[ThinkingIndicator | None],
+        thinking_ref: list[ThinkingIndicator | ThinkingBlock | None],
         elapsed_ref: list[int] | None = None,
     ) -> None:
         """Render a single agent event into the conversation. Shared by run_agent and run_plan.
 
-        thinking_ref is a single-element list holding the current ThinkingIndicator
-        (or None), used as a mutable reference so callers can track it.
-        elapsed_ref carries the accumulated thinking time across indicator replacements.
+        thinking_ref is a single-element list holding the current thinking
+        placeholder — a ThinkingIndicator (spinner only) or a ThinkingBlock
+        (spinner + live token body, R2-1) — or None.
+        elapsed_ref carries the accumulated thinking time across placeholder
+        hand-offs (the timer must not visibly reset between them).
         """
         if elapsed_ref is None:
             elapsed_ref = [0]
         thinking = thinking_ref[0]
 
-        # Remove thinking indicator when we get a real event
+        # Remove the thinking placeholder when a real outcome arrives.
+        # Works whether the placeholder is a ThinkingIndicator or the
+        # upgraded ThinkingBlock that token streaming promoted it into.
         if thinking and event.type in (
             EventType.PLANNING,
             EventType.TOOL_RESULT,
@@ -397,6 +402,29 @@ class NatShellApp(App):
                     thinking_ref[0] = indicator
                     self.query_one(LogoBanner).start_animation()
 
+            case EventType.THINKING_TOKEN:
+                # Live model text delta (R2-1 token streaming): grow the
+                # placeholder in place.  The first delta promotes a plain
+                # ThinkingIndicator into a ThinkingBlock, carrying the
+                # running elapsed clock so the timer doesn't reset.
+                chunk = event.data if isinstance(event.data, str) else str(event.data)
+                current = thinking_ref[0]
+                if isinstance(current, ThinkingIndicator):
+                    indicator = current
+                    elapsed = max(indicator._elapsed, elapsed_ref[0])
+                    indicator.remove()
+                    block = ThinkingBlock(elapsed=elapsed)
+                    conversation.mount(block)
+                    thinking_ref[0] = block
+                elif isinstance(current, ThinkingBlock):
+                    block = current
+                else:
+                    block = ThinkingBlock(elapsed=elapsed_ref[0])
+                    conversation.mount(block)
+                    thinking_ref[0] = block
+                    self.query_one(LogoBanner).start_animation()
+                block.append(chunk)
+
             case EventType.PLANNING:
                 conversation.mount(PlanningMessage(event.data))
 
@@ -405,6 +433,21 @@ class NatShellApp(App):
                 block = CommandBlock(cmd)
                 block.id = f"cmd-{event.tool_call.id}"
                 conversation.mount(block)
+
+            case EventType.TOOL_OUTPUT:
+                # Live stdout chunk for a streaming tool (R2-4).  Route to the
+                # CommandBlock this event's tool_call belongs to; if the block
+                # isn't mounted yet (edge case / non-shell tool) there is
+                # nothing to update and we skip it.
+                if event.tool_call is None:
+                    return
+                block_id = f"cmd-{event.tool_call.id}"
+                try:
+                    self.query_one(f"#{block_id}", CommandBlock).set_partial(
+                        event.data if isinstance(event.data, str) else str(event.data)
+                    )
+                except Exception:
+                    pass
 
             case EventType.TOOL_RESULT:
                 block_id = f"cmd-{event.tool_call.id}"
@@ -442,27 +485,37 @@ class NatShellApp(App):
 
         conversation.scroll_end()
 
+    # ─── Shared agent callbacks ─────────────────────────────────────────
+    # Confirm and sudo-password prompts are identical across run_agent,
+    # run_plan_generation and run_plan; they live here once.
+
+    async def _confirm_callback(self, tool_call: ToolCall) -> bool:
+        return await self.push_screen_wait(ConfirmScreen(tool_call))
+
+    async def _password_callback(self, tool_call: ToolCall) -> str | None:
+        command = tool_call.arguments.get("command", "")
+        return await self.push_screen_wait(SudoPasswordScreen(command))
+
+    def _gated_confirm_callback(self) -> Callable[[ToolCall], Awaitable[bool]] | None:
+        """Confirm callback, or None when permissions are skipped."""
+        return None if self._skip_permissions else self._confirm_callback
+
     @work(exclusive=True, thread=False)
     async def run_agent(self, user_text: str) -> None:
         """Run the agent loop in a background worker."""
         conversation = self.query_one("#conversation", ScrollableContainer)
-        thinking_ref: list[ThinkingIndicator | None] = [None]
+        thinking_ref: list[ThinkingIndicator | ThinkingBlock | None] = [None]
         elapsed_ref: list[int] = [0]
 
-        async def confirm_callback(tool_call: ToolCall) -> bool:
-            return await self.push_screen_wait(ConfirmScreen(tool_call))
-
-        async def password_callback(tool_call: ToolCall) -> str | None:
-            command = tool_call.arguments.get("command", "")
-            return await self.push_screen_wait(SudoPasswordScreen(command))
-
-        confirm_cb = None if self._skip_permissions else confirm_callback
+        confirm_cb = self._gated_confirm_callback()
+        password_callback = self._password_callback
 
         try:
             async for event in self.agent.handle_user_message(
                 user_text,
                 confirm_callback=confirm_cb,
                 password_callback=password_callback,
+                stream_output=True,
             ):
                 self._render_agent_event(event, conversation, thinking_ref, elapsed_ref)
 
@@ -491,7 +544,7 @@ class NatShellApp(App):
             case "/clear":
                 self.action_clear_chat()
             case "/compact":
-                self._compact_chat(conversation)
+                await compact_chat(self.agent, conversation)
             case "/cmd":
                 if not args:
                     conversation.mount(SystemMessage("Usage: /cmd <command>"))
@@ -641,18 +694,12 @@ class NatShellApp(App):
     async def run_plan_generation(self, description: str) -> None:
         """Run the agent loop with a plan generation prompt."""
         conversation = self.query_one("#conversation", ScrollableContainer)
-        thinking_ref: list[ThinkingIndicator | None] = [None]
+        thinking_ref: list[ThinkingIndicator | ThinkingBlock | None] = [None]
         elapsed_ref: list[int] = [0]
         self._busy = True
 
-        async def confirm_callback(tool_call: ToolCall) -> bool:
-            return await self.push_screen_wait(ConfirmScreen(tool_call))
-
-        async def password_callback(tool_call: ToolCall) -> str | None:
-            command = tool_call.arguments.get("command", "")
-            return await self.push_screen_wait(SudoPasswordScreen(command))
-
-        confirm_cb = None if self._skip_permissions else confirm_callback
+        confirm_cb = self._gated_confirm_callback()
+        password_callback = self._password_callback
 
         # Fresh context — plan generation is self-contained
         self.agent.clear_history()
@@ -775,14 +822,8 @@ class NatShellApp(App):
         )
         conversation.scroll_end()
 
-        async def confirm_callback(tool_call: ToolCall) -> bool:
-            return await self.push_screen_wait(ConfirmScreen(tool_call))
-
-        async def password_callback(tool_call: ToolCall) -> str | None:
-            command = tool_call.arguments.get("command", "")
-            return await self.push_screen_wait(SudoPasswordScreen(command))
-
-        confirm_cb = None if self._skip_permissions else confirm_callback
+        confirm_cb = self._gated_confirm_callback()
+        password_callback = self._password_callback
 
         completed_summaries: list[str] = []
         completed_files: list[str] = []
@@ -865,7 +906,7 @@ class NatShellApp(App):
                 )
 
                 # Run the agent loop for this step
-                thinking_ref: list[ThinkingIndicator | None] = [None]
+                thinking_ref: list[ThinkingIndicator | ThinkingBlock | None] = [None]
                 elapsed_ref: list[int] = [0]
                 hit_max_steps = False
                 step_files: list[str] = []
@@ -875,6 +916,7 @@ class NatShellApp(App):
                         prompt,
                         confirm_callback=confirm_cb,
                         password_callback=password_callback,
+                        stream_output=True,
                     ):
                         self._render_agent_event(event, conversation, thinking_ref, elapsed_ref)
 
@@ -1567,7 +1609,3 @@ class NatShellApp(App):
         conversation.mount(Static("[dim]Chat cleared. Type a new request.[/]\n"))
         self.agent.clear_history()
         self.query_one("#user-input", HistoryInput).clear_history()
-
-    def _compact_chat(self, conversation: ScrollableContainer) -> None:
-        """Compact conversation context, keeping key facts."""
-        compact_chat(self.agent, conversation)
