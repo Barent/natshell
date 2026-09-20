@@ -6,8 +6,11 @@ import difflib
 from pathlib import Path
 from typing import Any
 
-from rich.console import RenderableType
+from rich.console import Group, RenderableType
+from rich.markdown import Markdown
+from rich.styled import Styled
 from rich.syntax import Syntax
+from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -372,27 +375,22 @@ class AssistantMessage(CopyableMessage):
     """A text response from the assistant."""
 
     def __init__(self, text: str, metrics: dict[str, Any] | None = None) -> None:
-        suffix = ""
+        parts: list[RenderableType] = [
+            Text.from_markup("[bold green]NatShell:[/] "),
+            Markdown(text, code_theme="monokai"),
+        ]
         if metrics:
             metrics_line = _format_metrics(metrics)
             if metrics_line:
-                suffix = f"\n[dim]{metrics_line}[/]"
-        segments = parse_code_fences(text)
-        formatted = render_segments(
-            segments,
-            prefix_markup="[bold green]NatShell:[/] ",
-            suffix_markup=suffix,
-        )
-        super().__init__(formatted, text)
+                parts.append(Text.from_markup(f"[dim]{metrics_line}[/]"))
+        super().__init__(Group(*parts), text)
 
 
 class PlanningMessage(CopyableMessage):
     """The assistant's planning/reasoning text before tool calls."""
 
     def __init__(self, text: str) -> None:
-        segments = parse_code_fences(text)
-        formatted = render_segments(segments, text_style="dim italic")
-        super().__init__(formatted, text)
+        super().__init__(Styled(Markdown(text, code_theme="monokai"), "dim italic"), text)
 
 
 class CommandBlock(Vertical):

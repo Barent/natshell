@@ -124,6 +124,8 @@ class AgentLoop:
         # Repetition / edit-failure guards (state + detectors live in
         # natshell.agent.repetition_guard)
         self._repetition_guard = RepetitionGuard()
+        # Empty-response (stop-but-no-content) retry guard — one nudge per run
+        self._empty_response_retried: bool = False
         # Context overflow recovery guard — the ordered ladder
         # (overflow → compact/retry → connectivity → ping/compact → local
         # fallback) lives in natshell.agent.recovery
@@ -610,6 +612,7 @@ class AgentLoop:
         # natshell.agent.repetition_guard — thresholds & state in one place)
         self._repetition_guard.reset()
         self._recovery.reset()
+        self._empty_response_retried = False
         # Reset the LLM-compaction-tier failure breaker for this run
         # (R2-5: after N consecutive failures the tier is skipped within a
         # run, but resumes on the next run).
@@ -832,16 +835,33 @@ class AgentLoop:
                         )
                     return
 
-                # Case 3: Empty response (shouldn't happen, but handle gracefully)
+                # Case 3: Empty response (no content, no tool call) — usually a model
+                # that finished (finish_reason="stop") after reasoning without ever
+                # producing an answer. Give it one nudge before giving up.
                 logger.warning(
                     "Empty response from model: finish_reason=%s, "
                     "prompt_tokens=%s, completion_tokens=%s",
                     result.finish_reason, result.prompt_tokens,
                     result.completion_tokens,
                 )
+                if not self._empty_response_retried:
+                    self._empty_response_retried = True
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "[SYSTEM] Your last response contained no answer and "
+                                "no tool call. Answer directly or call a tool now — "
+                                "do not just reason silently."
+                            ),
+                        }
+                    )
+                    continue
+
                 yield AgentEvent(
                     type=EventType.ERROR,
-                    data="Model returned an empty response.",
+                    data=f"Model returned an empty response (finish_reason="
+                    f"{result.finish_reason}) after a retry.",
                 )
                 return
 

@@ -421,6 +421,44 @@ class TestTruncatedResponse:
         assert EventType.RESPONSE in types
 
 
+class TestEmptyResponseRetry:
+    async def test_empty_response_retries_once_then_succeeds(self):
+        """A stop-but-empty reply should be nudged and retried, not fatal."""
+        agent = _make_agent(
+            [
+                CompletionResult(content=None, tool_calls=[], finish_reason="stop"),
+                CompletionResult(content="Here's the answer.", finish_reason="stop"),
+            ]
+        )
+        events = await _collect_events(agent, "do something")
+        types = [e.type for e in events]
+        assert EventType.ERROR not in types
+        assert EventType.RESPONSE in types
+        response_event = next(e for e in events if e.type == EventType.RESPONSE)
+        assert response_event.data == "Here's the answer."
+        # The nudge should have been appended to the conversation history.
+        nudge_messages = [
+            m for m in agent.messages
+            if m["role"] == "user" and "no answer and no tool call" in m["content"]
+        ]
+        assert len(nudge_messages) == 1
+
+    async def test_empty_response_twice_yields_error_with_finish_reason(self):
+        """Two consecutive empty replies in one run should surface a clear error."""
+        agent = _make_agent(
+            [
+                CompletionResult(content=None, tool_calls=[], finish_reason="stop"),
+                CompletionResult(content=None, tool_calls=[], finish_reason="stop"),
+            ]
+        )
+        events = await _collect_events(agent, "do something")
+        types = [e.type for e in events]
+        assert EventType.ERROR in types
+        error_event = next(e for e in events if e.type == EventType.ERROR)
+        assert "empty response" in error_event.data.lower()
+        assert "finish_reason=stop" in error_event.data
+
+
 # ─── Think tag and tool_call tag parsing ─────────────────────────────────────
 
 
