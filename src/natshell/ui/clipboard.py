@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 _backend: str | None = None  # cached after first detection
 _wayland_warned: bool = False  # one-time warning flag
 _wsl_clipboard_warned: bool = False  # one-time WSL clip.exe warning flag
+# Populated by every call to copy() with the backend that *actually landed*
+# the copy (or None on failure).  Lets callers distinguish "OSC52, which may
+# silently truncate on weak terminals" from "real clipboard tool wrote OK"
+# when producing user-facing notifications.  See issue #50.
+_last_backend: str | None = None
 
 
 def _is_wsl() -> bool:
@@ -78,11 +83,14 @@ def copy(text: str, app=None) -> bool:
 
     Returns True on success, False on failure.  When the backend is
     "osc52", delegates to ``app.copy_to_clipboard()`` (which may silently
-    fail on terminals that don't support OSC52).
+    fail on terminals that don't support OSC52, or accept a partial payload
+    and silently truncate it — see issue #50).  Callers that want to report
+    the actually-used backend may read ``_last_backend`` immediately after
+    this call.
     """
-    global _wayland_warned, _wsl_clipboard_warned
+    global _wayland_warned, _wsl_clipboard_warned, _last_backend
     backend = detect_backend()
-
+    _last_backend = None  # every path below re-sets it on success; fails leave it None
     # Warn once if using an X11 clipboard tool on a Wayland session
     session_type = os.environ.get("XDG_SESSION_TYPE", "")
     if session_type == "wayland" and backend in ("xclip", "xsel") and not _wayland_warned:
@@ -105,6 +113,7 @@ def copy(text: str, app=None) -> bool:
         if app is not None:
             try:
                 app.copy_to_clipboard(text)
+                _last_backend = "osc52"
                 return True
             except Exception:
                 return False
@@ -122,7 +131,10 @@ def copy(text: str, app=None) -> bool:
         )
         if proc.returncode != 0:
             return False
-        return _verify_copy(backend)
+        if _verify_copy(backend):
+            _last_backend = backend
+            return True
+        return False
     except Exception:
         return False
 
@@ -133,6 +145,17 @@ def backend_name() -> str:
     if backend == "osc52":
         return "OSC52 (terminal escape — may not work in all terminals)"
     return backend
+
+
+def last_backend() -> str | None:
+    """Backend that landed the most recent :func:`copy` call, or ``None``.
+
+    ``None`` means the copy failed (no usable backend).  Call this *after*
+    :func:`copy` returns ``True`` to build an accurate user-facing message —
+    e.g. to warn that an ``osc52`` copy may have been truncated by the terminal
+    (issue #50).
+    """
+    return _last_backend
 
 
 def _build_command(backend: str) -> list[str]:
@@ -228,7 +251,8 @@ def read() -> str | None:
 
 def _reset() -> None:
     """Reset cached backend (for testing)."""
-    global _backend, _wayland_warned, _wsl_clipboard_warned
+    global _backend, _wayland_warned, _wsl_clipboard_warned, _last_backend
     _backend = None
     _wayland_warned = False
     _wsl_clipboard_warned = False
+    _last_backend = None
