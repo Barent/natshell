@@ -28,6 +28,11 @@ from natshell.ui.syntax_render import render_segments
 class HistoryInput(Input):
     """Input widget with shell-like up/down arrow history navigation."""
 
+    #: Pastes below this length are inserted inline (no placeholder).
+    #: Large or multi-line pastes use a placeholder that
+    #: :meth:`get_submit_text` expands back to the real text.  See issue #49.
+    PASTE_INLINE_THRESHOLD = 1000
+
     class TabComplete(Message):
         """Posted when the user presses Tab for completion."""
 
@@ -48,7 +53,7 @@ class HistoryInput(Input):
         self._history_index: int = -1  # -1 = not navigating
         self._draft: str = ""
         self._pasted_text: str | None = None  # full pasted content
-        self._pre_paste_text: str = ""  # text typed before paste
+        self._pasted_sentinel: str | None = None  # placeholder shown in the box
 
     def add_to_history(self, text: str) -> None:
         """Add text to history. Skips empty and consecutive duplicates."""
@@ -106,73 +111,78 @@ class HistoryInput(Input):
 
     # ─── Paste handling ──────────────────────────────────────────────────
 
-    def _paste_indicator(self, text: str) -> str:
-        """Build a compact indicator string for pasted content."""
+    def _paste_marker(self, text: str) -> str:
+        """Build a compact placeholder string shown for large pastes."""
         char_count = len(text)
         line_count = text.count("\n") + 1
         if line_count > 1:
             return f"[Pasted {char_count} chars, {line_count} lines]"
         return f"[Pasted {char_count} chars]"
 
+    def _needs_placeholder(self, text: str) -> bool:
+        """Large or multi-line pastes warrant a placeholder; the rest insert inline."""
+        return "\n" in text or len(text) > self.PASTE_INLINE_THRESHOLD
+
     def _on_paste(self, event: events.Paste) -> None:
         event.prevent_default()
         pasted = event.text
         if not pasted or not pasted.strip():
             return
-        # If there's already a paste, revert to pre-paste text first
-        if self._pasted_text is not None:
-            self.value = self._pre_paste_text
-        self._pasted_text = pasted
-        self._pre_paste_text = self.value
-        indicator = self._paste_indicator(pasted)
-        if self._pre_paste_text:
-            self.value = f"{self._pre_paste_text} {indicator}"
-        else:
-            self.value = indicator
-        self.cursor_position = len(self.value)
-
-    async def _on_key(self, event: events.Key) -> None:
-        if event.key == "backspace" and self._pasted_text is not None:
-            if "[Pasted " in self.value:
-                self._pasted_text = None
-                self.value = self._pre_paste_text
-                self._pre_paste_text = ""
-                self.cursor_position = len(self.value)
-                event.prevent_default()
-                return
-        await super()._on_key(event)
+        self.insert_from_clipboard(pasted)
 
     def get_submit_text(self) -> str:
         """Return the actual text to send to the agent.
 
-        If content was pasted, returns the full pasted text (optionally
-        prefixed with any text typed before the paste).  Otherwise returns
-        the raw input value.
+        If a placeholder paste is active and its marker is still visible in
+        the value, the marker is expanded back to the real pasted text and any
+        characters the user typed around it are preserved.  Otherwise the raw
+        input value is returned (small pastes are stored inline already).
         """
-        if self._pasted_text is not None:
-            if self._pre_paste_text:
-                return f"{self._pre_paste_text}\n{self._pasted_text}"
-            return self._pasted_text
+        if self._pasted_sentinel and self._pasted_sentinel in self.value:
+            before, _, after = self.value.partition(self._pasted_sentinel)
+            return f"{before}{self._pasted_text}{after}"
         return self.value
 
     def clear_paste(self) -> None:
         """Reset paste state (call after submit)."""
         self._pasted_text = None
-        self._pre_paste_text = ""
+        self._pasted_sentinel = None
 
     def insert_from_clipboard(self, text: str) -> None:
-        """Programmatically insert clipboard content, same UX as paste."""
-        # If there's already a paste, revert to pre-paste text first
-        if self._pasted_text is not None:
-            self.value = self._pre_paste_text
+        """Insert clipboard/pasted content at the caret.
+
+        Small single-line pastes are inserted inline like typed text.  Large
+        or multi-line pastes are stored in ``_pasted_text`` and represented in
+        the input box by a single placeholder, so the box stays usable and the
+        real content is restored by :meth:`get_submit_text`.  Re-pasting
+        replaces the previous sentinel paste.
+        """
+        if not self._needs_placeholder(text):
+            # Inline insert at the caret; typed text before/after is untouched.
+            self.insert(text, self.cursor_position)
+            self.cursor_position = len(self.value)
+            # Inline pastes carry no placeholder state.
+            self._pasted_text = None
+            self._pasted_sentinel = None
+            return
+        marker = self._paste_marker(text)
+        # A previous sentinel paste may still be sitting in the value. Strip its
+        # placeholder (and its real text is being replaced anyway), then keep the
+        # caret pointing at the start of the new marker.
+        new_cursor = self.cursor_position
+        if self._pasted_sentinel and self._pasted_sentinel in self.value:
+            old = self._pasted_sentinel
+            cut = len(old)
+            if new_cursor >= len(self.value):
+                new_cursor = len(self.value) - cut  # caret was past the marker
+            self.value = self.value.replace(old, "")
+            new_cursor = max(0, min(new_cursor, len(self.value)))
+        before = self.value[:new_cursor]
+        after = self.value[new_cursor:]
+        self.value = f"{before}{marker}{after}"
         self._pasted_text = text
-        self._pre_paste_text = self.value
-        indicator = self._paste_indicator(text)
-        if self._pre_paste_text:
-            self.value = f"{self._pre_paste_text} {indicator}"
-        else:
-            self.value = indicator
-        self.cursor_position = len(self.value)
+        self._pasted_sentinel = marker
+        self.cursor_position = new_cursor
 
 
 # ─── Logo frames ─────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ class _TestInput(HistoryInput):
         self._history_index: int = -1
         self._draft: str = ""
         self._pasted_text: str | None = None
-        self._pre_paste_text: str = ""
+        self._pasted_sentinel: str | None = None
         self._val: str = ""
         self._cur: int = 0
 
@@ -31,6 +31,11 @@ class _TestInput(HistoryInput):
     @cursor_position.setter
     def cursor_position(self, v: int) -> None:
         self._cur = v
+
+    def insert(self, text: str, index: int) -> None:
+        """Mimic Textual Input.insert: insert text at position index."""
+        index = max(0, min(index, len(self._val)))
+        self._val = self._val[:index] + text + self._val[index:]
 
 
 def _make() -> _TestInput:
@@ -187,45 +192,90 @@ class TestSlashCommands:
 
 
 class TestPasteHandling:
-    """Tests for paste indicator and get_submit_text()."""
+    """Tests for paste handling (see issue #49).
 
-    def test_paste_stores_text_and_shows_indicator(self):
+    Small single-line pastes insert inline like typed text. Large (>1000 char)
+    or multi-line pastes show a `[Pasted ...]` placeholder and the real text is
+    expanded in `get_submit_text()`. Text typed AFTER a paste must never be
+    lost (the reported regression).
+    """
+
+    def test_small_single_line_paste_is_inline(self):
         w = _make()
         w.insert_from_clipboard("hello world")
-        assert w._pasted_text == "hello world"
-        assert "[Pasted 11 chars]" in w.value
+        assert w._pasted_text is None
+        assert w.value == "hello world"
+
+    def test_dog_past_no_placeholder(self):
+        """Issue #49: pasting 'dog' must not render '[Pasted 3 chars]'."""
+        w = _make()
+        w.insert_from_clipboard("dog")
+        assert w.value == "dog"
+        assert "Pasted" not in w.value
 
     def test_paste_multiline_shows_line_count(self):
         w = _make()
         text = "line1\nline2\nline3"
         w.insert_from_clipboard(text)
         assert w._pasted_text == text
+        assert w._pasted_sentinel is not None
         assert "[Pasted 17 chars, 3 lines]" in w.value
+
+    def test_large_paste_shows_placeholder(self):
+        w = _make()
+        text = "x" * 1500
+        w.insert_from_clipboard(text)
+        assert w._pasted_text == text
+        assert w._pasted_sentinel is not None
+        assert "1500 chars" in w.value
 
     def test_get_submit_text_returns_pasted(self):
         w = _make()
-        w.insert_from_clipboard("full pasted content\nwith newlines")
-        result = w.get_submit_text()
-        assert result == "full pasted content\nwith newlines"
+        text = "full pasted content\nwith newlines"
+        w.insert_from_clipboard(text)
+        assert w.get_submit_text() == text
 
     def test_get_submit_text_with_prefix(self):
         w = _make()
         w.value = "prefix text"
+        w.cursor_position = len(w.value)
         w.insert_from_clipboard("pasted stuff")
-        result = w.get_submit_text()
-        assert result == "prefix text\npasted stuff"
+        assert w.value == "prefix textpasted stuff"
+        assert w.get_submit_text() == "prefix textpasted stuff"
 
     def test_get_submit_text_without_paste(self):
         w = _make()
         w.value = "just typed"
         assert w.get_submit_text() == "just typed"
 
+    def test_type_after_inline_paste_preserved(self):
+        """Issue #49: chars typed after the paste must reach the agent."""
+        w = _make()
+        w.value = "fix "
+        w.cursor_position = 4
+        w.insert_from_clipboard("the bug")
+        # user keeps typing
+        w.value = w.value + " now"
+        w.cursor_position = len(w.value)
+        assert w.get_submit_text() == "fix the bug now"
+
+    def test_type_after_sentinel_paste_preserved(self):
+        """Issue #49: chars typed after a placeholder paste must not be lost."""
+        w = _make()
+        big = "A" * 1500
+        w.insert_from_clipboard(big)
+        # simulate the user typing '!' right after the placeholder
+        w.value = w.value + "!"
+        w.cursor_position = len(w.value)
+        result = w.get_submit_text()
+        assert result == big + "!"
+
     def test_clear_paste_resets_state(self):
         w = _make()
         w.insert_from_clipboard("some text")
         w.clear_paste()
         assert w._pasted_text is None
-        assert w._pre_paste_text == ""
+        assert w._pasted_sentinel is None
         # After clearing, get_submit_text returns raw value
         w.value = "new input"
         assert w.get_submit_text() == "new input"
@@ -233,21 +283,21 @@ class TestPasteHandling:
     def test_insert_from_clipboard(self):
         w = _make()
         w.insert_from_clipboard("clipboard content")
-        assert w._pasted_text == "clipboard content"
-        assert "[Pasted 17 chars]" in w.value
+        assert w.value == "clipboard content"
+        assert w.get_submit_text() == "clipboard content"
         assert w.cursor_position == len(w.value)
 
     def test_insert_from_clipboard_with_existing_text(self):
         w = _make()
         w.value = "before"
+        w.cursor_position = len(w.value)
         w.insert_from_clipboard("pasted")
-        assert w._pre_paste_text == "before"
-        assert w.value.startswith("before ")
-        assert "[Pasted 6 chars]" in w.value
+        assert w.value == "beforepasted"
+        assert w.get_submit_text() == "beforepasted"
 
-    def test_second_paste_replaces_first(self):
+    def test_second_sentinel_paste_replaces_first(self):
         w = _make()
-        w.insert_from_clipboard("first paste")
-        w.insert_from_clipboard("second paste")
-        assert w._pasted_text == "second paste"
-        assert w.get_submit_text() == "second paste"
+        w.insert_from_clipboard("F" * 1500)
+        w.insert_from_clipboard("S" * 1600)
+        assert w._pasted_text == "S" * 1600
+        assert w.get_submit_text() == "S" * 1600
