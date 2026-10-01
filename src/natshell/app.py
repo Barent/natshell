@@ -103,6 +103,20 @@ def _tool_display_text(tool_call: ToolCall) -> str:
             return f"{tool_call.name}({tool_call.arguments})"
 
 
+def _find_last(conversation, message_type: type) -> Any:
+    """Most recent *child* of *conversation* that is an instance of
+    *message_type* (in mount order), or ``None`` if there is none.
+
+    Module-level so tests can drive it without booting the TUI and without
+    any ``spec`` interception from a MagicMock ``self``.
+    """
+    found = None
+    for child in conversation.children:
+        if isinstance(child, message_type):
+            found = child
+    return found
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -154,6 +168,11 @@ class NatShellApp(App):
         Binding("ctrl+c", "copy_selection", "Copy", priority=True),
         Binding("ctrl+e", "copy_chat", "Copy Chat"),
         Binding("ctrl+l", "clear_chat", "Clear Chat"),
+        # Issue #48: stop/copy + copy-last + regenerate + edit-last.
+        Binding("esc", "stop", "Stop", show=False),
+        Binding("ctrl+y", "copy_last_response", "Copy Last Response"),
+        Binding("ctrl+r", "regenerate_last", "Regenerate"),
+        Binding("ctrl+shift+r", "edit_last_prompt", "Edit Last Prompt", show=False),
     ]
 
     def __init__(
@@ -1025,13 +1044,18 @@ class NatShellApp(App):
         """Show keyboard shortcuts."""
         keys_text = (
             "[bold]Keyboard Shortcuts[/]\n\n"
-            "  [bold cyan]Enter[/]       Send message\n"
-            "  [bold cyan]Up/Down[/]     Navigate input history\n"
-            "  [bold cyan]Ctrl+C[/]      Copy selected text\n"
-            "  [bold cyan]Ctrl+E[/]      Copy entire chat\n"
-            "  [bold cyan]Ctrl+L[/]      Clear chat\n"
-            "  [bold cyan]Ctrl+P[/]      Command palette (model switcher)\n\n"
-            "  Type [bold cyan]exit[/] or [bold cyan]/exit[/] to quit."
+            "[bold cyan]Enter[/]       Send message\n"
+            "[bold cyan]Up/Down[/]     Navigate input history\n"
+            "[bold cyan]Ctrl+C[/]      Copy selected text\n"
+            "[bold cyan]Right-click[/] Copy selected text\n"
+            "[bold cyan]Ctrl+E[/]      Copy entire chat\n"
+            "[bold cyan]Ctrl+Y[/]      Copy last assistant response\n"
+            "[bold cyan]Ctrl+R[/]      Regenerate last response\n"
+            "[bold cyan]Ctrl+Shift+R[/]  Re-open last prompt to edit\n"
+            "[bold cyan]Esc[/]         Stop a running turn\n"
+            "[bold cyan]Ctrl+L[/]      Clear chat\n"
+            "[bold cyan]Ctrl+P[/]      Command palette (model switcher)\n\n"
+            "Type [bold cyan]exit[/] or [bold cyan]/exit[/] to quit."
         )
         conversation.mount(SystemMessage(keys_text))
 
@@ -1600,6 +1624,71 @@ class NatShellApp(App):
                 )
         else:
             self.notify("Nothing to copy", timeout=2)
+
+    def action_stop(self) -> None:
+        """Stop a running agent turn (Esc) when one is in progress.
+
+        When idle this is a deliberate no-op: Esc is otherwise left to cancel
+        any open dialog.  Cancelling the worker triggers the ``finally`` block
+        in ``run_agent`` which clears the thinking indicator and refocuses the
+        input.
+        """
+        if not self._busy:
+            return
+        self.workers.cancel_all()
+        self._busy = False
+        self.notify("Stopped generation", timeout=2)
+
+    def action_copy_last_response(self) -> None:
+        """Copy the most recent NatShell response to the clipboard (Ctrl+Y)."""
+        conversation = self.query_one("#conversation", ScrollableContainer)
+        last = _find_last(conversation, AssistantMessage)
+        if last is None:
+            self.notify("No previous response to copy", timeout=2)
+            return
+        if clipboard.copy(last.copyable_text, self):
+            self.notify("Copied last response", timeout=2)
+        else:
+            self.notify(
+                "Copy failed — no clipboard tool found", severity="error", timeout=3
+            )
+
+    def action_edit_last_prompt(self) -> None:
+        """Populate the input box with the most recent user prompt (Ctrl+Shift+R).
+
+        Lets the user tweak and re-send their last request without retyping it.
+        It does not clear the conversation or touch history.
+        """
+        conversation = self.query_one("#conversation", ScrollableContainer)
+        last = _find_last(conversation, UserMessage)
+        if last is None:
+            self.notify("No previous prompt to edit", timeout=2)
+            return
+        input_widget = self.query_one("#user-input", HistoryInput)
+        input_widget.clear_paste()
+        input_widget.value = last.copyable_text
+        input_widget.cursor_position = len(input_widget.value)
+        input_widget.focus()
+
+    def action_regenerate_last(self) -> None:
+        """Re-send the most recent user prompt (Ctrl+R) to get a fresh answer.
+
+        Guards against double-running while a turn is already in progress.
+        """
+        last = _find_last(self.query_one("#conversation", ScrollableContainer), UserMessage)
+        if last is None:
+            self.notify("No previous prompt to regenerate from", timeout=2)
+            return
+        if self._busy:
+            self.notify("Already running — stop the current turn first", timeout=2)
+            return
+        user_text = last.copyable_text
+        input_widget = self.query_one("#user-input", HistoryInput)
+        input_widget.add_to_history(user_text)
+        conversation = self.query_one("#conversation", ScrollableContainer)
+        conversation.mount(UserMessage(user_text))
+        conversation.scroll_end()
+        self.run_agent(user_text)
 
     @on(Button.Pressed, "#quit-btn")
     def on_quit_btn(self) -> None:
