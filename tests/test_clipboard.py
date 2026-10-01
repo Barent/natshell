@@ -214,6 +214,73 @@ class TestCopy:
         assert copy("hello", app=app) is False
 
 
+class TestBackendTracking:
+    """Issue #50: the app must be able to report *which* clipboard path actually
+    landed the copy.  Otherwise a truncated OSC52 payload (silent partial copy
+    on terminals with a weak OSC52 implementation) is indistinguishable from a
+    real failure.  We fix the messages and expose the real backend.
+    """
+
+    def test_last_backend_reflects_actual_path(self):
+        import natshell.ui.clipboard as _clip
+
+        with patch("natshell.ui.clipboard.shutil.which", return_value=None):
+            detect_backend()
+
+        _clip._last_backend = "xclip"  # stale value from a prior call
+        app = MagicMock()
+        assert _clip.copy("hello", app=app) is True
+        assert _clip.last_backend() == "osc52"
+
+    def test_last_backend_is_none_on_osc52_failure_without_app(self):
+        import natshell.ui.clipboard as _clip
+
+        with patch("natshell.ui.clipboard.shutil.which", return_value=None):
+            detect_backend()
+
+        _clip._last_backend = "xclip"
+        assert _clip.copy("hello") is False  # no app → cannot even try
+        assert _clip.last_backend() is None
+
+    def test_last_backend_tracks_real_tool_success(self):
+        """On a real tool (xclip etc.) the landed backend matches the tool."""
+        import natshell.ui.clipboard as _clip
+
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
+
+            with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="hello")
+                assert _clip.copy("hello") is True
+        assert _clip.last_backend() == "xclip"
+
+    def test_last_backend_is_none_on_real_tool_failure(self):
+        import natshell.ui.clipboard as _clip
+
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}):
+            with patch("natshell.ui.clipboard.shutil.which") as mock_which:
+                mock_which.side_effect = lambda t: "/usr/bin/xclip" if t == "xclip" else None
+                detect_backend()
+
+            with patch("natshell.ui.clipboard.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=1)
+                assert _clip.copy("hello") is False
+        assert _clip.last_backend() is None
+
+    def test_last_backend_reset(self):
+        """_reset() clears the tracker so tests stay deterministic."""
+        import natshell.ui.clipboard as _clip
+
+        with patch("natshell.ui.clipboard.shutil.which", return_value=None):
+            detect_backend()
+            app = MagicMock()
+            _clip.copy("hello", app=app)
+            _clip._reset()
+        assert _clip.last_backend() is None
+
+
 # ─── backend_name ─────────────────────────────────────────────────────────────
 
 

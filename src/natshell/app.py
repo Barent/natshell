@@ -1532,27 +1532,50 @@ class NatShellApp(App):
         )
         conversation.mount(SystemMessage("\n".join(lines)))
 
+    def _notify_copy_result(self, what: str = "Copied") -> None:
+        """Notify the user that a copy landed, reporting the *actual* backend.
+
+        Distinguishes a verified real-tool copy (xclip/wl-copy/pbcopy/clip.exe)
+        from the OSC52 terminal-escape path, which many terminals silently
+        truncate on large payloads (issue #50).  This lets the user know when a
+        long "Copy chat" may have been cut off rather than failing invisibly.
+        """
+        backend = clipboard.last_backend()
+        if backend == "osc52":
+            self.notify(
+                f"{what} via OSC52 — some terminals truncate large pastes; "
+                "if it looks short, use the per-message copy buttons",
+                timeout=4,
+            )
+        elif backend:
+            self.notify(f"{what} via {backend}", timeout=2)
+        else:
+            self.notify(
+                "Copy failed — no working clipboard backend. "
+                "If on Wayland, install wl-clipboard, then retry.",
+                severity="error",
+                timeout=4,
+            )
+
     def on_mouse_up(self, event: MouseUp) -> None:
         """Copy selected text to clipboard on right-click."""
         if event.button == 3:
             selected = self.screen.get_selected_text()
             if selected:
                 if clipboard.copy(selected, self):
-                    self.notify("Copied to clipboard", timeout=2)
+                    self._notify_copy_result("Copied")
                 else:
-                    self.notify(
-                        "Copy failed — no clipboard tool found", severity="error", timeout=3
-                    )
+                    self._notify_copy_result()
 
     def action_copy_selection(self) -> None:
         """Copy selected text to clipboard (Ctrl+C)."""
         selected = self.screen.get_selected_text()
         if selected:
             if clipboard.copy(selected, self):
-                self.notify("Copied to clipboard", timeout=2)
+                self._notify_copy_result("Copied")
                 self.clear_selection()
             else:
-                self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
+                self._notify_copy_result()
 
     def action_copy_chat(self) -> None:
         """Copy the entire chat conversation to clipboard."""
@@ -1564,9 +1587,17 @@ class NatShellApp(App):
         if parts:
             text = "\n\n".join(parts)
             if clipboard.copy(text, self):
-                self.notify("Chat copied!", timeout=2)
+                self._notify_copy_result("Chat copied")
             else:
-                self.notify("Copy failed — no clipboard tool found", severity="error", timeout=3)
+                # Nothing worked — point the user at the per-message buttons,
+                # which are small enough to survive terminals that mangle
+                # large OSC52 payloads (issue #50).
+                self.notify(
+                    "Copy failed — no working clipboard backend. "
+                    "Use the per-message copy buttons instead.",
+                    severity="error",
+                    timeout=4,
+                )
         else:
             self.notify("Nothing to copy", timeout=2)
 
