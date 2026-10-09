@@ -132,6 +132,14 @@ def main() -> None:
         metavar="NAME",
         help="Apply a named configuration profile before starting",
     )
+    parser.add_argument(
+        "--terminal-selection",
+        action="store_true",
+        help="Hand text selection to the terminal's native mechanism instead of "
+        "Textual's built-in drag-select. Use this in terminals where native "
+        "drag-select-and-copy is preferred (e.g., macOS Terminal.app). "
+        "Textual's copy buttons continue to work via keyboard focus.",
+    )
 
     args = parser.parse_args()
 
@@ -562,7 +570,12 @@ def main() -> None:
         # Silence the console handler before the TUI takes the terminal —
         # ANY stderr output during Textual rendering corrupts the display.
         console_handler.setLevel(logging.CRITICAL)
-        app.run()
+        # --terminal-selection: hand selection to the terminal's native
+        # mechanism by starting the app with mouse support OFF.  Textual then
+        # skips the ?1000h/1003h/1006h enable sequences, so the TERM's own
+        # drag-select-and-copy (the "regular terminal" behavior) kicks in.
+        # Copy buttons, /help, /copy-last, and keyboard navigation still work.
+        app.run(mouse=not args.terminal_selection)
     finally:
         if hasattr(engine, "close"):
             try:
