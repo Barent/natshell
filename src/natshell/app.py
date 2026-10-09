@@ -1582,14 +1582,22 @@ class NatShellApp(App):
             )
 
     def on_mouse_up(self, event: MouseUp) -> None:
-        """Copy selected text to clipboard on right-click."""
-        if event.button == 3:
-            selected = self.screen.get_selected_text()
-            if selected:
-                if clipboard.copy(selected, self):
-                    self._notify_copy_result("Copied")
-                else:
-                    self._notify_copy_result()
+        """Copy selected text to the clipboard when a selection is released.
+
+        Handles the two "release" gestures users expect from a terminal:
+        left-drag release (the common case) and right-click (kept for parity).
+        If no selection exists, both are no-ops.
+        """
+        want_copy = event.button in (1, 3)  # left (release after drag) or right
+        if not want_copy:
+            return
+        selected = self.screen.get_selected_text()
+        if not selected:
+            return
+        if clipboard.copy(selected, self):
+            self._notify_copy_result("Copied")
+        else:
+            self._notify_copy_result()
 
     def action_copy_selection(self) -> None:
         """Copy selected text to clipboard (Ctrl+C)."""
