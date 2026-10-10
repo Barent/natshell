@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -12,6 +13,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.events import MouseUp
+from textual.geometry import Offset
+from textual.selection import Selection
 from textual.widgets import Button, Footer, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
@@ -117,6 +120,65 @@ def _find_last(conversation, message_type: type) -> Any:
     return found
 
 
+def _expand_to_word(text: str, row: int, col: int) -> tuple[int, int, int, int] | None:
+    """Return the ``(x1, row, x2, row)`` span of the word under
+    ``text[row][col]``.
+
+    A "word" is the maximal run of non-whitespace characters on that visual
+    line.  If the pointer is on a space, it snaps to the nearest word on the
+    line (so double-clicking right of a word still grabs that word).  Returns
+    ``None`` on an out-of-range position or a whitespace-only line.
+    """
+    try:
+        line = text.split("\n")[row]
+    except IndexError:
+        return None
+    if not line.strip():
+        return None
+    n = len(line)
+    if col < 0:
+        col = 0
+    elif col > n:
+        col = n
+
+    def left_edge(i: int) -> int:
+        while i > 0 and not line[i - 1].isspace():
+            i -= 1
+        return i
+
+    def right_edge(i: int) -> int:
+        while i < n and not line[i].isspace():
+            i += 1
+        return i
+
+    # Prefer the word the pointer is on; otherwise fall back to the word just
+    # before the pointer (covers "clicked on the trailing space of a line").
+    i = col
+    while i < n and line[i].isspace():
+        i += 1
+    if i >= n:
+        j = col
+        while j > 0 and line[j - 1].isspace():
+            j -= 1
+        if j == 0:
+            return None
+        i = left_edge(j)
+        return (i, row, right_edge(i), row)
+    start = left_edge(i)
+    end = right_edge(start)
+    return (start, row, end, row)
+
+
+def _expand_to_line(text: str, row: int) -> tuple[int, int, int, int] | None:
+    """Return the ``(0, row, len(line), row)`` span of the whole line at
+    ``row``.  Returns ``None`` if there is no line at that row.
+    """
+    lines = text.split("\n")
+    if row < 0 or row >= len(lines):
+        return None
+    return (0, row, len(lines[row]), row)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -194,6 +256,12 @@ class NatShellApp(App):
         self._completion_matches: list[str] = []
         self._completion_index: int = -1
         self._completion_prefix: str = ""
+        # Double/triple-click tracking: two same-position clicks within 0.5s
+        # become a double-click (select word); three become a triple-click
+        # (select whole line).  A different position or >0.5s gap resets count.
+        self._last_click_time: float = 0.0
+        self._last_click_screen: Offset | None = None
+        self._click_count: int = 0
 
     def copy_to_clipboard(self, text: str) -> None:
         """Copy text using NatShell's clipboard backends, with OSC52 fallback."""
@@ -1582,7 +1650,22 @@ class NatShellApp(App):
             )
 
     def on_mouse_up(self, event: MouseUp) -> None:
-        """Copy selected text to clipboard on right-click."""
+        """Copy selection on mouse release.
+
+        Behaviors, in priority order:
+
+        1. **Right click** (button 3): copy whatever selection currently
+           exists (Textual's default drag-select result), and notify the
+           user.
+        2. **Left click / drag** (button 1): if it was a double-click,
+           expand the selection to the word under the pointer and copy it.
+           If it was a triple-click, expand to the whole line and copy it.
+           Otherwise (single click) just copy whatever's selected.
+
+        The double/triple-click math is delegated to the pure helpers
+        ``_expand_to_word`` and ``_expand_to_line`` defined at module scope,
+        so it can be unit-tested without booting the TUI.
+        """
         if event.button == 3:
             selected = self.screen.get_selected_text()
             if selected:
@@ -1590,6 +1673,119 @@ class NatShellApp(App):
                     self._notify_copy_result("Copied")
                 else:
                     self._notify_copy_result()
+            return
+
+        if event.button != 1:
+            return
+
+        # Left button: count consecutive same-position clicks within 0.5s.
+        now = time.monotonic()
+        if (
+            self._last_click_screen is not None
+            and self._last_click_screen == event.screen_offset
+            and (now - self._last_click_time) < 0.5
+        ):
+            self._click_count = min(self._click_count + 1, 3)
+        else:
+            self._click_count = 1
+        self._last_click_time = now
+        self._last_click_screen = event.screen_offset
+
+        if self._click_count < 2:
+            # Single left-click: nothing to expand.  A released *drag*
+            # (auto-copy on release) is handled by the companion PR; here we
+            # only add double- and triple-click, so a plain single click is a
+            # no-op.  This keeps this change orthogonal to that one.
+            return
+
+        # Double or triple click: expand selection and copy.
+        text_widget = None
+        rendered = ""
+        span: tuple[int, int, int, int] | None = None
+        try:
+            widget, off = self.screen.get_widget_and_offset_at(event.x, event.y)
+        except Exception:
+            widget, off = None, None
+        if widget is not None and off is not None:
+            text_widget = self._resolve_text_widget(widget)
+            if text_widget is not None:
+                try:
+                    rendered = str(text_widget._render() or "")
+                except Exception:
+                    rendered = ""
+                row, col = off.transpose
+                if self._click_count >= 3:
+                    span = _expand_to_line(rendered, row)
+                else:
+                    span = _expand_to_word(rendered, row, col)
+
+        if span is None or text_widget is None or not rendered:
+            return
+        x1, y1, x2, y2 = span
+        text = self._extract_span(rendered, span)
+        if not text:
+            return
+
+        # Highlight the selection briefly so the user can see what happened,
+        # then immediately copy and clear.
+        try:
+            self.screen.selections = {
+                text_widget: Selection(Offset(x=x1, y=y1), Offset(x=x2, y=y2))
+            }
+        except Exception:
+            pass
+
+        if clipboard.copy(text, self):
+            self._notify_copy_result("Copied")
+        else:
+            self._notify_copy_result()
+        self.clear_selection()
+
+    def _resolve_text_widget(self, widget: Any) -> Any:
+        """Resolve a widget hit by the pointer to the *Static* (or text-
+        bearing) descendant that actually renders the text.  Walks up to
+        the nearest CopyableMessage (or Static) and returns the Static
+        child, or None.
+        """
+        from natshell.ui.widgets import CopyableMessage
+        if isinstance(widget, Static):
+            return widget
+        if isinstance(widget, CopyableMessage):
+            for child in widget.query("*"):
+                if isinstance(child, Static):
+                    return child
+            return None
+        # Walk upward until we find a CopyableMessage or Static.
+        current: Any = widget
+        while current is not None:
+            if isinstance(current, (Static, CopyableMessage)):
+                target = current
+                if isinstance(target, CopyableMessage):
+                    for child in target.query("*"):
+                        if isinstance(child, Static):
+                            return child
+                return target
+            current = current.parent
+        return None
+
+    @staticmethod
+    def _extract_span(text: str, span: tuple[int, int, int, int]) -> str:
+        """Slice the substring from *text* at *(x1, y1, x2, y2)*.
+
+        Returns a string; empty if anything goes wrong.
+        """
+        x1, y1, x2, y2 = span
+        lines = text.split("\n")
+        try:
+            if y1 == y2:
+                return lines[y1][x1:x2]
+            # Multi-line span (rare for our word/line spans, but support it).
+            head = lines[y1][x1:]
+            tail = lines[y2][:x2]
+            mid = lines[y1 + 1 : y2]
+            return "\n".join([head] + mid + [tail])
+        except (IndexError, TypeError):
+            return ""
 
     def action_copy_selection(self) -> None:
         """Copy selected text to clipboard (Ctrl+C)."""
