@@ -11,7 +11,7 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
-from textual.events import MouseUp
+from textual.events import MouseDown, MouseUp
 from textual.widgets import Button, Footer, Input, Static
 
 from natshell.agent.loop import AgentEvent, AgentLoop, EventType
@@ -201,6 +201,7 @@ class NatShellApp(App):
         # click that keeps the selection doesn't re-copy it), and whether the
         # one-time OSC52 truncation caveat has been shown for auto-copies.
         self._last_auto_copied: str | None = None
+        self._right_click_selection: str | None = None
         self._osc52_select_warned = False
 
     def copy_to_clipboard(self, text: str) -> None:
@@ -1589,15 +1590,31 @@ class NatShellApp(App):
                 timeout=4,
             )
 
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Snapshot the selection a right-click is about to destroy.
+
+        ``Screen._forward_event`` calls ``clear_selection()`` for a press and
+        release at the same offset — for any button — and it does so before the
+        event bubbles up to the app.  So by the time ``on_mouse_up`` runs the
+        selection is already gone; mouse-down is the last point at which a
+        right-click can still see what the user highlighted.
+        """
+        if event.button == 3:
+            self._right_click_selection = self.screen.get_selected_text()
+
     def on_mouse_up(self, event: MouseUp) -> None:
         """Copy selected text to clipboard on right-click."""
         if event.button == 3:
-            selected = self.screen.get_selected_text()
+            selected = self._right_click_selection or self.screen.get_selected_text()
+            self._right_click_selection = None
             if selected:
-                if clipboard.copy(selected, self):
-                    self._notify_copy_result("Copied")
-                else:
-                    self._notify_copy_result()
+                # Reuse the copy-on-select worker: clipboard tools are
+                # subprocesses and must not block the UI event loop.  Recording
+                # the text also stops a right-click that leaves the selection
+                # intact (on a scrollbar) from being copied twice, once here and
+                # once by the ``TextSelected`` that follows.
+                self._last_auto_copied = selected
+                self._copy_selection_in_background(selected)
 
     def on_text_selected(self, event: TextSelected) -> None:
         """Copy a mouse drag selection to the clipboard when it is released.

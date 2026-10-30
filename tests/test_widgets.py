@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from rich.console import Group
-from rich.styled import Styled
 from rich.syntax import Syntax
 
 from natshell.inference.engine import ToolCall
@@ -174,18 +172,23 @@ class TestColorDiff:
 
 
 class TestAssistantMessageHighlighting:
+    """Replies carry their markdown source through to a Markdown widget.
+
+    The widget tree itself needs a running app, so the rendering and selection
+    behaviour is covered by the Pilot tests in ``test_copy_on_select.py``; these
+    only check that nothing mangles the source on the way in.
+    """
+
     def test_plain_text_backward_compat(self):
-        """AssistantMessage without code blocks still produces a renderable."""
         msg = AssistantMessage("Hello world")
         assert msg._raw_text == "Hello world"
-        # Rendered as a Group: prefix line + Markdown body (+ metrics line)
-        assert isinstance(msg._formatted, Group)
+        assert msg.copyable_text == "Hello world"
 
-    def test_code_block_produces_group(self):
+    def test_code_block_preserved_verbatim(self):
         text = 'Here is code:\n```python\nprint("hi")\n```\nDone.'
         msg = AssistantMessage(text)
         assert msg._raw_text == text
-        assert isinstance(msg._formatted, Group)
+        assert msg.copyable_text == text
 
     def test_raw_text_preserved_for_copy(self):
         text = '```python\nx = 1\n```'
@@ -202,10 +205,10 @@ class TestAssistantMessageHighlighting:
 class TestPlanningMessageHighlighting:
     def test_plain_text(self):
         msg = PlanningMessage("thinking about it")
-        assert isinstance(msg._formatted, Styled)
+        assert msg._raw_text == "thinking about it"
+        assert msg.copyable_text == "thinking about it"
 
     def test_code_block_renders(self):
         text = 'I will run:\n```bash\nls -la\n```'
         msg = PlanningMessage(text)
         assert msg._raw_text == text
-        assert isinstance(msg._formatted, Styled)

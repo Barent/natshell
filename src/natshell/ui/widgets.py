@@ -6,18 +6,15 @@ import difflib
 from pathlib import Path
 from typing import Any
 
-from rich.console import Group, RenderableType
-from rich.markdown import Markdown
-from rich.styled import Styled
+from rich.console import RenderableType
 from rich.syntax import Syntax
-from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Input, Label, Markdown, Static
 
 from natshell.inference.engine import ToolCall
 from natshell.ui.code_fence import parse_code_fences
@@ -333,7 +330,7 @@ class LogoBanner(Horizontal):
 class CopyableMessage(Horizontal):
     """Base for message widgets with a copy button."""
 
-    def __init__(self, formatted: str | RenderableType, raw_text: str) -> None:
+    def __init__(self, formatted: str | RenderableType | None, raw_text: str) -> None:
         super().__init__()
         self._formatted = formatted
         self._raw_text = raw_text
@@ -343,8 +340,17 @@ class CopyableMessage(Horizontal):
         return self._raw_text
 
     def compose(self) -> ComposeResult:
-        yield Static(self._formatted, classes="msg-text")
+        yield from self._compose_content()
         yield Button("\U0001f4cb", classes="msg-copy-btn")
+
+    def _compose_content(self) -> ComposeResult:
+        """Yield the body of the message, left of the copy button.
+
+        A plain ``Static`` holding Textual markup, which ``Widget.get_selection``
+        can extract text from.  Subclasses that need real widgets (so their
+        content is mouse-selectable) override this.
+        """
+        yield Static(self._formatted, classes="msg-text")
 
     @on(Button.Pressed, ".msg-copy-btn")
     def on_copy_pressed(self) -> None:
@@ -382,25 +388,40 @@ def _format_metrics(metrics: dict[str, Any]) -> str:
 
 
 class AssistantMessage(CopyableMessage):
-    """A text response from the assistant."""
+    """A text response from the assistant.
+
+    Rendered with Textual's ``Markdown`` widget rather than ``rich.markdown``.
+    A Rich renderable inside a ``Static`` is not mouse-selectable at all:
+    ``Widget.get_selection`` only extracts text when the render returns ``Text``
+    or ``Content``, and a Rich ``Markdown`` becomes a ``RichVisual``.  Textual's
+    widget composes ``MarkdownBlock`` children whose content *is* ``Content``,
+    so replies can be highlighted, Ctrl+C'd and right-click copied.
+    """
 
     def __init__(self, text: str, metrics: dict[str, Any] | None = None) -> None:
-        parts: list[RenderableType] = [
-            Text.from_markup("[bold green]NatShell:[/] "),
-            Markdown(text, code_theme="monokai"),
-        ]
-        if metrics:
-            metrics_line = _format_metrics(metrics)
-            if metrics_line:
-                parts.append(Text.from_markup(f"[dim]{metrics_line}[/]"))
-        super().__init__(Group(*parts), text)
+        self._metrics_line = _format_metrics(metrics) if metrics else ""
+        super().__init__(None, text)
+
+    def _compose_content(self) -> ComposeResult:
+        with Vertical(classes="msg-text"):
+            yield Label("[bold green]NatShell:[/]", classes="msg-prefix")
+            yield Markdown(self._raw_text, classes="msg-md")
+            if self._metrics_line:
+                yield Static(f"[dim]{self._metrics_line}[/]", classes="msg-metrics")
 
 
 class PlanningMessage(CopyableMessage):
-    """The assistant's planning/reasoning text before tool calls."""
+    """The assistant's planning/reasoning text before tool calls.
+
+    Selectable for the same reason as `AssistantMessage`; the dim italic styling
+    that a Rich ``Styled`` wrapper used to apply now comes from the stylesheet.
+    """
 
     def __init__(self, text: str) -> None:
-        super().__init__(Styled(Markdown(text, code_theme="monokai"), "dim italic"), text)
+        super().__init__(None, text)
+
+    def _compose_content(self) -> ComposeResult:
+        yield Markdown(self._raw_text, classes="msg-text msg-md")
 
 
 class CommandBlock(Vertical):

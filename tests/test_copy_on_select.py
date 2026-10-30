@@ -12,6 +12,9 @@ import asyncio
 import threading
 from unittest.mock import patch
 
+from textual import events
+from textual.widgets import Markdown, Static
+
 import natshell.ui.clipboard as clipboard
 from natshell.app import NatShellApp
 from natshell.ui.widgets import AssistantMessage, SystemMessage, UserMessage
@@ -52,6 +55,27 @@ async def _drag(pilot, widget, start: int, end: int) -> None:
     await pilot.mouse_down(widget, offset=(start, 0))
     await pilot.hover(widget, offset=(end, 0))
     await pilot.mouse_up(widget, offset=(end, 0))
+
+
+async def _right_click(app: NatShellApp, pilot, widget, column: int = 0) -> None:
+    """Press and release the right button over *widget*.
+
+    ``Pilot.mouse_down``/``mouse_up`` have no button argument, so the events are
+    built and fed to the screen the way the driver does it.  Going through
+    ``_forward_event`` matters: that is what clears the selection mid-gesture.
+    """
+    region = app.screen.find_widget(widget).region
+    x, y = region.x + column, region.y
+    for event_type in (events.MouseDown, events.MouseUp):
+        app.screen._forward_event(
+            event_type(None, x, y, 0, 0, 3, False, False, False, screen_x=x, screen_y=y)
+        )
+        await pilot.pause()
+
+
+def _reply_body(app: NatShellApp):
+    """The first rendered block of the mounted assistant reply."""
+    return app.query_one(AssistantMessage).query_one(Markdown).children[0]
 
 
 def _patches(fake: _FakeCopy, backend: str = "xclip"):
@@ -117,16 +141,95 @@ async def test_double_click_copies_what_textual_highlights() -> None:
 
 
 async def test_empty_selection_is_not_copied() -> None:
-    """Rich Markdown replies are not text-selectable in Textual; never copy ''."""
+    """A selection that extracts no text must never put '' on the clipboard."""
     app = NatShellApp(agent=None)
     fake = _FakeCopy()
     p1, p2, p3 = _patches(fake)
     async with app.run_test(size=_SIZE) as pilot:
-        await _mount(app, pilot, AssistantMessage("**bold** reply"))
-        text = app.query_one(AssistantMessage).query_one(".msg-text")
+        blank = Static("", classes="msg-text")
+        await _mount(app, pilot, blank)
+        blank.styles.height = 1
+        await pilot.pause()
         with p1, p2, p3:
-            await pilot.click(text, offset=(3, 0), times=2)
+            await pilot.click(blank, offset=(3, 0), times=2)
+            await _drag(pilot, blank, 0, 9)
+            await _settle(app, pilot)
+    assert fake.texts == []
+
+
+async def test_drag_over_an_assistant_reply_copies_it() -> None:
+    """Replies are composed with Textual's Markdown widget so they select.
+
+    A Rich ``Markdown`` inside a ``Static`` renders as a ``RichVisual``, which
+    ``Widget.get_selection`` cannot extract text from — dragging over a reply
+    highlighted nothing and copied nothing.
+    """
+    app = NatShellApp(agent=None)
+    fake = _FakeCopy()
+    p1, p2, p3 = _patches(fake)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _mount(app, pilot, AssistantMessage("the **bold** reply body"))
+        with p1, p2, p3:
+            await _drag(pilot, _reply_body(app), 0, 12)
+            await _settle(app, pilot)
+    assert fake.texts, "dragging over a reply copied nothing"
+    # Markdown is rendered, so the asterisks are gone from the copied text.
+    assert "bold" in fake.texts[0]
+    assert "**" not in fake.texts[0]
+
+
+async def test_right_click_copies_the_selection() -> None:
+    """Right-click copies what is highlighted, with copy-on-select off.
+
+    ``Screen._forward_event`` clears the selection on a press and release at the
+    same offset, for any button, before the event bubbles to the app — so the
+    handler has to snapshot the selection on mouse-down.
+    """
+    app = NatShellApp(agent=None)
+    app._config.ui.copy_on_select = False
+    fake = _FakeCopy()
+    p1, p2, p3 = _patches(fake)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _mount(app, pilot, UserMessage("the quick brown fox"))
+        text = app.query_one(UserMessage).query_one(".msg-text")
+        with p1, p2, p3:
             await _drag(pilot, text, 0, 9)
+            await _settle(app, pilot)
+            assert fake.texts == []  # copy-on-select is off
+            selected = app.screen.get_selected_text()
+            await _right_click(app, pilot, text, column=5)
+            await _settle(app, pilot)
+    assert fake.texts == [selected]
+
+
+async def test_right_click_copies_a_selected_reply() -> None:
+    """The gesture the user wants: highlight a reply, right-click to copy."""
+    app = NatShellApp(agent=None)
+    app._config.ui.copy_on_select = False
+    fake = _FakeCopy()
+    p1, p2, p3 = _patches(fake)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _mount(app, pilot, AssistantMessage("the **bold** reply body"))
+        with p1, p2, p3:
+            body = _reply_body(app)
+            await _drag(pilot, body, 0, 12)
+            await _settle(app, pilot)
+            selected = app.screen.get_selected_text()
+            assert selected, "reply did not select"
+            await _right_click(app, pilot, body, column=5)
+            await _settle(app, pilot)
+    assert fake.texts == [selected]
+
+
+async def test_right_click_without_a_selection_copies_nothing() -> None:
+    app = NatShellApp(agent=None)
+    fake = _FakeCopy()
+    p1, p2, p3 = _patches(fake)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _mount(app, pilot, UserMessage("the quick brown fox"))
+        text = app.query_one(UserMessage).query_one(".msg-text")
+        with p1, p2, p3:
+            await _right_click(app, pilot, text, column=5)
             await _settle(app, pilot)
     assert fake.texts == []
 
