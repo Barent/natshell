@@ -159,6 +159,9 @@ max_per_file = 10
 [ui]
 # Theme: "dark" or "light"
 theme = "dark"
+# Copy text to the clipboard as soon as a mouse selection is released
+# (like a terminal). Ctrl+C and right-click still copy when this is off.
+copy_on_select = true
 
 # ─── System Prompt Customization ─────────────────────────────────────
 # Customize the LLM's system prompt. Core safety rules are always

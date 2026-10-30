@@ -117,6 +117,32 @@ CopyableMessage {
 
 .msg-text {
     width: 1fr;
+    height: auto;
+}
+
+/* Textual's Markdown widget brings its own block spacing, which is sized for
+   documents rather than a chat log: trim its outer box and the trailing margin
+   of the last block so replies stay as tight as they were under rich.markdown. */
+.msg-md {
+    width: 1fr;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+}
+
+.msg-md > *:last-child {
+    margin-bottom: 0;
+}
+
+.msg-prefix {
+    width: auto;
+    height: 1;
+}
+
+.msg-metrics {
+    width: 1fr;
+    height: auto;
 }
 
 .msg-copy-btn {
@@ -152,6 +178,11 @@ PlanningMessage {
     margin: 0 0 0 0;
     padding: 0 1;
     color: #7a7a9a;
+}
+
+/* Was a rich Styled(..., "dim italic") wrapper before the widget swap. */
+PlanningMessage .msg-md {
+    text-style: italic;
 }
 
 /* Live model output while it streams in (R2-1 token streaming) */
