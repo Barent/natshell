@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -85,6 +85,9 @@ from natshell.ui.widgets import (
     UserMessage,
     _escape,
 )
+
+if TYPE_CHECKING:
+    from textual.events import Click, TextSelected
 
 
 def _tool_display_text(tool_call: ToolCall) -> str:
@@ -194,6 +197,11 @@ class NatShellApp(App):
         self._completion_matches: list[str] = []
         self._completion_index: int = -1
         self._completion_prefix: str = ""
+        # Copy-on-select state: the last selection auto-copied (so a scrollbar
+        # click that keeps the selection doesn't re-copy it), and whether the
+        # one-time OSC52 truncation caveat has been shown for auto-copies.
+        self._last_auto_copied: str | None = None
+        self._osc52_select_warned = False
 
     def copy_to_clipboard(self, text: str) -> None:
         """Copy text using NatShell's clipboard backends, with OSC52 fallback."""
@@ -1590,6 +1598,61 @@ class NatShellApp(App):
                     self._notify_copy_result("Copied")
                 else:
                     self._notify_copy_result()
+
+    def on_text_selected(self, event: TextSelected) -> None:
+        """Copy a mouse drag selection to the clipboard when it is released.
+
+        Screen posts ``TextSelected`` on every mouse-up: after a plain click
+        (which has just cleared the selection), after a scrollbar click (which
+        keeps it) and at the end of a drag.  Input widgets keep their own
+        selection and never post this event.
+        """
+        self._copy_on_select()
+
+    def on_click(self, event: Click) -> None:
+        """Copy Textual's double/triple-click selection.
+
+        ``TextSelected`` fires on the mouse-up *before* the Click that applies
+        the word/line selection, so chained clicks are handled here: by the time
+        the Click bubbles up to the app, the widget has already selected.
+        """
+        if event.chain >= 2:
+            self._copy_on_select()
+
+    def _copy_on_select(self) -> None:
+        """Copy the current selection if it is new and non-empty."""
+        if not self._config.ui.copy_on_select:
+            return
+        selected = self.screen.get_selected_text()
+        if not selected:
+            self._last_auto_copied = None
+            return
+        if selected == self._last_auto_copied:
+            return
+        self._last_auto_copied = selected
+        self._copy_selection_in_background(selected)
+
+    # Own group: an exclusive worker in the default group would cancel the
+    # running agent worker.
+    @work(group="copy-on-select", thread=False)
+    async def _copy_selection_in_background(self, text: str) -> None:
+        """Copy *text* without blocking the UI on clipboard subprocesses."""
+        # Real clipboard tools are subprocesses (5s timeout plus a read-back
+        # verify), so they run in a thread.  OSC52 writes to the terminal
+        # driver and has to stay on the event loop.
+        if clipboard.detect_backend() == "osc52":
+            ok = clipboard.copy(text, self)
+        else:
+            ok = await asyncio.to_thread(clipboard.copy, text)
+        if not ok:
+            self._last_auto_copied = None  # let the same selection retry
+            self._notify_copy_result()
+        elif clipboard.last_backend() == "osc52" and not self._osc52_select_warned:
+            # Show the truncation caveat once, not on every drag.
+            self._osc52_select_warned = True
+            self._notify_copy_result("Selection copied")
+        else:
+            self.notify(f"Selection copied via {clipboard.last_backend()}", timeout=1.5)
 
     def action_copy_selection(self) -> None:
         """Copy selected text to clipboard (Ctrl+C)."""

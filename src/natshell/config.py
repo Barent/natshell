@@ -156,6 +156,7 @@ class AutotuneConfig:
 @dataclass
 class UIConfig:
     theme: str = "dark"
+    copy_on_select: bool = True
 
 
 @dataclass
@@ -275,6 +276,7 @@ VALID_CONFIG_KEYS: dict[str, dict[str, str]] = {
     },
     "ui": {
         "theme": "str",
+        "copy_on_select": "bool",
     },
     "backup": {
         "enabled": "bool",

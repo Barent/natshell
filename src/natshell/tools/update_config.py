@@ -40,6 +40,7 @@ LLM_WRITABLE_KEYS: dict[str, dict[str, str]] = {
     },
     "ui": {
         "theme": "str",
+        "copy_on_select": "bool",
     },
     "backup": {
         "enabled": "bool",

@@ -130,6 +130,7 @@ The agent has access to 12 tools:
 | `Ctrl+L` | Clear chat |
 | `Ctrl+P` | Command palette (model switching) |
 | `Ctrl+Y` | Copy selected text |
+| Mouse drag / double-click / triple-click | Select text; copied to the clipboard on release (`[ui] copy_on_select`) |
 
 ### Backup & Undo
 Every file edit creates a timestamped backup in `~/.local/share/natshell/backups/`. Use `/undo` to restore the most recent edit. Backups are pruned to 10 per file by default.
@@ -200,7 +201,7 @@ Or if installed from source, copy `src/natshell/config.default.toml` directly.
 - **[safety]** — mode, confirmation regex patterns, blocked regex patterns
 - **[backup]** — backup directory, max backups per file
 - **[mcp]** — MCP server safety mode
-- **[ui]** — theme (dark/light)
+- **[ui]** — theme (dark/light), copy_on_select (copy a mouse selection when the drag is released; default on)
 
 ### Environment Variables
 
