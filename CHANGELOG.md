@@ -4,6 +4,18 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.51] - 2026-10-30
+
+### Added
+
+- Copy a mouse selection to the clipboard as soon as it is released, the way a terminal behaves — drag, double-click and triple-click. New `[ui] copy_on_select` config key, on by default (#59)
+- Assistant replies and planning text are rendered with Textual's `Markdown` widget instead of `rich.markdown`, so they can be text-selected at all. A Rich renderable inside a `Static` is not selectable, which previously made replies impossible to highlight or copy by mouse (#59)
+
+### Fixed
+
+- Right-click copy never saw a selection: Textual's `Screen` clears the selection on a same-offset press and release for any button, before the event reaches the app. The selection is now captured on mouse-down and copied on release, independently of `copy_on_select` (#59)
+- Clipboard subprocesses no longer run on the UI event loop when copying a selection
+
 ## [1.0.36] - 2026-06-07
 
 ### Added
