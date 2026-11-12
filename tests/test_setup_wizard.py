@@ -108,8 +108,11 @@ class TestWriteInitialConfig:
     def test_empty_repo_writes_minimal(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
         _write_initial_config(config_path, "", "")
-        content = config_path.read_text()
-        assert "[model]" not in content
+        # No active [model] table (the reference block mentions it commented, so
+        # check the parsed structure, not the raw text).
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "model" not in data
 
     def test_n_gpu_layers_default(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
@@ -121,8 +124,10 @@ class TestWriteInitialConfig:
     def test_danger_fast_omitted_by_default(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
         _write_initial_config(config_path, "test/repo", "test.gguf")
-        content = config_path.read_text()
-        assert "[safety]" not in content
+        # No active [safety] table (reference block only shows it commented).
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "safety" not in data
 
     def test_danger_fast_written_when_true(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
@@ -493,8 +498,10 @@ class TestDangerFastPrompt:
         ):
             run_setup_wizard(output=output, input_fn=self._input_seq("", "2"))
         config_path = tmp_path / ".config" / "natshell" / "config.toml"
-        content = config_path.read_text()
-        assert "danger_fast" not in content
+        # danger_fast must not be active (reference block shows it commented).
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "danger_fast" not in data.get("safety", {})
 
     def test_confirms_writes_true_for_model_tier(self, tmp_path: Path):
         output = io.StringIO()

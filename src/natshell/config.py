@@ -71,6 +71,78 @@ def _get_config_dir() -> Path:
     return _platform_config_dir()
 
 
+# ─── Install-time configuration reference ─────────────────────────────────
+# Appended to the config created by the first-run wizard and by install.sh so
+# users can discover and uncomment options without leaving their editor. It is
+# written fully commented, so appending it never changes current behaviour.
+# Keep it valid *when uncommented*; avoid bare top-level section headers the
+# wizard already emits (e.g. [model]) to prevent duplicate-table errors when a
+# user uncomments a block.
+CONFIG_REFERENCE: str = """
+# ═══════════════════════════════════════════════════════════════════════════
+#  NatShell — optional settings (everything below is commented out so it does
+#  not change your current setup. Remove a leading "# " to enable any option.)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Local model tuning — add any of these to the [model] section at the top:
+#   n_ctx       = 32768     # context-window tokens (0 = auto from model size)
+#   n_threads   = 8         # CPU threads (0 = auto-detect)
+#   n_gpu_layers= -1        # GPU layers: -1 all / 0 CPU-only / N
+#   main_gpu    = -1        # GPU device index (-1 = auto-detect)
+#   prompt_cache_mb = 256   # cache repeated prompt prefixes in RAM
+
+# [agent]
+#   temperature  = 0.3      # lower = more deterministic (0.3 is a good default)
+#   max_steps    = 15       # max tool calls per request (auto-scales w/ context)
+#   max_tokens   = 4096     # max tokens per generation (auto-scales w/ context)
+
+# [safety]
+#   mode        = "confirm"  # "confirm" | "warn" | "danger"
+#   danger_fast = false      # skip ALL confirmations (sandboxed machines only)
+#   # always_confirm = ["^sudo"]   # extra commands that must always confirm
+#   # blocked        = ["^mkfs"]   # extra commands to block entirely
+
+# [ui]
+#   theme  = "dark"          # "dark" | "light"
+#   copy_on_select = true    # copy mouse selection on release
+
+# Use a remote API instead of the local model — uncomment the whole block:
+# [remote]
+#   url     = "http://localhost:11434/v1"
+#   model   = "qwen3.5:4b"
+#   api_key = ""
+# [engine]
+#   preferred = "remote"     # "auto" | "local" | "remote"
+
+# Ollama server for /model commands
+# [ollama]
+#   url        = "http://localhost:11434"
+#   default_model = "qwen3.5:9b"
+
+# Switch presets at runtime with /profile <name>. Uncomment one to enable:
+# [profiles.lite]
+#   ollama_model = "qwen3.5:4b"
+#   n_ctx = 8192
+#   temperature = 0.3
+#
+# [profiles.balanced]
+#   ollama_model = "qwen3.5:9b"
+#   n_ctx = 32768
+#   temperature = 0.3
+#
+# [profiles.coder]
+#   ollama_model = "qwen3.5:35b-a3b"   # MoE, 3B-active (needs 24+ GB RAM)
+#   n_ctx = 131072
+#   temperature = 0.3
+#
+# [profiles.remote-api]
+#   remote_url   = "https://api.example.com/v1"
+#   remote_model = "gpt-4o"
+#   api_key      = ""
+#   n_ctx        = 128000
+"""
+
+
 @dataclass
 class ModelConfig:
     path: str = "auto"

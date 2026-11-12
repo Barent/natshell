@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Callable, TextIO
 
+from natshell.config import CONFIG_REFERENCE
 from natshell.model_manager import BUNDLED_TIERS
 
 # Wizard choices: numbered keys map to BUNDLED_TIERS + non-download options.
@@ -60,7 +61,9 @@ def _write_ollama_config(config_path: Path, *, danger_fast: bool = False) -> Non
     ]
     if danger_fast:
         lines += ["[safety]", "danger_fast = true", ""]
-    config_path.write_text("\n".join(lines) + "\n")
+    config_path.write_text(
+        (("\n".join(lines) + "\n") if lines else "") + CONFIG_REFERENCE
+    )
     try:
         os.chmod(config_path, 0o600)
     except OSError:
@@ -108,7 +111,9 @@ def _write_initial_config(
     if danger_fast:
         lines += ["[safety]", "danger_fast = true", ""]
 
-    config_path.write_text("\n".join(lines) + "\n" if lines else "")
+    config_path.write_text(
+        (("\n".join(lines) + "\n") if lines else "") + CONFIG_REFERENCE
+    )
 
     # Secure permissions — config may later contain API keys
     try:
@@ -120,7 +125,9 @@ def _write_initial_config(
 def _write_danger_fast_only(config_path: Path) -> None:
     """Write a minimal config containing only the danger_fast setting."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text("[safety]\ndanger_fast = true\n\n")
+    config_path.write_text(
+        "[safety]\ndanger_fast = true\n\n" + CONFIG_REFERENCE
+    )
     try:
         os.chmod(config_path, 0o600)
     except OSError:

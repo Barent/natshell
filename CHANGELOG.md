@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - New `coder` tier: Qwen3.5-35B-A3B MoE (~22 GB, 3B-active, needs 24+ GB RAM)
 - Setup wizard and installer now offer the `coder` tier alongside the existing presets
+- First-setup (wizard) and `install.sh` now write a commented reference of the
+  common config options into the generated `config.toml`, so users can discover
+  and uncomment model tuning, `[agent]`, `[safety]`, `[ui]`, remote API, Ollama,
+  and `/profile` presets right from the file — without leaving their editor
 
 ### Updated
 
