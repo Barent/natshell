@@ -31,21 +31,27 @@ logger = logging.getLogger(__name__)
 BUNDLED_TIERS: dict[str, dict[str, str]] = {
     "light": {
         "name": "Light",
-        "description": "Qwen3-4B (~2.5 GB, low RAM)",
-        "hf_repo": "Qwen/Qwen3-4B-GGUF",
-        "hf_file": "Qwen3-4B-Q4_K_M.gguf",
+        "description": "Qwen3.5-4B (~2.7 GB, low RAM, 262K context)",
+        "hf_repo": "unsloth/Qwen3.5-4B-GGUF",
+        "hf_file": "Qwen3.5-4B-Q4_K_M.gguf",
     },
     "standard": {
         "name": "Standard",
-        "description": "Qwen3-8B (~5 GB, general purpose)",
-        "hf_repo": "Qwen/Qwen3-8B-GGUF",
-        "hf_file": "Qwen3-8B-Q4_K_M.gguf",
+        "description": "Qwen3.5-9B (~5.7 GB, general purpose, 262K context)",
+        "hf_repo": "unsloth/Qwen3.5-9B-GGUF",
+        "hf_file": "Qwen3.5-9B-Q4_K_M.gguf",
     },
     "enhanced": {
         "name": "Enhanced",
         "description": "Mistral Nemo 12B (~7.5 GB, 128K context)",
         "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
         "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+    },
+    "coder": {
+        "name": "Coder (MoE)",
+        "description": "Qwen3.5-35B-A3B (~22 GB, 3B-active MoE, needs 24+ GB RAM)",
+        "hf_repo": "unsloth/Qwen3.5-35B-A3B-GGUF",
+        "hf_file": "Qwen3.5-35B-A3B-Q4_K_M.gguf",
     },
     "gemma-light": {
         "name": "Gemma Light",
@@ -81,7 +87,7 @@ def format_download_menu(models_dir: Path | None = None) -> str:
         lines.append(f"  [bold]{key:<10}[/] {tier['description']}{mark}")
     lines.append(
         "\n[dim]Use /model download <tier> to download"
-        " (light, standard, enhanced,"
+        " (light, standard, enhanced, coder,"
         " gemma-light, gemma-standard, gemma-enhanced)[/]"
     )
     return "\n".join(lines)
@@ -95,7 +101,7 @@ async def download_bundled_model(
     """Download a bundled model tier via huggingface_hub.
 
     Args:
-        tier_key: One of 'light', 'standard', 'enhanced',
+        tier_key: One of 'light', 'standard', 'enhanced', 'coder',
             'gemma-light', 'gemma-standard', 'gemma-enhanced'.
         models_dir: Directory to save to (default: ~/.local/share/natshell/models/).
         progress_callback: Optional callable for status messages.

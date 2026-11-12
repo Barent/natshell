@@ -175,8 +175,10 @@ class TestSaveConfigValue:
         config_dir.mkdir(parents=True)
         config_path = config_dir / "config.toml"
         config_path.write_text(
-            '[model]\nhf_repo = "Qwen/Qwen3-4B-GGUF"\n\n'
-            "[agent]\ntemperature = 0.3\n"
+            '[model]\n'
+            'hf_repo = "unsloth/Qwen3.5-4B-GGUF"\n'
+            'hf_file = "Qwen3.5-4B-Q4_K_M.gguf"\n'
+            "\n[agent]\ntemperature = 0.3\n"
         )
 
         with patch(
@@ -186,7 +188,8 @@ class TestSaveConfigValue:
             save_config_value("agent", "temperature", 0.7)
 
         content = config_path.read_text()
-        assert 'hf_repo = "Qwen/Qwen3-4B-GGUF"' in content
+        assert 'hf_repo = "unsloth/Qwen3.5-4B-GGUF"' in content
+        assert 'hf_file = "Qwen3.5-4B-Q4_K_M.gguf"' in content
         assert "temperature = 0.7" in content
 
     def test_bool_formatting(self, tmp_path: Path):

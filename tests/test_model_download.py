@@ -15,18 +15,19 @@ from natshell.model_manager import (
 
 
 class TestBundledTiers:
-    def test_has_six_tiers(self):
-        assert len(BUNDLED_TIERS) == 6
+    def test_has_seven_tiers(self):
+        assert len(BUNDLED_TIERS) == 7
 
     def test_tier_keys(self):
         assert set(BUNDLED_TIERS.keys()) == {
-            "light", "standard", "enhanced",
+            "light", "standard", "enhanced", "coder",
             "gemma-light", "gemma-standard", "gemma-enhanced",
         }
 
     @pytest.mark.parametrize(
         "tier",
-        ["light", "standard", "enhanced", "gemma-light", "gemma-standard", "gemma-enhanced"],
+        ["light", "standard", "enhanced", "coder",
+         "gemma-light", "gemma-standard", "gemma-enhanced"],
     )
     def test_tier_has_required_fields(self, tier: str):
         t = BUNDLED_TIERS[tier]
@@ -70,7 +71,7 @@ class TestDownloadBundledModel:
             await download_bundled_model("nonexistent")
 
     async def test_download_calls_hf_hub(self, tmp_path: Path):
-        expected_path = str(tmp_path / "Qwen3-4B-Q4_K_M.gguf")
+        expected_path = str(tmp_path / "Qwen3.5-4B-Q4_K_M.gguf")
 
         with patch(
             "natshell.model_manager.asyncio.to_thread",
@@ -91,7 +92,7 @@ class TestDownloadBundledModel:
 
     async def test_progress_callback(self, tmp_path: Path):
         messages = []
-        expected_path = str(tmp_path / "Qwen3-4B-Q4_K_M.gguf")
+        expected_path = str(tmp_path / "Qwen3.5-4B-Q4_K_M.gguf")
 
         with patch(
             "natshell.model_manager.asyncio.to_thread",
@@ -108,7 +109,7 @@ class TestDownloadBundledModel:
 
     async def test_creates_models_dir(self, tmp_path: Path):
         models_dir = tmp_path / "sub" / "models"
-        expected_path = str(models_dir / "Qwen3-4B-Q4_K_M.gguf")
+        expected_path = str(models_dir / "Qwen3.5-4B-Q4_K_M.gguf")
 
         with patch(
             "natshell.model_manager.asyncio.to_thread",
@@ -125,10 +126,11 @@ class TestSetupWizardTierSharing:
     def test_wizard_tiers_reference_bundled(self):
         from natshell.setup_wizard import MODEL_TIERS
 
-        # Numbered tiers 1-4 should be the same objects as BUNDLED_TIERS
+        # Numbered tiers 1-7 should be the same objects as BUNDLED_TIERS
         assert MODEL_TIERS["1"] is BUNDLED_TIERS["light"]
         assert MODEL_TIERS["2"] is BUNDLED_TIERS["standard"]
         assert MODEL_TIERS["3"] is BUNDLED_TIERS["enhanced"]
-        assert MODEL_TIERS["4"] is BUNDLED_TIERS["gemma-light"]
-        assert MODEL_TIERS["5"] is BUNDLED_TIERS["gemma-standard"]
-        assert MODEL_TIERS["6"] is BUNDLED_TIERS["gemma-enhanced"]
+        assert MODEL_TIERS["4"] is BUNDLED_TIERS["coder"]
+        assert MODEL_TIERS["5"] is BUNDLED_TIERS["gemma-light"]
+        assert MODEL_TIERS["6"] is BUNDLED_TIERS["gemma-standard"]
+        assert MODEL_TIERS["7"] is BUNDLED_TIERS["gemma-enhanced"]

@@ -5,8 +5,8 @@
 # Path to GGUF model file. "auto" triggers download of default model.
 path = "auto"
 # HuggingFace repo for auto-download
-hf_repo = "Qwen/Qwen3-4B-GGUF"
-hf_file = "Qwen3-4B-Q4_K_M.gguf"
+hf_repo = "unsloth/Qwen3.5-4B-GGUF"
+hf_file = "Qwen3.5-4B-Q4_K_M.gguf"
 # Context window size (tokens).
 # 0 = auto: scales with model size (2048/4096/8192/16384/32768).
 # Set explicitly to override (e.g. 8192, 16384).
@@ -29,7 +29,7 @@ main_gpu = -1
 # Uncomment to use a remote OpenAI-compatible API instead of local model.
 # When enabled, the local model is not loaded.
 # url = "http://localhost:11434/v1"
-# model = "qwen3:4b"
+# model = "qwen3.5:4b"
 # api_key = ""
 # Override the context window size for the remote model (tokens).
 # 0 = auto: queries the running model's actual context from the server.
@@ -41,7 +41,7 @@ main_gpu = -1
 # Used by /model list and /model use commands.
 # url = "http://localhost:11434"
 # Default model for the remote server
-# default_model = "qwen3:4b"
+# default_model = "qwen3.5:4b"
 # Override context window size (tokens). 0 = auto-detect from server.
 # Set explicitly if auto-detect reports incorrect values.
 # Common values: 8192, 32768, 65536, 131072.
@@ -183,25 +183,25 @@ copy_on_select = true
 
 # --- Ollama on localhost, small model, low resource usage ---
 # [profiles.lite]
-# ollama_model = "qwen3:4b"
+# ollama_model = "qwen3.5:4b"
 # n_ctx = 8192
 # temperature = 0.3
 
 # --- Ollama on localhost, mid-range model ---
 # [profiles.balanced]
-# ollama_model = "qwen3:14b"
+# ollama_model = "qwen3.5:9b"
 # n_ctx = 32768
 # temperature = 0.3
 
-# --- Ollama large coding model (MoE, needs 24+ GB RAM) ---
+# --- Ollama large coding model (MoE, 3B active, needs 24+ GB RAM) ---
 # [profiles.coder]
-# ollama_model = "qwen3-coder:30b"
+# ollama_model = "qwen3.5:35b-a3b"
 # n_ctx = 131072
 # temperature = 0.3
 
-# --- Ollama large coding model, max context (needs 32+ GB RAM) ---
+# --- Ollama large dense model, 262K native context (needs 32+ GB RAM) ---
 # [profiles.coder-max]
-# ollama_model = "qwen3-coder:30b-256k"
+# ollama_model = "qwen3.5:27b"
 # n_ctx = 262144
 # temperature = 0.3
 

@@ -4,6 +4,23 @@ All notable changes to NatShell will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- New `coder` tier: Qwen3.5-35B-A3B MoE (~22 GB, 3B-active, needs 24+ GB RAM)
+- Setup wizard and installer now offer the `coder` tier alongside the existing presets
+
+### Updated
+
+- Bundled Qwen tiers upgraded from 3.0 to 3.5: `light` is now Qwen3.5-4B
+  (unsloth/Qwen3.5-4B-GGUF, ~2.7 GB) and `standard` is now Qwen3.5-9B
+  (unsloth/Qwen3.5-9B-GGUF, ~5.7 GB), both with native 262K context
+- Ollama/remote default model references updated from `qwen3:4b` to `qwen3.5:4b`
+  and profile examples to `qwen3.5:9b` / `qwen3.5:35b-a3b` / `qwen3.5:27b`
+- Auto context sizing for 9B+ models raised to 32K (was 8K), matching
+  Qwen3.5's native 262K window
+
 ## [1.0.51] - 2026-10-30
 
 ### Added

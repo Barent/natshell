@@ -882,8 +882,8 @@ else
     # Standard mode: offer local models and optionally a remote endpoint
     echo "  Select a model preset:"
     echo ""
-    echo "    1) Light          — Qwen3-4B        (~2.5 GB, low RAM)"
-    echo "    2) Standard       — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
+    echo "    1) Light          — Qwen3.5-4B      (~2.7 GB, low RAM)"
+    echo "    2) Standard       — Qwen3.5-9B      (~5.7 GB, general purpose) ★ Recommended"
     echo "    3) Enhanced       — Mistral Nemo 12B (~7.5 GB, 128K context)"
     echo "    4) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
     echo "    5) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
@@ -896,15 +896,15 @@ else
 
     case "$model_choice" in
         1)
-            info "Light preset selected (Qwen3-4B)"
+            info "Light preset selected (Qwen3.5-4B)"
             DOWNLOAD_MODEL=true
             ;;
         2)
-            info "Standard preset selected (Qwen3-8B)"
+            info "Standard preset selected (Qwen3.5-9B)"
             DOWNLOAD_MODEL=true
             WRITE_MODEL_CONFIG=true
-            HF_REPO="Qwen/Qwen3-8B-GGUF"
-            HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+            HF_REPO="unsloth/Qwen3.5-9B-GGUF"
+            HF_FILE="Qwen3.5-9B-Q4_K_M.gguf"
             ;;
         3)
             info "Enhanced preset selected (Mistral Nemo 12B)"
@@ -946,8 +946,8 @@ else
             model_choice=2
             DOWNLOAD_MODEL=true
             WRITE_MODEL_CONFIG=true
-            HF_REPO="Qwen/Qwen3-8B-GGUF"
-            HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+            HF_REPO="unsloth/Qwen3.5-9B-GGUF"
+            HF_FILE="Qwen3.5-9B-Q4_K_M.gguf"
             ;;
     esac
 
@@ -1007,15 +1007,15 @@ except Exception:
         fi
 
         echo ""
-        read -rp "  Default model name [qwen3:4b]: " ollama_model_input
-        OLLAMA_MODEL="${ollama_model_input:-qwen3:4b}"
+        read -rp "  Default model name [qwen3.5:4b]: " ollama_model_input
+        OLLAMA_MODEL="${ollama_model_input:-qwen3.5:4b}"
     else
         warn "Server not reachable at $OLLAMA_URL"
         echo ""
         read -rp "  Save this URL anyway for later? [Y/n]: " save_anyway
         if [[ -z "$save_anyway" ]] || is_yes "$save_anyway"; then
-            read -rp "  Default model name [qwen3:4b]: " ollama_model_input
-            OLLAMA_MODEL="${ollama_model_input:-qwen3:4b}"
+            read -rp "  Default model name [qwen3.5:4b]: " ollama_model_input
+            OLLAMA_MODEL="${ollama_model_input:-qwen3.5:4b}"
         else
             info "Skipping Ollama configuration"
             OLLAMA_URL=""

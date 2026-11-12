@@ -7,7 +7,7 @@ Commands:
 Defining profiles in config.toml:
   [profiles.coding]
   engine = "remote"        # Switch engine (local/remote)
-  model = "qwen3:30b"     # Remote model name
+  model = "qwen3.5:27b"    # Remote model name
   n_ctx = 32768            # Context window override
   temperature = 0.3        # Lower = more deterministic
   n_gpu_layers = -1        # GPU layers override
