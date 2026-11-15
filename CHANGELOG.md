@@ -25,6 +25,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Auto context sizing for 9B+ models raised to 32K (was 8K), matching
   Qwen3.5's native 262K window
 
+### Security
+
+- Bundled model downloads are now integrity-pinned: every tier in
+  `BUNDLED_TIERS` carries the exact HuggingFace commit it is served from
+  (`hf_revision`) plus the file's sha256 digest, which is verified locally
+  before the model is first loaded. A repo whose `main` later moves — or a
+  compromised distributor re-uploading under the same name — can no longer
+  serve different bytes to new installs.
+
 ## [1.0.51] - 2026-10-30
 
 ### Added
