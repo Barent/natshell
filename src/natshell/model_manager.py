@@ -29,47 +29,66 @@ logger = logging.getLogger(__name__)
 # ─── Bundled model tiers ─────────────────────────────────────────────
 
 BUNDLED_TIERS: dict[str, dict[str, str]] = {
+    # ``hf_revision`` pins the exact HuggingFace commit the file is served
+    # from (40-char SHA), so a repo that later points ``main`` elsewhere — or
+    # a compromised org re-uploading under the same name — can't serve
+    # different bytes. ``sha256`` is the file's digest (verified locally
+    # before the model is first loaded). Together they pin the bytes.
     "light": {
         "name": "Light",
         "description": "Qwen3.5-4B (~2.7 GB, low RAM, 262K context)",
         "hf_repo": "unsloth/Qwen3.5-4B-GGUF",
         "hf_file": "Qwen3.5-4B-Q4_K_M.gguf",
+        "hf_revision": "e87f176479d0855a907a41277aca2f8ee7a09523",
+        "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
     },
     "standard": {
         "name": "Standard",
         "description": "Qwen3.5-9B (~5.7 GB, general purpose, 262K context)",
         "hf_repo": "unsloth/Qwen3.5-9B-GGUF",
         "hf_file": "Qwen3.5-9B-Q4_K_M.gguf",
+        "hf_revision": "3885219b6810b007914f3a7950a8d1b469d598a5",
+        "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
     },
     "enhanced": {
         "name": "Enhanced",
         "description": "Mistral Nemo 12B (~7.5 GB, 128K context)",
         "hf_repo": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
         "hf_file": "Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+        "hf_revision": "a2dd64a0a76ea1bdb2bb6ab6fa5496b003c7c908",
+        "sha256": "7c1a10d202d8788dbe5628dc962254d10654c853cae6aaeca0618f05490d4a46",
     },
     "coder": {
         "name": "Coder (MoE)",
         "description": "Qwen3.5-35B-A3B (~22 GB, 3B-active MoE, needs 24+ GB RAM)",
         "hf_repo": "unsloth/Qwen3.5-35B-A3B-GGUF",
         "hf_file": "Qwen3.5-35B-A3B-Q4_K_M.gguf",
+        "hf_revision": "bc014a17be43adabd7066b7a86075ff935c6a4e2",
+        "sha256": "3b46d1066bc91cc2d613e3bc22ce691dd77e6f0d33c9060690d24ce6de494375",
     },
     "gemma-light": {
         "name": "Gemma Light",
         "description": "Gemma 4 E2B (~1.5 GB, 128K context)",
         "hf_repo": "unsloth/gemma-4-E2B-it-GGUF",
         "hf_file": "gemma-4-E2B-it-Q4_K_M.gguf",
+        "hf_revision": "0314792d7f1f7e229411f620751375812bb9faf2",
+        "sha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
     },
     "gemma-standard": {
         "name": "Gemma Standard",
         "description": "Gemma 4 E4B (~5 GB, 128K context)",
         "hf_repo": "unsloth/gemma-4-E4B-it-GGUF",
         "hf_file": "gemma-4-E4B-it-Q4_K_M.gguf",
+        "hf_revision": "bfc15c382204943c3a8fff0c750b94ae2364d7a3",
+        "sha256": "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87",
     },
     "gemma-enhanced": {
         "name": "Gemma Enhanced",
         "description": "Gemma 4 12B (~7.1 GB, 128K context)",
         "hf_repo": "unsloth/gemma-4-12b-it-GGUF",
         "hf_file": "gemma-4-12b-it-Q4_K_M.gguf",
+        "hf_revision": "fc034cfff751157913579611efad8462ac1be606",
+        "sha256": "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42",
     },
 }
 
@@ -93,6 +112,37 @@ def format_download_menu(models_dir: Path | None = None) -> str:
     return "\n".join(lines)
 
 
+def _sha256_of(path: Path, chunk_size: int = 1 << 20) -> str:
+    """Return the lowercase sha256 hex digest of a (possibly multi-GB) file.
+
+    Reads in 1 MiB chunks so memory stays flat regardless of model size.
+    """
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_model_file(path: Path, filename: str, expected_sha256: str) -> str:
+    """Verify a downloaded model file's sha256 against the pinned digest.
+
+    Returns the verified digest on success. Raises RuntimeError on
+    mismatch — callers must not load a model whose bytes do not match
+    the digest it was pinned with (supply-chain guard).
+    """
+    actual = _sha256_of(path)
+    if actual != expected_sha256.lower():
+        raise RuntimeError(
+            f"Integrity check failed: sha256 mismatch for {filename} "
+            f"(expected {expected_sha256}, got {actual}). "
+            f"The download may be corrupted or tampered with."
+        )
+    return actual
+
+
 async def download_bundled_model(
     tier_key: str,
     models_dir: Path | None = None,
@@ -111,7 +161,8 @@ async def download_bundled_model(
 
     Raises:
         ValueError: If tier_key is not valid.
-        RuntimeError: If the download fails.
+        RuntimeError: If the download fails, or the sha256 integrity check
+            (when the tier defines one) does not match.
     """
     if tier_key not in BUNDLED_TIERS:
         raise ValueError(
@@ -139,11 +190,27 @@ async def download_bundled_model(
         prev_xet = os.environ.get("HF_HUB_DISABLE_XET")
         os.environ["HF_HUB_DISABLE_XET"] = "1"
         try:
-            return hf_hub_download(
+            path = hf_hub_download(
                 repo_id=tier["hf_repo"],
                 filename=tier["hf_file"],
+                # Pin the exact commit if the tier has one; fall back to
+                # the repo's current HEAD otherwise (still the documented
+                # default, but weaker — prefer adding hf_revision).
+                revision=tier.get("hf_revision") or None,
                 local_dir=str(models_dir),
             )
+
+            expected = tier.get("sha256")
+            if expected:
+                actual = verify_model_file(
+                    Path(path), tier["hf_file"], expected
+                )
+                if progress_callback:
+                    progress_callback(
+                        f"  ↳ integrity: sha256 verified ({actual[:12]}…)"
+                    )
+
+            return path
         finally:
             if prev_xet is None:
                 os.environ.pop("HF_HUB_DISABLE_XET", None)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +13,7 @@ from natshell.model_manager import (
     BUNDLED_TIERS,
     download_bundled_model,
     format_download_menu,
+    verify_model_file,
 )
 
 
@@ -37,6 +40,16 @@ class TestBundledTiers:
         assert "hf_file" in t
         assert t["hf_repo"]  # non-empty
         assert t["hf_file"].endswith(".gguf")
+
+    def test_tiers_have_integrity_pins(self, tmp_path: Path):
+        """Every bundled tier is pinned to a commit + carries a digest."""
+        for key, tier in BUNDLED_TIERS.items():
+            assert re.fullmatch(
+                r"[0-9a-f]{40}", tier.get("hf_revision", "")
+            ), f"{key} missing 40-hex-char hf_revision"
+            assert re.fullmatch(
+                r"[0-9a-f]{64}", tier.get("sha256", "")
+            ), f"{key} missing 64-hex-char sha256"
 
 
 class TestFormatDownloadMenu:
@@ -118,6 +131,41 @@ class TestDownloadBundledModel:
         ):
             await download_bundled_model("light", models_dir=models_dir)
         assert models_dir.is_dir()
+
+
+class TestVerifyModelFile:
+    """`verify_model_file` is the integrity gate that
+    `download_bundled_model` runs over every tier file. Its contract —
+    accept a matching digest, reject a mismatched one — is exercised here
+    directly, which is the unit of logic the download path depends on."""
+
+    def test_accepts_matching_digest(self, tmp_path: Path):
+        p = tmp_path / "model.gguf"
+        p.write_bytes(b"abc123" * 1024)
+        expected = hashlib.sha256(b"abc123" * 1024).hexdigest()
+        assert verify_model_file(p, "model.gguf", expected) == expected
+
+    def test_rejects_wrong_digest(self, tmp_path: Path):
+        p = tmp_path / "model.gguf"
+        p.write_bytes(b"abc123")
+        with pytest.raises(RuntimeError, match="Integrity check failed"):
+            verify_model_file(p, "model.gguf", "0" * 64)
+
+    def test_rejects_corrupted_bytes(self, tmp_path: Path):
+        """Flip a byte in a multi-GB-style file and confirm the real hash
+        (not a stub) rejects it — guards against the regression this PR
+        exists to prevent."""
+        p = tmp_path / "big.gguf"
+        payload = b"x" * (1 << 20)  # 1 MiB of bytes
+        p.write_bytes(payload)
+        good = hashlib.sha256(payload).hexdigest()
+        assert verify_model_file(p, "big.gguf", good) == good
+        # Now corrupt the file and re-verify.
+        with open(p, "r+b") as fh:
+            fh.seek(0)
+            fh.write(b"y")
+        with pytest.raises(RuntimeError, match="Integrity check failed"):
+            verify_model_file(p, "big.gguf", good)
 
 
 class TestSetupWizardTierSharing:
