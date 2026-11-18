@@ -882,8 +882,8 @@ else
     # Standard mode: offer local models and optionally a remote endpoint
     echo "  Select a model preset:"
     echo ""
-    echo "    1) Light          — Qwen3-4B        (~2.5 GB, low RAM)"
-    echo "    2) Standard       — Qwen3-8B        (~5 GB, general purpose) ★ Recommended"
+    echo "    1) Light          — Qwen3.5-4B      (~2.7 GB, low RAM)"
+    echo "    2) Standard       — Qwen3.5-9B      (~5.7 GB, general purpose) ★ Recommended"
     echo "    3) Enhanced       — Mistral Nemo 12B (~7.5 GB, 128K context)"
     echo "    4) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
     echo "    5) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
@@ -896,15 +896,15 @@ else
 
     case "$model_choice" in
         1)
-            info "Light preset selected (Qwen3-4B)"
+            info "Light preset selected (Qwen3.5-4B)"
             DOWNLOAD_MODEL=true
             ;;
         2)
-            info "Standard preset selected (Qwen3-8B)"
+            info "Standard preset selected (Qwen3.5-9B)"
             DOWNLOAD_MODEL=true
             WRITE_MODEL_CONFIG=true
-            HF_REPO="Qwen/Qwen3-8B-GGUF"
-            HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+            HF_REPO="unsloth/Qwen3.5-9B-GGUF"
+            HF_FILE="Qwen3.5-9B-Q4_K_M.gguf"
             ;;
         3)
             info "Enhanced preset selected (Mistral Nemo 12B)"
@@ -946,8 +946,8 @@ else
             model_choice=2
             DOWNLOAD_MODEL=true
             WRITE_MODEL_CONFIG=true
-            HF_REPO="Qwen/Qwen3-8B-GGUF"
-            HF_FILE="Qwen3-8B-Q4_K_M.gguf"
+            HF_REPO="unsloth/Qwen3.5-9B-GGUF"
+            HF_FILE="Qwen3.5-9B-Q4_K_M.gguf"
             ;;
     esac
 
@@ -1007,15 +1007,15 @@ except Exception:
         fi
 
         echo ""
-        read -rp "  Default model name [qwen3:4b]: " ollama_model_input
-        OLLAMA_MODEL="${ollama_model_input:-qwen3:4b}"
+        read -rp "  Default model name [qwen3.5:4b]: " ollama_model_input
+        OLLAMA_MODEL="${ollama_model_input:-qwen3.5:4b}"
     else
         warn "Server not reachable at $OLLAMA_URL"
         echo ""
         read -rp "  Save this URL anyway for later? [Y/n]: " save_anyway
         if [[ -z "$save_anyway" ]] || is_yes "$save_anyway"; then
-            read -rp "  Default model name [qwen3:4b]: " ollama_model_input
-            OLLAMA_MODEL="${ollama_model_input:-qwen3:4b}"
+            read -rp "  Default model name [qwen3.5:4b]: " ollama_model_input
+            OLLAMA_MODEL="${ollama_model_input:-qwen3.5:4b}"
         else
             info "Skipping Ollama configuration"
             OLLAMA_URL=""
@@ -1171,6 +1171,73 @@ preferred = \"remote\"
 danger_fast = true
 "
     fi
+
+    # Append a commented reference of common options so users can discover and
+    # uncomment them. Fully commented, so it never changes current behaviour.
+    # (Mirrors CONFIG_REFERENCE in src/natshell/config.py — keep in sync.)
+    config_content+="
+# ═══════════════════════════════════════════════════════════════════════════
+#  NatShell — optional settings (everything below is commented out so it does
+#  not change your current setup. Remove a leading \"# \" to enable any option.)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Local model tuning — add any of these to the [model] section at the top:
+#   n_ctx       = 32768     # context-window tokens (0 = auto from model size)
+#   n_threads   = 8         # CPU threads (0 = auto-detect)
+#   n_gpu_layers= -1        # GPU layers: -1 all / 0 CPU-only / N
+#   main_gpu    = -1        # GPU device index (-1 = auto-detect)
+#   prompt_cache_mb = 256   # cache repeated prompt prefixes in RAM
+
+# [agent]
+#   temperature  = 0.3      # lower = more deterministic (0.3 is a good default)
+#   max_steps    = 15       # max tool calls per request (auto-scales w/ context)
+#   max_tokens   = 4096     # max tokens per generation (auto-scales w/ context)
+
+# [safety]
+#   mode        = \"confirm\"  # \"confirm\" | \"warn\" | \"danger\"
+#   danger_fast = false      # skip ALL confirmations (sandboxed machines only)
+#   # always_confirm = [\"^sudo\"]   # extra commands that must always confirm
+#   # blocked        = [\"^mkfs\"]   # extra commands to block entirely
+
+# [ui]
+#   theme  = \"dark\"          # \"dark\" | \"light\"
+#   copy_on_select = true    # copy mouse selection on release
+
+# Use a remote API instead of the local model — uncomment the whole block:
+# [remote]
+#   url     = \"http://localhost:11434/v1\"
+#   model   = \"qwen3.5:4b\"
+#   api_key = \"\"
+# [engine]
+#   preferred = \"remote\"     # \"auto\" | \"local\" | \"remote\"
+
+# Ollama server for /model commands
+# [ollama]
+#   url        = \"http://localhost:11434\"
+#   default_model = \"qwen3.5:9b\"
+
+# Switch presets at runtime with /profile <name>. Uncomment one to enable:
+# [profiles.lite]
+#   ollama_model = \"qwen3.5:4b\"
+#   n_ctx = 8192
+#   temperature = 0.3
+#
+# [profiles.balanced]
+#   ollama_model = \"qwen3.5:9b\"
+#   n_ctx = 32768
+#   temperature = 0.3
+#
+# [profiles.coder]
+#   ollama_model = \"qwen3.5:35b-a3b\"   # MoE, 3B-active (needs 24+ GB RAM)
+#   n_ctx = 131072
+#   temperature = 0.3
+#
+# [profiles.remote-api]
+#   remote_url   = \"https://api.example.com/v1\"
+#   remote_model = \"gpt-4o\"
+#   api_key      = \"\"
+#   n_ctx        = 128000
+"
 
     mkdir -p "$CONFIG_DIR"
     printf '%s' "$config_content" > "$CONFIG_FILE"

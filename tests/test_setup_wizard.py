@@ -27,8 +27,8 @@ class TestModelTiers:
             assert "hf_repo" in tier
             assert "hf_file" in tier
 
-    def test_eight_tiers(self):
-        assert len(MODEL_TIERS) == 8
+    def test_nine_tiers(self):
+        assert len(MODEL_TIERS) == 9
 
     def test_tier_1_is_light(self):
         assert MODEL_TIERS["1"]["name"] == "Light"
@@ -36,31 +36,35 @@ class TestModelTiers:
 
     def test_tier_2_is_standard(self):
         assert MODEL_TIERS["2"]["name"] == "Standard"
-        assert "8B" in MODEL_TIERS["2"]["hf_file"]
+        assert "9B" in MODEL_TIERS["2"]["hf_file"]
 
     def test_tier_3_is_enhanced(self):
         assert MODEL_TIERS["3"]["name"] == "Enhanced"
         assert "Mistral" in MODEL_TIERS["3"]["hf_file"]
 
-    def test_tier_4_is_gemma_light(self):
-        assert MODEL_TIERS["4"]["name"] == "Gemma Light"
-        assert "E2B" in MODEL_TIERS["4"]["hf_file"]
+    def test_tier_4_is_coder(self):
+        assert MODEL_TIERS["4"]["name"] == "Coder (MoE)"
+        assert "35B-A3B" in MODEL_TIERS["4"]["hf_file"]
 
-    def test_tier_5_is_gemma_standard(self):
-        assert MODEL_TIERS["5"]["name"] == "Gemma Standard"
-        assert "E4B" in MODEL_TIERS["5"]["hf_file"]
+    def test_tier_5_is_gemma_light(self):
+        assert MODEL_TIERS["5"]["name"] == "Gemma Light"
+        assert "E2B" in MODEL_TIERS["5"]["hf_file"]
 
-    def test_tier_6_is_gemma_enhanced(self):
-        assert MODEL_TIERS["6"]["name"] == "Gemma Enhanced"
-        assert "12b" in MODEL_TIERS["6"]["hf_file"].lower()
+    def test_tier_6_is_gemma_standard(self):
+        assert MODEL_TIERS["6"]["name"] == "Gemma Standard"
+        assert "E4B" in MODEL_TIERS["6"]["hf_file"]
 
-    def test_tier_7_is_remote(self):
-        assert MODEL_TIERS["7"]["name"] == "Remote only"
-        assert MODEL_TIERS["7"]["hf_repo"] == ""
+    def test_tier_7_is_gemma_enhanced(self):
+        assert MODEL_TIERS["7"]["name"] == "Gemma Enhanced"
+        assert "12b" in MODEL_TIERS["7"]["hf_file"].lower()
 
-    def test_tier_8_is_skip(self):
-        assert MODEL_TIERS["8"]["name"] == "Skip"
+    def test_tier_8_is_remote(self):
+        assert MODEL_TIERS["8"]["name"] == "Remote only"
         assert MODEL_TIERS["8"]["hf_repo"] == ""
+
+    def test_tier_9_is_skip(self):
+        assert MODEL_TIERS["9"]["name"] == "Skip"
+        assert MODEL_TIERS["9"]["hf_repo"] == ""
 
 
 # ── TestWriteInitialConfig ───────────────────────────────────────────────
@@ -70,19 +74,19 @@ class TestWriteInitialConfig:
     def test_creates_file(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
         _write_initial_config(
-            config_path, "Qwen/Qwen3-8B-GGUF", "Qwen3-8B-Q4_K_M.gguf"
+            config_path, "unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf"
         )
         assert config_path.exists()
 
     def test_valid_toml(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
         _write_initial_config(
-            config_path, "Qwen/Qwen3-8B-GGUF", "Qwen3-8B-Q4_K_M.gguf"
+            config_path, "unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf"
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert data["model"]["hf_repo"] == "Qwen/Qwen3-8B-GGUF"
-        assert data["model"]["hf_file"] == "Qwen3-8B-Q4_K_M.gguf"
+        assert data["model"]["hf_repo"] == "unsloth/Qwen3.5-9B-GGUF"
+        assert data["model"]["hf_file"] == "Qwen3.5-9B-Q4_K_M.gguf"
 
     def test_sections_present(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
@@ -104,8 +108,11 @@ class TestWriteInitialConfig:
     def test_empty_repo_writes_minimal(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
         _write_initial_config(config_path, "", "")
-        content = config_path.read_text()
-        assert "[model]" not in content
+        # No active [model] table (the reference block mentions it commented, so
+        # check the parsed structure, not the raw text).
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "model" not in data
 
     def test_n_gpu_layers_default(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
@@ -117,8 +124,10 @@ class TestWriteInitialConfig:
     def test_danger_fast_omitted_by_default(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
         _write_initial_config(config_path, "test/repo", "test.gguf")
-        content = config_path.read_text()
-        assert "[safety]" not in content
+        # No active [safety] table (reference block only shows it commented).
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "safety" not in data
 
     def test_danger_fast_written_when_true(self, tmp_path: Path):
         config_path = tmp_path / "config.toml"
@@ -156,7 +165,7 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "8B" in data["model"]["hf_file"]
+        assert "9B" in data["model"]["hf_file"]
 
     def test_choice_1_light(self, tmp_path: Path):
         output = io.StringIO()
@@ -202,7 +211,7 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "8B" in data["model"]["hf_file"]
+        assert "9B" in data["model"]["hf_file"]
 
     def test_choice_3_enhanced(self, tmp_path: Path):
         output = io.StringIO()
@@ -227,7 +236,7 @@ class TestRunSetupWizard:
             data = tomllib.load(f)
         assert "Mistral" in data["model"]["hf_file"]
 
-    def test_choice_4_gemma_light(self, tmp_path: Path):
+    def test_choice_4_coder(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -248,9 +257,9 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "E2B" in data["model"]["hf_file"]
+        assert "35B-A3B" in data["model"]["hf_file"]
 
-    def test_choice_5_gemma_standard(self, tmp_path: Path):
+    def test_choice_5_gemma_light(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -271,9 +280,9 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "E4B" in data["model"]["hf_file"]
+        assert "E2B" in data["model"]["hf_file"]
 
-    def test_choice_6_gemma_enhanced(self, tmp_path: Path):
+    def test_choice_6_gemma_standard(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -294,9 +303,9 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "12b" in data["model"]["hf_file"].lower()
+        assert "E4B" in data["model"]["hf_file"]
 
-    def test_choice_7_remote(self, tmp_path: Path):
+    def test_choice_7_gemma_enhanced(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -311,15 +320,15 @@ class TestRunSetupWizard:
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "7"
             )
-        # Choice 7 writes an Ollama config and returns the path
         assert result is not None
-        config_path = tmp_path / ".config" / "natshell" / "config.toml"
-        assert config_path.exists()
-        content = config_path.read_text()
-        assert "ollama" in content.lower()
-        assert "localhost:11434" in content
+        config_path = (
+            tmp_path / ".config" / "natshell" / "config.toml"
+        )
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "12b" in data["model"]["hf_file"].lower()
 
-    def test_choice_8_skip(self, tmp_path: Path):
+    def test_choice_8_remote(self, tmp_path: Path):
         output = io.StringIO()
         with (
             patch(
@@ -333,6 +342,29 @@ class TestRunSetupWizard:
         ):
             result = run_setup_wizard(
                 output=output, input_fn=lambda _: "8"
+            )
+        # Choice 8 writes an Ollama config and returns the path
+        assert result is not None
+        config_path = tmp_path / ".config" / "natshell" / "config.toml"
+        assert config_path.exists()
+        content = config_path.read_text()
+        assert "ollama" in content.lower()
+        assert "localhost:11434" in content
+
+    def test_choice_9_skip(self, tmp_path: Path):
+        output = io.StringIO()
+        with (
+            patch(
+                "natshell.platform.config_dir",
+                return_value=tmp_path / ".config" / "natshell",
+            ),
+            patch(
+                "natshell.setup_wizard._check_llama_available",
+                return_value=True,
+            ),
+        ):
+            result = run_setup_wizard(
+                output=output, input_fn=lambda _: "9"
             )
         assert result is None
 
@@ -349,7 +381,7 @@ class TestRunSetupWizard:
             ),
         ):
             result = run_setup_wizard(
-                output=output, input_fn=lambda _: "9"
+                output=output, input_fn=lambda _: "99"
             )
         assert result is not None
         config_path = (
@@ -357,7 +389,7 @@ class TestRunSetupWizard:
         )
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-        assert "8B" in data["model"]["hf_file"]
+        assert "9B" in data["model"]["hf_file"]
 
     def test_eof_returns_none(self, tmp_path: Path):
         output = io.StringIO()
@@ -466,8 +498,10 @@ class TestDangerFastPrompt:
         ):
             run_setup_wizard(output=output, input_fn=self._input_seq("", "2"))
         config_path = tmp_path / ".config" / "natshell" / "config.toml"
-        content = config_path.read_text()
-        assert "danger_fast" not in content
+        # danger_fast must not be active (reference block shows it commented).
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "danger_fast" not in data.get("safety", {})
 
     def test_confirms_writes_true_for_model_tier(self, tmp_path: Path):
         output = io.StringIO()
@@ -499,7 +533,7 @@ class TestDangerFastPrompt:
                 return_value=True,
             ),
         ):
-            run_setup_wizard(output=output, input_fn=self._input_seq("y", "7"))
+            run_setup_wizard(output=output, input_fn=self._input_seq("y", "8"))
         config_path = tmp_path / ".config" / "natshell" / "config.toml"
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
@@ -518,7 +552,7 @@ class TestDangerFastPrompt:
             ),
         ):
             result = run_setup_wizard(
-                output=output, input_fn=self._input_seq("y", "8")
+                output=output, input_fn=self._input_seq("y", "9")
             )
         assert result is not None
         config_path = tmp_path / ".config" / "natshell" / "config.toml"
@@ -539,7 +573,7 @@ class TestDangerFastPrompt:
             ),
         ):
             result = run_setup_wizard(
-                output=output, input_fn=self._input_seq("n", "8")
+                output=output, input_fn=self._input_seq("n", "9")
             )
         assert result is None
 

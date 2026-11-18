@@ -128,10 +128,9 @@ def _infer_context_size(model_path: str) -> int:
             return 4096
         elif param_billions <= 8:
             return 8192
-        elif param_billions <= 14:
-            return 16384
-        else:
-            return 32768
+        # 9B and up (Qwen3.5-9B, 35B-A3B, ...): native 128K-262K windows;
+        # 32K is the comfortable local floor.
+        return 32768
     return 4096
 
 

@@ -825,10 +825,10 @@ class TestGemmaSpecialTokenStripping:
 
 class TestModelFamilyDetection:
     def test_qwen3_4b(self):
-        assert _detect_model_family("Qwen3-4B-Q4_K_M.gguf") == "qwen"
+        assert _detect_model_family("Qwen3.5-4B-Q4_K_M.gguf") == "qwen"
 
     def test_qwen3_8b(self):
-        assert _detect_model_family("Qwen3-8B-Q4_K_M.gguf") == "qwen"
+        assert _detect_model_family("Qwen3.5-9B-Q4_K_M.gguf") == "qwen"
 
     def test_mistral_nemo(self):
         assert _detect_model_family("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf") == "mistral"
@@ -856,7 +856,7 @@ class TestModelFamilyDetection:
         import logging
 
         with caplog.at_level(logging.WARNING, logger="natshell.inference.local"):
-            _detect_model_family("Qwen3-4B-Q4_K_M.gguf")
+            _detect_model_family("Qwen3.5-4B-Q4_K_M.gguf")
         assert "Unknown model family" not in caplog.text
 
     def test_mistral_model_no_warning(self, caplog):
@@ -882,10 +882,11 @@ class TestContextSizeOverride:
         assert _infer_context_size("Mistral-Nemo-Instruct-2407-Q4_K_M.gguf") == 32768
 
     def test_qwen3_4b_returns_4096(self):
-        assert _infer_context_size("Qwen3-4B-Q4_K_M.gguf") == 4096
+        assert _infer_context_size("Qwen3.5-4B-Q4_K_M.gguf") == 4096
 
-    def test_qwen3_8b_returns_8192(self):
-        assert _infer_context_size("Qwen3-8B-Q4_K_M.gguf") == 8192
+    def test_qwen35_9b_returns_32768(self):
+        assert _infer_context_size("Qwen3.5-9B-Q4_K_M.gguf") == 32768
+        assert _infer_context_size("Qwen3.5-35B-A3B-Q4_K_M.gguf") == 32768
 
     def test_gemma_e4b_returns_32768(self):
         assert _infer_context_size("gemma-4-E4B-it-Q4_K_M.gguf") == 32768

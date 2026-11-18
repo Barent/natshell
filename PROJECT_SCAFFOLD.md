@@ -29,7 +29,7 @@ NatShell is a self-contained, local-first agentic TUI that lets users interact w
 - **OS:** Linux, macOS, and WSL
 - **Python:** 3.11+
 - **Inference:** llama-cpp-python (bundled), with optional Ollama or OpenAI-compatible API fallback
-- **Default Model:** Qwen3-4B-Q4_K_M.gguf (~2.5GB)
+- **Default Model:** Qwen3.5-4B-Q4_K_M.gguf (~2.7 GB)
 - **TUI:** Textual
 
 ---
@@ -141,7 +141,7 @@ CLI Interface:
 
 Model Auto-Download:
   On first run, if no model exists at the configured path:
-  - Prompt user: "No model found. Download Qwen3-4B-Q4_K_M (~2.5GB)? [Y/n]"
+  - Prompt user: "No model found. Download Qwen3.5-4B-Q4_K_M (~2.7 GB)? [Y/n]"
   - Use huggingface_hub.hf_hub_download() to fetch it
   - Save to ~/.local/share/natshell/models/
 ```
@@ -153,7 +153,7 @@ Model Auto-Download:
 # Path to GGUF model file. "auto" triggers download of default model.
 path = "auto"
 # HuggingFace repo for auto-download
-hf_repo = "Qwen/Qwen3-4B-GGUF"
+hf_repo = "unsloth/Qwen3.5-4B-GGUF"
 hf_file = "qwen3-4b-q4_k_m.gguf"
 # Context window size (tokens)
 n_ctx = 8192
@@ -165,7 +165,7 @@ n_gpu_layers = 0
 [remote]
 # Set to enable remote inference instead of local model
 # url = "http://localhost:11434/v1"
-# model = "qwen3:4b"
+# model = "qwen3.5:4b"
 # api_key = ""
 
 [agent]

@@ -51,7 +51,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--remote-model",
-        help="Model name for the remote API (e.g., qwen3:4b)",
+        help="Model name for the remote API (e.g., qwen3.5:4b)",
     )
     parser.add_argument(
         "--local",
@@ -260,11 +260,11 @@ def main() -> None:
 
         base = normalize_base_url(config.ollama.url)
         remote_url = f"{base}/v1"
-        remote_model = remote_model or config.ollama.default_model or "qwen3:4b"
+        remote_model = remote_model or config.ollama.default_model or "qwen3.5:4b"
         use_remote = True
 
     if not remote_model:
-        remote_model = "qwen3:4b"
+        remote_model = "qwen3.5:4b"
 
     # Apply --local override before preference logic
     if args.local:
@@ -373,7 +373,7 @@ def main() -> None:
                 + (" (recommended on Windows):\n" if is_windows()
                    else ":\n")
                 + "  1. Install Ollama from https://ollama.com\n"
-                "  2. ollama pull qwen3:8b\n"
+                "  2. ollama pull qwen3.5:9b\n"
                 '  3. Set preferred = "remote" and'
                 ' url = "http://localhost:11434/v1"'
                 " in config.toml\n"
@@ -693,7 +693,7 @@ def _ensure_model(config) -> str:
                 "\n"
                 "  Recommended: use Ollama instead:\n"
                 "    1. Install from https://ollama.com\n"
-                "    2. ollama pull qwen3:4b\n"
+                "    2. ollama pull qwen3.5:4b\n"
                 "    3. Re-run natshell — it will auto-detect"
                 " Ollama.\n"
             )

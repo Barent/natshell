@@ -11,7 +11,7 @@ Getting started with NatShell:
   3. Connect to Ollama — set the URL in config.toml:
      [ollama]
      url = "http://localhost:11434"
-     default_model = "qwen3:8b"
+     default_model = "qwen3.5:9b"
 
   4. Basic usage — type a request in plain English:
      "scan my local network for computers"

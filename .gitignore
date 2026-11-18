@@ -41,3 +41,4 @@ htmlcov/
 
 # Node
 package-lock.json
+.hermes/

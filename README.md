@@ -29,9 +29,10 @@ The installer handles everything — Python venv, GPU detection (Vulkan/Metal/CP
 
 | Preset | Model | Size | Best for |
 |--------|-------|------|----------|
-| Light | Qwen3-4B (Q4_K_M) | ~2.5 GB | Low RAM systems, fast responses |
-| Standard | Qwen3-8B (Q4_K_M) | ~5 GB | General purpose, better reasoning |
+| Light | Qwen3.5-4B (Q4_K_M) | ~2.7 GB | Low RAM systems, fast responses |
+| Standard | Qwen3.5-9B (Q4_K_M) | ~5.7 GB | General purpose, better reasoning |
 | Enhanced | Mistral Nemo 12B (Q4_K_M) | ~7.5 GB | Best quality, 128K context |
+| Coder (MoE) | Qwen3.5-35B-A3B (Q4_K_M) | ~22 GB | Max quality at 3B-active speed (needs 24+ GB RAM) |
 | Gemma Light | Gemma 4 E2B (Q4_K_M) | ~1.5 GB | Ultra-light MoE, 128K context |
 | Gemma Standard | Gemma 4 E4B (Q4_K_M) | ~5 GB | Efficient MoE, 128K context |
 | Gemma Enhanced | Gemma 4 12B (Q4_K_M) | ~7.1 GB | Dense 12B, 128K context |
@@ -56,7 +57,7 @@ natshell
 ```bash
 natshell                          # Launch with defaults (local model)
 natshell --model ./my-model.gguf  # Use a specific GGUF model
-natshell --remote http://host:11434/v1 --remote-model qwen3:4b  # Use Ollama/remote API
+natshell --remote http://host:11434/v1 --remote-model qwen3.5:4b  # Use Ollama/remote API
 natshell --download               # Download the default model and exit
 natshell --update                 # Self-update from git and reinstall
 natshell --config path/to/config.toml  # Custom config file
@@ -72,7 +73,7 @@ natshell --mcp                    # Start as MCP server (stdin/stdout JSON-RPC)
 NatShell uses a ReAct-style agent loop — the model reasons about your request, calls tools (shell commands, file operations, etc.), observes results, and iterates until the task is complete. Up to 15 tool calls per request by default.
 
 ### Inference Backends
-- **Local**: Bundled llama.cpp via llama-cpp-python. Six model tiers: Qwen3-4B (light), Qwen3-8B (standard), Mistral Nemo 12B (enhanced), Gemma 4 E2B (gemma-light), Gemma 4 E4B (gemma-standard), Gemma 4 12B (gemma-enhanced). Selected during install, auto-downloaded on first run.
+- **Local**: Bundled llama.cpp via llama-cpp-python. Seven model tiers: Qwen3.5-4B (light), Qwen3.5-9B (standard), Mistral Nemo 12B (enhanced), Qwen3.5-35B-A3B MoE (coder), Gemma 4 E2B (gemma-light), Gemma 4 E4B (gemma-standard), Gemma 4 12B (gemma-enhanced). Selected during install, auto-downloaded on first run.
 - **Remote**: Any OpenAI-compatible API — Ollama, vLLM, LM Studio, etc.
 - **Fallback**: If the remote server is unreachable, NatShell automatically falls back to the local model.
 - **Runtime switching**: Switch models on the fly with `/model` commands without restarting.

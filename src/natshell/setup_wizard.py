@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Callable, TextIO
 
+from natshell.config import CONFIG_REFERENCE
 from natshell.model_manager import BUNDLED_TIERS
 
 # Wizard choices: numbered keys map to BUNDLED_TIERS + non-download options.
@@ -17,16 +18,17 @@ MODEL_TIERS: dict[str, dict[str, str]] = {
     "1": BUNDLED_TIERS["light"],
     "2": BUNDLED_TIERS["standard"],
     "3": BUNDLED_TIERS["enhanced"],
-    "4": BUNDLED_TIERS["gemma-light"],
-    "5": BUNDLED_TIERS["gemma-standard"],
-    "6": BUNDLED_TIERS["gemma-enhanced"],
-    "7": {
+    "4": BUNDLED_TIERS["coder"],
+    "5": BUNDLED_TIERS["gemma-light"],
+    "6": BUNDLED_TIERS["gemma-standard"],
+    "7": BUNDLED_TIERS["gemma-enhanced"],
+    "8": {
         "name": "Remote only",
         "description": "Use an Ollama/remote server (no local download)",
         "hf_repo": "",
         "hf_file": "",
     },
-    "8": {
+    "9": {
         "name": "Skip",
         "description": "Configure later",
         "hf_repo": "",
@@ -54,12 +56,14 @@ def _write_ollama_config(config_path: Path, *, danger_fast: bool = False) -> Non
         "",
         "[ollama]",
         'url = "http://localhost:11434"',
-        'default_model = "qwen3:4b"',
+        'default_model = "qwen3.5:4b"',
         "",
     ]
     if danger_fast:
         lines += ["[safety]", "danger_fast = true", ""]
-    config_path.write_text("\n".join(lines) + "\n")
+    config_path.write_text(
+        (("\n".join(lines) + "\n") if lines else "") + CONFIG_REFERENCE
+    )
     try:
         os.chmod(config_path, 0o600)
     except OSError:
@@ -107,7 +111,9 @@ def _write_initial_config(
     if danger_fast:
         lines += ["[safety]", "danger_fast = true", ""]
 
-    config_path.write_text("\n".join(lines) + "\n" if lines else "")
+    config_path.write_text(
+        (("\n".join(lines) + "\n") if lines else "") + CONFIG_REFERENCE
+    )
 
     # Secure permissions — config may later contain API keys
     try:
@@ -119,7 +125,9 @@ def _write_initial_config(
 def _write_danger_fast_only(config_path: Path) -> None:
     """Write a minimal config containing only the danger_fast setting."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text("[safety]\ndanger_fast = true\n\n")
+    config_path.write_text(
+        "[safety]\ndanger_fast = true\n\n" + CONFIG_REFERENCE
+    )
     try:
         os.chmod(config_path, 0o600)
     except OSError:
@@ -186,7 +194,7 @@ def run_setup_wizard(
             "    Ollama is recommended for Windows.\n"
             "\n"
         )
-        default_choice = "7"
+        default_choice = "8"
     else:
         default_choice = "2"
 
@@ -194,12 +202,12 @@ def run_setup_wizard(
     output.write("\n")
     local_tag = " (requires llama-cpp-python)" if not llama_available else ""
     output.write(
-        f"    1) Light          — Qwen3-4B        (~2.5 GB, low RAM)"
+        f"    1) Light          — Qwen3.5-4B      (~2.7 GB, low RAM)"
         f"{local_tag}\n"
     )
     rec = " ★ Recommended" if llama_available else local_tag
     output.write(
-        f"    2) Standard       — Qwen3-8B        (~5 GB, general purpose)"
+        f"    2) Standard       — Qwen3.5-9B      (~5.7 GB, general purpose)"
         f"{rec}\n"
     )
     output.write(
@@ -207,23 +215,27 @@ def run_setup_wizard(
         f"{local_tag}\n"
     )
     output.write(
-        f"    4) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
+        f"    4) Coder (MoE)    — Qwen3.5-35B-A3B (~22 GB, 24+ GB RAM)"
         f"{local_tag}\n"
     )
     output.write(
-        f"    5) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
+        f"    5) Gemma Light    — Gemma 4 E2B     (~1.5 GB, 128K context)"
         f"{local_tag}\n"
     )
     output.write(
-        f"    6) Gemma Enhanced — Gemma 4 12B     (~7.1 GB, 128K context)"
+        f"    6) Gemma Standard — Gemma 4 E4B     (~5 GB, 128K context)"
+        f"{local_tag}\n"
+    )
+    output.write(
+        f"    7) Gemma Enhanced — Gemma 4 12B     (~7.1 GB, 128K context)"
         f"{local_tag}\n"
     )
     ollama_rec = " ★ Recommended" if not llama_available else ""
     output.write(
-        f"    7) Remote only    — use an Ollama server"
+        f"    8) Remote only    — use an Ollama server"
         f" (no local download){ollama_rec}\n"
     )
-    output.write("    8) Skip           — configure later\n")
+    output.write("    9) Skip           — configure later\n")
     output.write("\n")
 
     try:
@@ -245,14 +257,14 @@ def run_setup_wizard(
     tier = MODEL_TIERS[choice]
     output.write(f"  Selected: {tier['name']} — {tier['description']}\n")
 
-    if choice in ("7", "8"):
+    if choice in ("8", "9"):
         # Remote-only or skip — don't write model config
-        if choice == "7":
+        if choice == "8":
             output.write(
                 "\n"
                 "  To get started with Ollama:\n"
                 "    1. Install from https://ollama.com\n"
-                "    2. ollama pull qwen3:4b\n"
+                "    2. ollama pull qwen3.5:4b\n"
                 "    3. Run natshell again — it will auto-detect"
                 " the Ollama server.\n"
                 "\n"
